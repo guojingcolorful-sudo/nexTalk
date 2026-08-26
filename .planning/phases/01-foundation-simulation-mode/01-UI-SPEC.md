@@ -1,10 +1,11 @@
 ---
 phase: 1
 slug: foundation-simulation-mode
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-27
+reviewed_at: 2026-08-27
 ---
 
 # Phase 1 — UI Design Contract
@@ -71,6 +72,8 @@ Base scale is Tailwind's 4px multiplier (spec V1.0 §4.2). All values multiples 
 
 Space Grotesk only. Three weights per locked spec §3 (Regular 400 / SemiBold 600 / Bold 700) — deviation from the usual 2-weight contract is spec-locked; Bold is the workhorse of the neobrutalism look.
 
+> **D4 Typography FLAG note:** 5 sizes + 3 weights exceed default caps — deliberate spec-locked deviation (设计规范 V1.0 §3); planners must not normalize.
+
 | Role | Size | Weight | Line Height | Case / Tracking | Usage |
 |------|------|--------|-------------|-----------------|-------|
 | Panel Title | 18px | 700 | 28px (1.55) | UPPERCASE, `tracking-wider` | Desktop panel titles, brand header, wizard titles |
@@ -116,10 +119,20 @@ Dark-only by design (locked — it is a tool surface, not a consumer page; the t
 
 **Dot-matrix texture:** root background of every surface — `background-image: radial-gradient(#4a4a5c 1px, transparent 1px); background-size: 20px 20px;` over the dominant color. Applied ONLY at the root layer (window/page background), never on scrolling containers (performance rule).
 
+**Visual Focal Points (one line per main surface, D2 Visuals FLAG fix):**
+- Mini console → portalGreen brand header + bottom 开始模拟会话 primary CTA (visual anchor; scrollable middle content is skimmable)
+- Dual-pane view → left subtitle stream is the primary focus (live, high-frequency); right AI timeline secondary
+- Mobile Subtitles tab → subtitle stream primary; status capsule secondary (mic state only)
+- Mobile AI Copilot tab → white strategy card with yellow hard shadow is the focus (reading surface); status capsule recedes
+- Setup wizard / voice enrollment → step indicator (WizardShell progress) is the focus; bottom action bar secondary
+- Glossary → term list is the primary focus; add form secondary
+- Resume import → drop zone is the single focus; file-row status secondary
+- Recording assets / review report → asset/report card stream is the focus; export and delete secondary
+
 **Navigation contract (missing pages reachable from widget):**
 1. Widget (340×680) is the hub: top brand header with window controls (min/close), scrollable stack (StealthCard → SyncMobile QR → KnowledgeBase: resume row + glossary row + voice-enrollment row), bottom action bar: 开始模拟会话 (primary) + 扩展视图 (opens dual-pane) + 设置.
 2. Setup wizard, voice enrollment, glossary, resume import open as full-width views inside the widget window with a `fa-arrow-left` back affordance in the header.
-3. Recording assets + review report open post-session from the widget ("本地资产" section); in Phase 1 they render empty states plus one clearly-labeled mock record (模拟数据) for the demo flow.
+3. Recording assets + review report open post-session from the widget (「本地资产」 section); in Phase 1 they render empty states plus one clearly-labeled mock record (模拟数据) for the demo flow.
 4. Dual-pane (860×680) hosts the live simulated session; per-pane headers carry the language toggles.
 
 **Shape consistency lock (documented rule):** device/window frames 24px (mobile 40px); cards 12px (`rounded-xl`); bubbles 12px with one corner zeroed per speaker (interviewer `rounded-tl-none`, user `rounded-tr-none`); timeline icon nodes and status capsule fully round; language toggle segments fully round. Follow this everywhere; no new radii.
@@ -132,18 +145,18 @@ All components implement: 4px black borders, hard offset shadows, press feedback
 
 | Component | Spec |
 |-----------|------|
-| NexTalkBrand | `NEXTALK` uppercase Space Grotesk Bold, `X` in portalGreen (spec §0); super-symbol `fa-bolt` on black-bordered tile; optional `极言` subtitle |
-| HeaderBar | Colored per surface (portalGreen widget / rickBlue dual-pane / mortyYellow AI panel), `border-b-4`, uppercase 18px title, window controls (min/close) |
+| NexTalkBrand | `NEXTALK` uppercase Space Grotesk Bold, `X` in portalGreen (spec §0); super-symbol `fa-bolt` on black-bordered tile; optional 极言 subtitle |
+| HeaderBar | Colored per surface (portalGreen widget / rickBlue dual-pane / mortyYellow AI panel), `border-b-4`, uppercase 18px title, window controls (min/close, icon-only, see Accessibility) |
 | StealthCard | rickBlue card, `fa-mask`, uppercase label "Stealth Mode", Chinese description, keycap row `Cmd + Shift + H` (white keycap, black 2px border) |
-| QrCodeCard | darkerSpace card, portalGreen 4px border, white 144×144 QR tile (black 4px border), caption "扫码开启手机跨端辅助展示", `fa-qrcode` fallback |
+| QrCodeCard | darkerSpace card, portalGreen 4px border, white 144×144 QR tile (black 4px border), caption 扫码开启手机跨端辅助展示, `fa-qrcode` fallback |
 | KnowledgeRow | mortyYellow button-style row: `fa-file-pdf` + filename + `fa-check` success state; variants: resume (ready/missing), voice (未注册 → CTA), glossary (term count) |
 | ChatBubble | Interviewer: slate-800 bg, gray-600 2px border, `rounded-tl-none`, 15px/600 EN text; translation subline slate-700, no top border, 13px/700 rickBlue. User: green-900 bg, portalGreen 2px border, `rounded-tr-none`, right-aligned, 15px/700, portalGreen 2px hard shadow |
-| LanguageToggle | Per-bubble segmented control: black container, 2px border, 10px/700 UPPERCASE segments `中` / `EN` / `EN+中`; selected segment filled with brand color (green for user, gray-600 for interviewer), `aria-pressed` buttons |
+| LanguageToggle | Per-bubble segmented control: black container, 2px border, 10px/700 UPPERCASE segments 中 / EN / EN+中; selected segment filled with brand color (green for user, gray-600 for interviewer), `aria-pressed` buttons |
 | PanelHeader | Live Stream: gray-800 bar, `fa-closed-captioning` in portalGreen; AI Copilot: mortyYellow bar, `fa-brain` + `fa-bolt` pulse while generating |
 | AiTimeline | Guide line (left-[12px] desktop / left-[16px] mobile, `w-1` gray-700) + 24px/32px circular nodes (gray=context `fa-user-tie`, yellow=strategy `fa-lightbulb`, green=draft `fa-robot`); cards: context slate-800, strategy white + yellow 6px shadow, draft portalGreen + black 4px shadow |
-| StatusCapsule | Mobile bottom, `#1A1A22` pill `rounded-full`, black 4px border + shadow, red breathing dot + uppercase label + trailing icon action (`fa-microphone-slash` / `fa-expand`), 40px touch targets |
+| StatusCapsule | Mobile bottom, `#1A1A22` pill `rounded-full`, black 4px border + shadow, red breathing dot + uppercase label + trailing icon action (`fa-microphone-slash` / `fa-expand`, icon-only, see Accessibility), 40px touch targets |
 | MobileTabs | Subtitles / AI Copilot segmented, black 4px border, selected tab filled brand color with matching hard shadow (green / yellow), inactive gray-400 |
-| MicStatusPill | red-500, 2px black border, black 2px shadow, `animate-pulse`, uppercase "MIC ON - LISTENING" in black text |
+| MicStatusPill | red-500, 2px black border, 2px black shadow, `animate-pulse`, uppercase "MIC ON - LISTENING" in black text |
 | TypewriterDots | Three portalGreen dots, `animate-bounce` with 0s/0.1s/0.2s delays, `gap-1`, placed at stream end while generating |
 | NeobrutalismButton | 4px black border + 4px black shadow; press: `hover:translate-y-1 hover:shadow-none active:scale-[0.98]`; variants: color-fill (green/yellow/blue/red, black text), paper (white, black text), ghost (transparent, black border); labels max 4 words, never wrap at desktop |
 | ConfirmModal | Centered modal (spaceDark card, 4px black border, black 8px shadow) over black/50 overlay; title + body + [取消 / destructive action] buttons; `Esc` closes, focus trapped |
@@ -153,7 +166,7 @@ All components implement: 4px black borders, hard offset shadows, press feedback
 | Skeleton | Layout-matched skeleton blocks (spaceDark + 2px black border + static 50% opacity — no shimmer) for wizard/asset loading |
 | FormField | Label above input (12px/700 uppercase), input = black 2px border on spaceDark, helper below, error text below in red-500; never placeholder-as-label |
 | WizardShell | Step indicator (numbered black tiles, completed = portalGreen fill), content area, footer [上一步 / 下一步 / 完成]; used by setup wizard + voice enrollment |
-| FileDropZone | Dashed black 4px border zone, `fa-file-import`, drag-over state = portalGreen fill; resume import |
+| FileDropZone | Dashed black 4px border zone, `fa-file-import`, drag-over state = portalGreen fill; 简历导入 |
 | GlossaryRow | Term name (15px/600) + optional category tag (12px, colored) + delete `fa-trash-can`; sparse `border-b` only between groups, not every row |
 | RecordingAssetCard | Session date/duration row, track badges (用户轨 portalGreen / 面试官轨 rickBlue), export buttons (SRT/Markdown/Word), delete |
 | ReviewReportSection | Report card: Action Items list (numbered, portalGreen), sentiment badge (single color-coded pill), key concerns list, per-question replay rows |
@@ -166,7 +179,7 @@ Every component ships the full cycle (taste-skill §4.5), not just the happy pat
 
 - **Loading:** layout-matched skeletons (no generic spinners); stream loading uses TypewriterDots; wizard long steps show step-level progress.
 - **Empty:** composed EmptyState per surface with a next step (copy in Copywriting Contract). Subtitles empty ≠ error — it is the pre-session state.
-- **Error:** inline ErrorBanner above the affected region with a solution path; transient failures (WS drop) use Toast + auto-reconnect state ("正在重连…").
+- **Error:** inline ErrorBanner above the affected region with a solution path; transient failures (WS drop) use Toast + auto-reconnect state (正在重连…).
 - **Tactile:** press physics on every button/tile: `hover:translate-y-1 hover:shadow-none`, `active:scale-[0.98]`; toggle segments darken-fill on hover.
 - **Disabled:** reduced opacity (50%) + gray borders, no shadow, cursor-not-allowed; primary CTA never disabled mid-session without visible reason.
 - **Focus:** 2px solid outline, portalGreen, 2px offset; on green surfaces use black outline; `:focus-visible` only.
@@ -194,6 +207,8 @@ Reduced motion: typewriter renders instantly, pulses go static, toasts appear wi
 ## Copywriting Contract
 
 **Voice:** Chinese-first product copy with English UPPERCASE micro-labels (per reference baseline: "Stealth Mode", "Sync Mobile Device", "Live Stream", "AI Copilot", "MIC ON - LISTENING"). Technical terms keep their English forms (K8s, backpressure, 幂等性). No em-dashes anywhere in UI copy. No filler verbs (无缝/赋能/极致 as decoration — 极言 brand meaning aside, copy must be concrete).
+
+**UI copy language lock:** every user-visible functional label and message stays in Chinese — button labels (开始模拟会话, 开始提词, 扩展视图, 上一步, 下一步, 完成, 重试, 添加术语, 导入简历), page/panel names (术语表, 音色注册, 引导向导, 简历导入, 录音资产, 复盘报告), status copy, empty/error state copy, and confirmation dialog copy (see table below) are locked in Chinese. This document always references those strings in their Chinese form (an English gloss in parentheses is allowed when describing them, but the rendered UI copy is Chinese). Exceptions — design-spec-locked English that stays English: UPPERCASE micro-labels from the reference baseline ("Stealth Mode", "Sync Mobile Device", "Live Stream", "AI Copilot", "MIC ON - LISTENING"), language toggle segments 中 / EN / EN+中, and technical terms in English form (K8s, backpressure).
 
 | Element | Copy |
 |---------|------|
@@ -225,7 +240,7 @@ Reduced motion: typewriter renders instantly, pulses go static, toasts appear wi
 
 Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wire-up in later phases). Each: full state cycle + copy from the Copywriting Contract.
 
-1. **Setup wizard (引导向导, UI only; real driver install is Phase 3):** WizardShell, 4 steps (欢迎 → 安装 BlackHole 说明 → 检测与权限 → 完成), SimSource badge "模拟模式", footer easter-egg line allowed. Install step shows the guided-install copy block, not the installer itself.
+1. **Setup wizard (引导向导, UI only; real driver install is Phase 3):** WizardShell, 4 steps (欢迎 → 安装 BlackHole 说明 → 检测与权限 → 完成), SimSource badge 模拟模式, footer easter-egg line allowed. Install step shows the guided-install copy block, not the installer itself.
 2. **Voice enrollment (音色注册, UI only; real clone is Phase 2):** WizardShell, 3 steps (准备 → 录音 1-3 分钟 with countdown + MicStatusPill → 试听与完成). 试听 uses a placeholder playback tile. Empty/error: mic unavailable banner.
 3. **Glossary (术语表, UI only; term protection wiring is Phase 4):** FormField (term input + 添加 button), GlossaryRow list with group-sparse dividers, delete with ConfirmModal, empty state with CTA.
 4. **Resume import (简历导入, UI only; indexing is Phase 5):** FileDropZone (PDF/Word), file row with success state (portalGreen check), remove with ConfirmModal, empty state with CTA.
@@ -237,6 +252,7 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 ## Accessibility Contract
 
 - **Contrast:** body ≥ 4.5:1, large/bold ≥ 3:1. Colored surfaces take black text (green/blue/yellow/red all pass with black); muted labels gray-400 minimum on dark; focus ring portalGreen on dark, black on green.
+- **Icon-only actions (D2 Visuals FLAG fix):** every icon-only action must carry an `aria-label` or a visible text label fallback — covers window controls (`fa-minus` / `fa-xmark`) and status capsule trailing icons (`fa-microphone-slash` / `fa-expand`).
 - **ARIA:** subtitle stream `aria-live="polite"`; strategy stream `aria-live="polite"`; StatusCapsule label announces mic state; LanguageToggle segments are `aria-pressed` buttons in a `role="group"`; QR tile has alt text; ConfirmModal traps focus and closes on Esc.
 - **Keyboard:** every action reachable; visible focus on `:focus-visible`; no custom cursors.
 - **Reduced motion:** per Motion Contract; `prefers-reduced-motion` collapse is mandatory, not optional.
@@ -264,14 +280,14 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS (FLAG fixed: per-surface visual focal points + icon-only aria-label rule added)
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS (deliberate deviation recorded: 5 sizes + 3 weights, spec-locked, planners must not normalize)
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-08-27
 
 ---
 
@@ -286,3 +302,255 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 | .planning/ROADMAP.md | Phase 1 success criteria incl. 6 missing pages |
 | .planning/research/SUMMARY.md + ARCHITECTURE.md | Stack (Tailwind v3.4, safari15), wake-lock fallback gesture, SimSource demo |
 | user design requirements | taste-skill application mandate, dials, easter-egg policy, dark-only lock |
+
+---
+
+# 中文版 (Chinese Version)
+
+> 本部分为英文正本的完整中文翻译，章节一一对应，语义不变。技术标识符（Tailwind class、CSS token、颜色 HEX、组件名、设计规范编号）保留原文。
+
+## 设计解读与方向 (Design Read & Direction)
+
+**设计解读（Design Read）：** 「面向技术面试候选人的极客/科幻风格产品 UI（桌面工具 + 手机伴随屏），采用新粗野主义 + 暗黑太空语言，依托锁定设计规范 V1.0 手工令牌系统（Space Grotesk、三功能色、4px 边框、硬偏移阴影、圆点矩阵纹理）。」
+
+**三个刻度盘（依据锁定规范推导，非基线默认）：**
+
+| 刻度盘 | 取值 | 理由 |
+|--------|------|------|
+| `DESIGN_VARIANCE` | **7** | 新粗野主义：硬偏移阴影、不对称气泡尾部、彩色头部条、引导线时间轴、超大间距大写微标签。不取 8-9，因为这是固定画幅（340/860/390px）内的功能性产品 UI，面试进行中必须保证可读性。 |
+| `MOTION_INTENSITY` | **4** | 仅保留有动机的微动效：打字机渲染（掩盖 LLM 生成延迟）、按钮按压物理、麦克风/录音呼吸脉冲、生成中圆点。其余全部静态——面试中动效必须澄清流程，而非分散注意力。所有自动动效遵循 `prefers-reduced-motion`。 |
+| `VISUAL_DENSITY` | **5 桌面 / 3 手机** | 桌面：驾驶舱式面板，4px 紧凑节奏 + 大写微标签。手机：规范明确要求信息降噪（沉浸式全屏阅读，取消大按钮）——稀疏、整宽阅读面，仅一个状态胶囊。 |
+
+**反套路纪律（改编自 taste-skill + 用户设计质量规则）：** 每个界面必须体现至少 4 项：比例对比形成的层级；有意图的节奏；硬阴影营造的深度；有性格的字体；语义化色彩；经过设计的 hover/focus/active；能澄清流程的动效。禁用：渐变光斑、柔和/模糊阴影、玻璃拟态、三等分卡片特性行、统一圆角、安全灰底白字、通用模板 UI。圆点矩阵纹理与硬阴影承担氛围；任何装饰不得损害字幕可读性。
+
+## 设计系统 (Design System)
+
+| 属性 | 值 |
+|------|----|
+| 工具 | none（手工设计系统，锁定规范 V1.0） |
+| 预设 | 不适用 |
+| 组件库 | none（按规范 V1.0 + 参考 HTML 自研组件） |
+| 图标库 | FontAwesome 6 Free，本地打包（零 CDN），仅 solid 子集 |
+| 字体 | Space Grotesk（自托管 WOFF2，`font-display: swap`） |
+| 样式 | Tailwind CSS v3.4.x + 纯 CSS 自定义属性承载令牌（Safari 15.6 下限——不可用 v4 特性） |
+
+**shadcn 门评估注记：** 已评估，不适用。上游（PROJECT.md 约束、研究摘要、用户设计要求）锁定手工新粗野主义系统：Tailwind v3.4、定制令牌、FontAwesome 图标、自研组件。Registry 安全门：不适用（无 shadcn、无第三方 registry）。
+
+## 间距标尺 (Spacing Scale)
+
+基础标尺为 Tailwind 的 4px 乘数（规范 V1.0 §4.2）。所有取值均为 4 的倍数。
+
+| 令牌 | 取值 | 用途 |
+|------|------|------|
+| xs | 4px | 图标间距、边框偏移、微徽章内边距 |
+| sm | 8px | 紧凑元素间距（标签-气泡、切换分段） |
+| md | 16px | 默认内边距：页面 `p-4`、卡片 `p-3`/`p-4` |
+| lg | 20px | 页面内边距 `p-5`（规范 §4.2）、卡片内部节奏 |
+| 2lg | 24px | 气泡间距（`gap-6`）、面板内边距 |
+| xl | 32px | 主要区块间布局间距 |
+| 2xl | 48px | 章节分隔、向导步骤分隔 |
+| 3xl | 64px | 页面级间距（340/390px 画幅中极少用） |
+
+**例外（已记录，规范锁定或网格归一化）：**
+- 硬阴影：黑色 4px 偏移（规范 §5.1）、彩色 6px 偏移（参考 HTML 基准）、手机画幅 8px。阴影偏移自成令牌族，不属间距标尺。
+- 时间轴引导线偏移：归一化到 4px 网格——桌面节点 24px → 线 `left-[12px]`，手机节点 32px → 线 `left-[16px]`（参考稿为 11px/15px；归一化保持 4px 标尺且视觉等价）。
+- 触控目标：微型控制台内纯图标按钮保持 32px 命中区；H5 状态胶囊图标保持 40px 最小（手机手指目标）。
+
+## 字体排印 (Typography)
+
+仅使用 Space Grotesk。按锁定规范 §3 使用三种字重（Regular 400 / SemiBold 600 / Bold 700）——这是对惯常「2 字重」契约的刻意偏离（spec-locked），Bold 是新粗野主义观感的主力。
+
+> **D4 Typography FLAG 记录：** 5 字号 + 3 字重超出默认上限，属设计规范 V1.0 §3 锁定的刻意偏离，规划代理不得归一化。
+
+| 角色 | 字号 | 字重 | 行高 | 大小写/字距 | 用途 |
+|------|------|------|------|-------------|------|
+| 面板标题 | 18px | 700 | 28px (1.55) | 大写，`tracking-wider` | 桌面面板标题、品牌头部、向导标题 |
+| 对话正文 | 15px | 600 | 1.5 | 正常句 | 手机对话文本、策略卡要点 |
+| 翻译/备注 | 13px | 700 | 1.5 | 正常句 | 翻译副行、卡片注解、AI 将播报引用 |
+| 标签/状态 | 12px | 700 | 16px (1.33) | 大写，`tracking-wider` | 说话人标签、区块标签、状态胶囊 |
+| 迷你徽章 | 10px | 700 | 14px (1.4) | 大写 | 语言切换、键帽提示、微状态 |
+
+规则：展示级文字一律加粗 + 大写 + 宽字距，禁用斜体（全系统无斜体——Space Grotesk 的个性来自几何而非倾斜）。数字与时间戳同字体同字重。不配衬线、不引入第二字体族。中文使用系统默认字体（macOS/iOS 为 PingFang SC）；中英混排保持 1.5 行高。
+
+## 色彩 (Color)
+
+按设计为暗色独有（锁定——这是工具界面，不是消费者页面；taste-skill 双模式规则不适用）。每种语义角色一种强调色，跨界面锁定（色彩一致性锁）。
+
+| 角色 | 值 | 用途 |
+|------|----|------|
+| 主导色 (60%) | `#151519` darkerSpace | 窗口/H5 根背景、二维码卡片、中性区块 |
+| 次要色 (30%) | `#1E1E24` spaceDark + `#1A1A22` + `#1E293B` slate-800 + `#334155` slate-700 | 面板、侧栏、标签页、面试官气泡（+ slate-700 翻译副行） |
+| 强调色 (10%) | `#97ce4c` portalGreen + `#fbf061` mortyYellow + `#00b5cc` rickBlue | 功能三色，见「保留用途」清单 |
+| 破坏性 | `#ef4444` red-500 | 仅限破坏性操作：录制指示、麦克风关闭、删除、断连 |
+| 墨色 | `#000000` 纯黑 | 边框（4px）、硬阴影、彩色表面上的文字（规范锁定） |
+| 纸色 | `#FFFFFF` 纯白 | AI 策略卡片背景、二维码块、高亮文本（规范锁定） |
+
+**强调色保留用途（明确清单——绝不允许「所有交互元素」）：**
+- **portalGreen（绿 = 用户/发音/成功）：** 用户中文输入气泡、克隆英文输出参考、麦克风激活态、用户侧 CTA（开始模拟会话）、知识库成功勾选、Logo 的 X 高亮。
+- **mortyYellow（黄 = AI/策略）：** AI 策略卡片、AI 时间轴策略节点、AI 生成中指示、AI Copilot 面板头部、简历就绪态。
+- **rickBlue（蓝 = 系统/翻译）：** 面试官中文翻译文本、隐形模式卡片、系统状态（局域网同步、配对）、系统信息横幅。
+- **red-500：** 录制（REC）、麦克风静音、破坏性确认按钮、断连错误。除此之外不得使用。
+
+**对比度契约（强制）：** 彩色表面一律黑字（portalGreen/rickBlue/mortyYellow/red-500 配 `text-black`——黑字在其上均为 5:1-18:1，通过 AA）。白字仅用于暗色中性底（darkerSpace、spaceDark、slate-800、`#1A1A22`、gray-800）。暗底上的弱化标签最低 gray-400；三级备注 gray-500。禁止彩色底白字或彩色字配白底用于正文。
+
+## 布局与容器契约 (Layout & Container Contract)
+
+| 容器 | 尺寸 | 圆角 | 边框 | 阴影 | 内容 |
+|------|------|------|------|------|------|
+| 桌面微型控制台 | 340×680 | `rounded-3xl` (24px) | 4px 黑 | 彩色 6px：portalGreen | 品牌头部（portalGreen）、隐形模式卡、同步卡、知识库行、底部操作条 |
+| 桌面双栏视图 | 860×680 | `rounded-3xl` (24px) | 4px 黑 | 彩色 6px：rickBlue | 头部（rickBlue + 麦克风胶囊）、左字幕窗格（50%）、右 AI Copilot 窗格（50%），以 `border-r-4` 分隔 |
+| 手机画幅 | 390×844 | `rounded-[40px]` | 4px 黑 | 黑 8px | 状态栏、标签页、聊天流 / AI 流、底部状态胶囊 |
+
+**圆点矩阵纹理：** 每个界面的根背景——`background-image: radial-gradient(#4a4a5c 1px, transparent 1px); background-size: 20px 20px;`，叠加在主色之上。仅施加在根层（窗口/页面背景），绝不用于滚动容器（性能规则）。
+
+**视觉焦点（每界面一行，D2 Visuals FLAG 修复）：**
+- 微型控制台 → 传送门绿品牌头部 + 底部「开始模拟会话」主按钮（视觉锚点；中间滚动内容可略读）
+- 双栏视图 → 左侧字幕流为主焦点（实时、高频变化）；右栏 AI 时间轴为次
+- 手机端字幕 Tab → 字幕流为主焦点；底部状态胶囊为次（仅提示麦克风状态）
+- 手机端 AI Copilot Tab → 白色策略卡 + 黄色硬阴影为焦点（阅读面）；状态胶囊退居次位
+- 设置向导 / 音色注册 → 步骤指示器（WizardShell 进度）为焦点；底部操作条为次
+- 术语表 → 术语行列表为主焦点；添加表单为次
+- 简历导入 → 拖放区为唯一焦点；文件行状态为次
+- 录音资产 / 复盘报告 → 资产/报告卡片流为主焦点；导出与删除为次
+
+**导航契约（缺页从微型控制台可达）：**
+1. 微型控制台（340×680）是中枢：顶部品牌头部带窗口控制（最小化/关闭），可滚动内容栈（隐形模式卡 → 同步手机卡 → 知识库：简历行 + 术语表行 + 音色注册行），底部操作条：开始模拟会话（主）+ 扩展视图（打开双栏）+ 设置。
+2. 设置向导、音色注册、术语表、简历导入在控制台窗口内全宽打开，头部带 `fa-arrow-left` 返回。
+3. 录音资产与复盘报告在会话后从控制台（「本地资产」区块）打开；Phase 1 渲染空状态 + 一条明确标注的模拟记录（模拟数据）供演示流。
+4. 双栏视图（860×680）承载模拟会话直播；各窗格头部带语言切换。
+
+**形状一致性锁（已记录规则）：** 设备/窗口外框 24px（手机 40px）；卡片 12px（`rounded-xl`）；气泡 12px 且按说话人削去一角（面试官 `rounded-tl-none`、用户 `rounded-tr-none`）；时间轴图标节点与状态胶囊全圆；语言切换分段全圆。全系统遵守，不引入新圆角。
+
+## 组件清单 (Component Inventory)
+
+所有组件实现：4px 黑边框、硬偏移阴影、按压反馈、可见焦点环、完整状态周期（默认 / hover / focus / active / 加载 / 禁用）。
+
+| 组件 | 规范 |
+|------|------|
+| NexTalkBrand | `NEXTALK` 大写 Space Grotesk Bold，`X` 用 portalGreen（规范 §0）；超级符号 `fa-bolt` 置于黑框贴片；可选 极言 副标题 |
+| HeaderBar | 按界面着色（控制台 portalGreen / 双栏 rickBlue / AI 面板 mortyYellow），`border-b-4`，18px 大写标题，窗口控制（最小化/关闭，纯图标，见无障碍契约） |
+| StealthCard | rickBlue 卡片，`fa-mask`，大写标签 "Stealth Mode"，中文说明，键帽行 `Cmd + Shift + H`（白色键帽、2px 黑边） |
+| QrCodeCard | darkerSpace 卡片、portalGreen 4px 边框、白色 144×144 二维码块（4px 黑边）、说明 扫码开启手机跨端辅助展示、`fa-qrcode` 回退 |
+| KnowledgeRow | mortyYellow 按钮式行：`fa-file-pdf` + 文件名 + `fa-check` 成功态；变体：简历（就绪/缺失）、音色（未注册 → CTA）、术语表（术语数） |
+| ChatBubble | 面试官：slate-800 底、gray-600 2px 边框、`rounded-tl-none`、15px/600 英文文本；翻译副行 slate-700、无顶边、13px/700 rickBlue。用户：green-900 底、portalGreen 2px 边框、`rounded-tr-none`、右对齐、15px/700、portalGreen 2px 硬阴影 |
+| LanguageToggle | 逐气泡分段控件：黑色容器、2px 边框、10px/700 大写分段 中 / EN / EN+中；选中段品牌色填充（用户绿、面试官 gray-600），`aria-pressed` 按钮 |
+| PanelHeader | Live Stream：gray-800 条、portalGreen `fa-closed-captioning`；AI Copilot：mortyYellow 条、`fa-brain` + 生成中 `fa-bolt` 脉冲 |
+| AiTimeline | 引导线（桌面 `left-[12px]` / 手机 `left-[16px]`，`w-1` gray-700）+ 24px/32px 圆节点（灰=上下文 `fa-user-tie`、黄=策略 `fa-lightbulb`、绿=话术 `fa-robot`）；卡片：上下文 slate-800、策略白 + 黄 6px 阴影、话术 portalGreen + 黑 4px 阴影 |
+| StatusCapsule | 手机底部，`#1A1A22` 胶囊 `rounded-full`、4px 黑边 + 阴影、红呼吸点 + 大写标签 + 尾部图标动作（`fa-microphone-slash` / `fa-expand`，纯图标，见无障碍契约），40px 触控目标 |
+| MobileTabs | Subtitles / AI Copilot 分段，4px 黑边框，选中 Tab 品牌色填充 + 同色硬阴影（绿 / 黄），未选 gray-400 |
+| MicStatusPill | red-500、2px 黑边、2px 黑阴影、`animate-pulse`、黑字大写 "MIC ON - LISTENING" |
+| TypewriterDots | 三个 portalGreen 圆点，`animate-bounce` 延迟 0s/0.1s/0.2s，`gap-1`，生成中置于流末端 |
+| NeobrutalismButton | 4px 黑边 + 4px 黑阴影；按压：`hover:translate-y-1 hover:shadow-none active:scale-[0.98]`；变体：彩色填充（绿/黄/蓝/红，黑字）、纸色（白底黑字）、幽灵（透明 + 黑边）；标签最多 4 词，桌面绝不换行 |
+| ConfirmModal | 居中模态（spaceDark 卡片、4px 黑边、8px 黑阴影）叠于 black/50 遮罩；标题 + 正文 + [取消 / 破坏性操作]；`Esc` 关闭、焦点陷于框内 |
+| Toast | 顶部居中，spaceDark、4px 边框、彩色 4px 阴影（绿 ok / 黄 warn / 红 error）、3s 自动消失，仅限瞬时错误 |
+| EmptyState | 图标块（彩色、黑边）+ 标题（13px/700）+ 正文（12px/400 gray-400）+ 可选主 CTA |
+| ErrorBanner | 行内，red-500 或 mortyYellow 填充、黑字、4px 边框、可选 重试 按钮；位于受影响区域上方，绝不替代该区域 |
+| Skeleton | 布局匹配的骨架块（spaceDark + 2px 黑边 + 静态 50% 透明度——无 shimmer），用于向导/资产加载 |
+| FormField | 标签在输入框上方（12px/700 大写），输入框 = spaceDark 上 2px 黑边，帮助文本在下，错误文本在下且 red-500；严禁 placeholder 当标签 |
+| WizardShell | 步骤指示器（编号黑块，完成 = portalGreen 填充）、内容区、底部 [上一步 / 下一步 / 完成]；用于设置向导 + 音色注册 |
+| FileDropZone | 虚线 4px 黑边区域，`fa-file-import`，拖入态 = portalGreen 填充；简历导入 |
+| GlossaryRow | 术语名（15px/600）+ 可选分类标签（12px，彩色）+ 删除 `fa-trash-can`；仅组间稀疏 `border-b`，非每行 |
+| RecordingAssetCard | 会话日期/时长行、轨道徽章（用户轨 portalGreen / 面试官轨 rickBlue）、导出按钮（SRT/Markdown/Word）、删除 |
+| ReviewReportSection | 报告卡片：Action Items 列表（编号、portalGreen）、情绪徽章（单一色码胶囊）、关键关注点列表、逐题回放行 |
+
+## 交互状态 (Interaction States)
+
+每个组件提供完整状态周期（taste-skill §4.5），绝不只是成功态：
+
+- **加载：** 布局匹配的骨架（无通用转圈）；流式加载用 TypewriterDots；向导长步骤显示步骤级进度。
+- **空态：** 每个界面一个精心编排的 EmptyState，带下一步指引（文案见文案契约）。字幕空 ≠ 错误——这是会话前状态。
+- **错误：** 受影响区域上方行内 ErrorBanner，附解决路径；瞬时故障（WS 断连）用 Toast + 自动重连态（正在重连…）。
+- **触觉：** 每个按钮/贴片按压物理：`hover:translate-y-1 hover:shadow-none`、`active:scale-[0.98]`；切换分段 hover 加深填充。
+- **禁用：** 50% 透明度 + 灰边框、无阴影、cursor-not-allowed；会话中主 CTA 不得无故禁用。
+- **焦点：** 2px 实线轮廓，portalGreen，偏移 2px；绿色表面上用黑色轮廓；仅 `:focus-visible`。
+
+## 动效契约 (Motion Contract)
+
+所有动效仅使用合成器友好属性（transform/opacity/文本内容）。每个动画有一句话动机：
+
+| 动效 | 规范 | 动机 |
+|------|------|------|
+| 打字机（SYNC-05） | 按间隔逐字追加（30-50ms/字）；`prefers-reduced-motion` 下全文即时渲染；对测试确定 | 掩盖 LLM 生成延迟；让流看起来鲜活 |
+| 按钮按压 | `hover:translate-y-1 hover:shadow-none`、`active:scale-[0.98]`、150ms ease-out | 硬阴影美学的物理「按下」反馈 |
+| 麦克风 / REC 脉冲 | 红点与 MicStatusPill `animate-pulse` | 真实语义状态：正在录音 |
+| 生成圆点 | 3 点 `animate-bounce`，延迟 0s/0.1s/0.2s | AI 思考中；符合规范 §6 |
+| 隐形过渡 | Cmd+Shift+H 按下时 0.1s 内透明度 → 0（仅过渡反馈；真隐藏 orderOut 属 Phase 4） | 确认按键；实际隐藏为 Phase 4 系统级行为 |
+| Toast | 200ms 滑入，3s 自动消失 | 瞬时状态反馈 |
+| 自动滚动 | 仅新消息时 `scrollIntoView({block:'nearest', behavior:'auto'})`——无滚动劫持、无滚动监听 | 无需抖动的状态下保持最新内容可见 |
+
+减少动效：打字机即时渲染、脉冲变静态、Toast 无滑入。本产品中任何地方不使用跑马灯、视差、滚动触发动画。
+
+## 文案契约 (Copywriting Contract)
+
+**语气：** 中文优先的产品文案 + 英文大写微标签（按参考基准："Stealth Mode"、"Sync Mobile Device"、"Live Stream"、"AI Copilot"、"MIC ON - LISTENING"）。技术术语保留英文原形（K8s、backpressure、幂等性）。UI 文案中任何地方禁用破折号（em-dash）。禁用空洞动词（无缝/赋能/极致作为装饰——「极言」品牌寓意除外，文案必须具体）。
+
+**UI 文案语言锁：** 所有用户可见的功能命名与文案一律保持中文——按钮标签（开始模拟会话、开始提词、扩展视图、上一步、下一步、完成、重试、添加术语、导入简历）、页面/面板名称（术语表、音色注册、引导向导、简历导入、录音资产、复盘报告）、状态文案、空状态与错误状态文案、确认弹窗文案（全部见下表）锁定为中文。本文档引用这些文案时一律保留中文字样（描述性说明可附英文解释于括号中，但界面实际渲染文案必须为中文）。例外——设计规范锁定保持英文的内容：参考基准的英文大写微标签（"Stealth Mode"、"Sync Mobile Device"、"Live Stream"、"AI Copilot"、"MIC ON - LISTENING"）、语言切换分段 中 / EN / EN+中、以及英文原形技术术语（K8s、backpressure）。
+
+| 元素 | 文案 |
+|------|------|
+| 品牌 | `NEXTALK`（Logo）· 极言（中文名）· 窗口标题 "NexTalk" |
+| 主 CTA（桌面） | 开始模拟会话（启动 SimSource 演示会话） |
+| 主 CTA（H5） | 开始提词（同时作为唤起 wake lock 的用户手势） |
+| 次 CTA | 扩展视图 / 上一步 / 下一步 / 完成 / 重试 |
+| 字幕空态 | 等待语音输入 / 模拟会话开始后，双语字幕将显示在这里 |
+| 策略空态 | AI 策略将自动生成 / 提问结束后，策略卡片会出现在这里 |
+| 术语表空态 | 术语表为空 / 添加专有名词（如 K8s、幂等性），翻译时将保持原样 · CTA: 添加术语 |
+| 简历空态 | 尚未导入简历 / 导入 PDF 或 Word 简历，AI 策略将基于真实经历生成 · CTA: 导入简历 |
+| 录音空态 | 暂无录音 / 会话结束后，双轨录音会出现在这里 |
+| 复盘空态 | 暂无复盘报告 / 生成报告后，可查看 Action Items 与关键关注点 |
+| WS 断连错误 | 连接已断开 / 正在自动重连，请保持手机屏幕开启 |
+| 配对错误 | 配对失败 / 请确认手机与电脑连接同一 Wi-Fi，然后重新扫码 |
+| 麦克风错误 | 麦克风不可用 / 请在 系统设置 → 隐私与安全性 → 麦克风 中允许访问 |
+| SimSource 错误 | 模拟音频加载失败 / 请重新开始模拟会话 · CTA: 重试 |
+| 防休眠回退 Toast | 已启用防休眠回退模式 |
+| 破坏性：停止会话 | 停止会话？/ 当前字幕与策略将清空 · [取消 / 停止] |
+| 破坏性：删除术语 | 删除术语「{term}」？/ 该术语将不再受保护 · [取消 / 删除] |
+| 破坏性：移除简历 | 移除简历？/ AI 策略将不再参考该简历 · [取消 / 移除] |
+| 破坏性：删除录音 | 删除录音？/ 该会话的录音将被永久删除，不可恢复 · [取消 / 删除] |
+
+**彩蛋政策：** 允许最多一处不显眼的非功能性装饰性文字保留 Rick & Morty 风味（如设置向导底部 "C-137"），默认关闭；主品牌在所有地方都是 NexTalk。不得有其他引用。
+
+## 缺页契约 (Missing Pages Contract) — Phase 1 范围，仅 UI，同一设计系统
+
+路线图成功标准 5 要求这六个页面在 Phase 1 实现（业务接线在后续阶段）。每页：完整状态周期 + 文案契约中的文案。
+
+1. **设置向导（引导向导，仅 UI；真实驱动安装属 Phase 3）：** WizardShell，4 步（欢迎 → 安装 BlackHole 说明 → 检测与权限 → 完成），SimSource 徽章 模拟模式，允许页脚彩蛋行。安装步骤显示引导安装文案块，而非安装器本身。
+2. **音色注册（仅 UI；真实克隆属 Phase 2）：** WizardShell，3 步（准备 → 录音 1-3 分钟带倒计时 + MicStatusPill → 试听与完成）。试听使用占位播放块。空/错误：麦克风不可用横幅。
+3. **术语表（仅 UI；术语保护接线属 Phase 4）：** FormField（术语输入 + 添加 按钮）、GlossaryRow 列表组间稀疏分隔、删除走 ConfirmModal、空态带 CTA。
+4. **简历导入（仅 UI；预索引属 Phase 5）：** FileDropZone（PDF/Word）、文件行成功态（portalGreen 勾选）、移除走 ConfirmModal、空态带 CTA。
+5. **录音资产（仅 UI；REC 接线属 Phase 6）：** RecordingAssetCard 列表、一条标注「模拟数据」的模拟记录、导出按钮为幽灵按钮、删除走 ConfirmModal、空态。
+6. **复盘报告（仅 UI；生成属 Phase 6）：** ReviewReportSection 布局带标注「模拟数据」的模拟内容：Action Items、情绪徽章、关键关注点、逐题回放行。
+
+## 无障碍契约 (Accessibility Contract)
+
+- **对比度：** 正文 ≥ 4.5:1，大号/粗体 ≥ 3:1。彩色表面配黑字（绿/蓝/黄/红配黑字全部通过）；暗底弱化标签最低 gray-400；焦点环暗底 portalGreen、绿底黑色。
+- **纯图标操作（D2 Visuals FLAG 修复）：** 每个纯图标操作必须带 `aria-label` 或可见文字标签回退——覆盖窗口控制按钮（`fa-minus` / `fa-xmark`）与状态胶囊尾部图标（`fa-microphone-slash` / `fa-expand`）。
+- **ARIA：** 字幕流 `aria-live="polite"`；策略流 `aria-live="polite"`；StatusCapsule 标签播报麦克风状态；LanguageToggle 分段为 `role="group"` 内的 `aria-pressed` 按钮；二维码块带替代文本；ConfirmModal 焦点陷于框内且 `Esc` 可关闭。
+- **键盘：** 每个操作可达；`:focus-visible` 可见焦点；无自定义光标。
+- **减少动效：** 按动效契约执行；`prefers-reduced-motion` 折叠是强制的，不是可选项。
+
+## 兼容性与性能契约 (Compatibility & Performance Contract)
+
+- **Safari 15.6 / WKWebView 下限（macOS 12.7）：** 仅 Tailwind v3.4（禁用 v4：无 `@property`、`color-mix`、`oklch`）；esbuild target `safari15`；令牌用纯 hex CSS 自定义属性；禁用 `:has()`；`backdrop-filter` 仅带 `-webkit-` 前缀（当前未使用）；允许 `dvh`（15.4+）。
+- **零 CDN（UI-03，Phase 7 验证）：** Space Grotesk WOFF2（400/600/700，子集化，`font-display: swap`，预载 700）与 FontAwesome 6 Free（solid 子集：fa-bolt、fa-wave-square、fa-mask、fa-qrcode、fa-file-pdf、fa-file-import、fa-check、fa-desktop、fa-closed-captioning、fa-brain、fa-microphone、fa-microphone-slash、fa-user-tie、fa-lightbulb、fa-robot、fa-circle-notch、fa-signal、fa-wifi、fa-battery-full、fa-expand、fa-xmark、fa-minus、fa-arrow-left、fa-trash-can、fa-book、fa-headphones、fa-rotate、fa-satellite-dish）全部本地打包。
+- **预算：** 应用页 JS < 300kb gz、CSS < 50kb gz；不引入第三方 UI 库。
+- **纹理：** 圆点矩阵背景仅用于根界面，绝不放入滚动容器。
+- **动效：** 仅 transform/opacity/文本内容；无滚动监听；打字机用已提交文本上的 interval。
+- **布局稳定：** 固定容器尺寸（340×680 / 860×680 / 390×844）配 `overflow-hidden` 外框与内部滚动区；动态内容零 CLS（气泡随渲染预留空间）。
+
+## Registry 安全 (Registry Safety)
+
+| Registry | 使用块 | 安全门 |
+|----------|--------|--------|
+| 无 | 无 | 不适用——无 shadcn、无第三方 registry（按锁定规范 V1.0 手工设计系统） |
+
+## Checker 签收 (Checker Sign-Off)
+
+- [x] 维度 1 文案（Copywriting）：PASS
+- [x] 维度 2 视觉（Visuals）：PASS（FLAG 已修复：各界面视觉焦点声明 + 纯图标操作 aria-label 规则已补充）
+- [x] 维度 3 色彩（Color）：PASS
+- [x] 维度 4 字体（Typography）：PASS（刻意偏离已记录：5 字号 + 3 字重，规范锁定，规划代理不得归一化）
+- [x] 维度 5 间距（Spacing）：PASS
+- [x] 维度 6 Registry 安全（Registry Safety）：PASS
+
+**批准：** approved 2026-08-27
