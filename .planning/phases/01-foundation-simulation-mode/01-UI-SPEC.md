@@ -101,8 +101,8 @@ Dark-only by design (locked — it is a tool surface, not a consumer page; the t
 
 **Accent reserved for (explicit — never "all interactive elements"):**
 - **portalGreen (绿 = 用户/发音/成功):** user's Chinese input bubble, cloned-English output reference, mic active state, user-side CTAs (开始模拟会话), knowledge-base success check, logo X highlight.
-- **mortyYellow (黄 = AI/策略):** AI strategy cards, AI timeline strategy node, AI-generating indicator, AI Copilot panel header, resume-ready state.
-- **rickBlue (蓝 = 系统/翻译):** interviewer's Chinese translation text, Stealth Mode card, system status (LAN sync, pairing), system info banners.
+- **mortyYellow (黄 = AI/策略):** AI strategy cards, AI timeline strategy node, AI-generating indicator, AI 辅助 panel header, resume-ready state.
+- **rickBlue (蓝 = 系统/翻译):** interviewer's Chinese translation text, 隐形模式 card, system status (LAN sync, pairing), system info banners.
 - **red-500:** recording (REC), mic muted, destructive confirm buttons, disconnect errors. Nothing else.
 
 **Contrast contract (mandatory):** colored surfaces always take black text (portalGreen/rickBlue/mortyYellow/red-500 with `text-black` — all pass AA with black at 5:1-18:1). White text only on dark neutrals (darkerSpace, spaceDark, slate-800, `#1A1A22`, gray-800). Muted labels on dark use gray-400 minimum; tertiary notes gray-500. Never white-on-color or color-on-white for body text.
@@ -114,7 +114,7 @@ Dark-only by design (locked — it is a tool surface, not a consumer page; the t
 | Container | Size | Radius | Border | Shadow | Content |
 |-----------|------|--------|--------|--------|---------|
 | Desktop widget | 340×680 | `rounded-3xl` (24px) | 4px black | colored 6px: portalGreen | Brand header (portalGreen), stealth card, sync card, knowledge base rows, bottom action bar |
-| Desktop dual-pane | 860×680 | `rounded-3xl` (24px) | 4px black | colored 6px: rickBlue | Header (rickBlue + mic pill), left Live Stream pane (50%), right AI Copilot pane (50%), split by `border-r-4` |
+| Desktop dual-pane | 860×680 | `rounded-3xl` (24px) | 4px black | colored 6px: rickBlue | Header (rickBlue + mic pill), left 实时字幕 pane (50%), right AI 辅助 pane (50%), split by `border-r-4` |
 | Mobile frame | 390×844 | `rounded-[40px]` | 4px black | black 8px | Status bar, tabs, chat stream / AI flow, bottom status capsule |
 
 **Dot-matrix texture:** root background of every surface — `background-image: radial-gradient(#4a4a5c 1px, transparent 1px); background-size: 20px 20px;` over the dominant color. Applied ONLY at the root layer (window/page background), never on scrolling containers (performance rule).
@@ -123,7 +123,7 @@ Dark-only by design (locked — it is a tool surface, not a consumer page; the t
 - Mini console → portalGreen brand header + bottom 开始模拟会话 primary CTA (visual anchor; scrollable middle content is skimmable)
 - Dual-pane view → left subtitle stream is the primary focus (live, high-frequency); right AI timeline secondary
 - Mobile Subtitles tab → subtitle stream primary; status capsule secondary (mic state only)
-- Mobile AI Copilot tab → white strategy card with yellow hard shadow is the focus (reading surface); status capsule recedes
+- Mobile AI 辅助 tab → white strategy card with yellow hard shadow is the focus (reading surface); status capsule recedes
 - Setup wizard / voice enrollment → step indicator (WizardShell progress) is the focus; bottom action bar secondary
 - Glossary → term list is the primary focus; add form secondary
 - Resume import → drop zone is the single focus; file-row status secondary
@@ -147,16 +147,16 @@ All components implement: 4px black borders, hard offset shadows, press feedback
 |-----------|------|
 | NexTalkBrand | `NEXTALK` uppercase Space Grotesk Bold, `X` in portalGreen (spec §0); super-symbol `fa-bolt` on black-bordered tile; optional 极言 subtitle |
 | HeaderBar | Colored per surface (portalGreen widget / rickBlue dual-pane / mortyYellow AI panel), `border-b-4`, uppercase 18px title, window controls (min/close, icon-only, see Accessibility) |
-| StealthCard | rickBlue card, `fa-mask`, uppercase label "Stealth Mode", Chinese description, keycap row `Cmd + Shift + H` (white keycap, black 2px border) |
+| StealthCard | rickBlue card, `fa-mask`, uppercase label "隐形模式", Chinese description, keycap row `Cmd + Shift + H` (white keycap, black 2px border) |
 | QrCodeCard | darkerSpace card, portalGreen 4px border, white 144×144 QR tile (black 4px border), caption 扫码开启手机跨端辅助展示, `fa-qrcode` fallback |
 | KnowledgeRow | mortyYellow button-style row: `fa-file-pdf` + filename + `fa-check` success state; variants: resume (ready/missing), voice (未注册 → CTA), glossary (term count) |
 | ChatBubble | Interviewer: slate-800 bg, gray-600 2px border, `rounded-tl-none`, 15px/600 EN text; translation subline slate-700, no top border, 13px/700 rickBlue. User: green-900 bg, portalGreen 2px border, `rounded-tr-none`, right-aligned, 15px/700, portalGreen 2px hard shadow |
 | LanguageToggle | Per-bubble segmented control: black container, 2px border, 10px/700 UPPERCASE segments 中 / EN / EN+中; selected segment filled with brand color (green for user, gray-600 for interviewer), `aria-pressed` buttons |
-| PanelHeader | Live Stream: gray-800 bar, `fa-closed-captioning` in portalGreen; AI Copilot: mortyYellow bar, `fa-brain` + `fa-bolt` pulse while generating |
+| PanelHeader | 实时字幕: gray-800 bar, `fa-closed-captioning` in portalGreen; AI 辅助: mortyYellow bar, `fa-brain` + `fa-bolt` pulse while generating |
 | AiTimeline | Guide line (left-[12px] desktop / left-[16px] mobile, `w-1` gray-700) + 24px/32px circular nodes (gray=context `fa-user-tie`, yellow=strategy `fa-lightbulb`, green=draft `fa-robot`); cards: context slate-800, strategy white + yellow 6px shadow, draft portalGreen + black 4px shadow |
 | StatusCapsule | Mobile bottom, `#1A1A22` pill `rounded-full`, black 4px border + shadow, red breathing dot + uppercase label + trailing icon action (`fa-microphone-slash` / `fa-expand`, icon-only, see Accessibility), 40px touch targets |
-| MobileTabs | Subtitles / AI Copilot segmented, black 4px border, selected tab filled brand color with matching hard shadow (green / yellow), inactive gray-400 |
-| MicStatusPill | red-500, 2px black border, 2px black shadow, `animate-pulse`, uppercase "MIC ON - LISTENING" in black text |
+| MobileTabs | 字幕 / AI 辅助 segmented, black 4px border, selected tab filled brand color with matching hard shadow (green / yellow), inactive gray-400 |
+| MicStatusPill | red-500, 2px black border, 2px black shadow, `animate-pulse`, uppercase "麦克风开启-监听中" in black text |
 | TypewriterDots | Three portalGreen dots, `animate-bounce` with 0s/0.1s/0.2s delays, `gap-1`, placed at stream end while generating |
 | NeobrutalismButton | 4px black border + 4px black shadow; press: `hover:translate-y-1 hover:shadow-none active:scale-[0.98]`; variants: color-fill (green/yellow/blue/red, black text), paper (white, black text), ghost (transparent, black border); labels max 4 words, never wrap at desktop |
 | ConfirmModal | Centered modal (spaceDark card, 4px black border, black 8px shadow) over black/50 overlay; title + body + [取消 / destructive action] buttons; `Esc` closes, focus trapped |
@@ -206,9 +206,9 @@ Reduced motion: typewriter renders instantly, pulses go static, toasts appear wi
 
 ## Copywriting Contract
 
-**Voice:** Chinese-first product copy with English UPPERCASE micro-labels (per reference baseline: "Stealth Mode", "Sync Mobile Device", "Live Stream", "AI Copilot", "MIC ON - LISTENING"). Technical terms keep their English forms (K8s, backpressure, 幂等性). No em-dashes anywhere in UI copy. No filler verbs (无缝/赋能/极致 as decoration — 极言 brand meaning aside, copy must be concrete).
+**Voice:** Chinese-first product copy; all functional micro-labels render in Chinese (隐形模式, 同步手机, 实时字幕, AI 辅助, 麦克风开启-监听中 — replacing the reference HTML's English UPPERCASE labels per user decision 2026-08-27). Technical terms keep their English forms (K8s, backpressure, 幂等性). No em-dashes anywhere in UI copy. No filler verbs (无缝/赋能/极致 as decoration, 极言 brand meaning aside, copy must be concrete).
 
-**UI copy language lock:** every user-visible functional label and message stays in Chinese — button labels (开始模拟会话, 开始提词, 扩展视图, 上一步, 下一步, 完成, 重试, 添加术语, 导入简历), page/panel names (术语表, 音色注册, 引导向导, 简历导入, 录音资产, 复盘报告), status copy, empty/error state copy, and confirmation dialog copy (see table below) are locked in Chinese. This document always references those strings in their Chinese form (an English gloss in parentheses is allowed when describing them, but the rendered UI copy is Chinese). Exceptions — design-spec-locked English that stays English: UPPERCASE micro-labels from the reference baseline ("Stealth Mode", "Sync Mobile Device", "Live Stream", "AI Copilot", "MIC ON - LISTENING"), language toggle segments 中 / EN / EN+中, and technical terms in English form (K8s, backpressure).
+**UI copy language lock:** every user-visible functional label and message stays in Chinese — button labels (开始模拟会话, 开始提词, 扩展视图, 上一步, 下一步, 完成, 重试, 添加术语, 导入简历), page/panel names (术语表, 音色注册, 引导向导, 简历导入, 录音资产, 复盘报告), status copy, empty/error state copy, confirmation dialog copy, and functional micro-labels (隐形模式, 同步手机, 实时字幕, AI 辅助, 麦克风开启-监听中) are locked in Chinese. This document always references those strings in their Chinese form (an English gloss in parentheses is allowed when describing them, but the rendered UI copy is Chinese). Exceptions that stay non-Chinese: language toggle segments 中 / EN / EN+中, and technical terms in English form (K8s, backpressure).
 
 | Element | Copy |
 |---------|------|
@@ -387,7 +387,7 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 
 **强调色保留用途（明确清单——绝不允许「所有交互元素」）：**
 - **portalGreen（绿 = 用户/发音/成功）：** 用户中文输入气泡、克隆英文输出参考、麦克风激活态、用户侧 CTA（开始模拟会话）、知识库成功勾选、Logo 的 X 高亮。
-- **mortyYellow（黄 = AI/策略）：** AI 策略卡片、AI 时间轴策略节点、AI 生成中指示、AI Copilot 面板头部、简历就绪态。
+- **mortyYellow（黄 = AI/策略）：** AI 策略卡片、AI 时间轴策略节点、AI 生成中指示、AI 辅助 面板头部、简历就绪态。
 - **rickBlue（蓝 = 系统/翻译）：** 面试官中文翻译文本、隐形模式卡片、系统状态（局域网同步、配对）、系统信息横幅。
 - **red-500：** 录制（REC）、麦克风静音、破坏性确认按钮、断连错误。除此之外不得使用。
 
@@ -398,7 +398,7 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 | 容器 | 尺寸 | 圆角 | 边框 | 阴影 | 内容 |
 |------|------|------|------|------|------|
 | 桌面微型控制台 | 340×680 | `rounded-3xl` (24px) | 4px 黑 | 彩色 6px：portalGreen | 品牌头部（portalGreen）、隐形模式卡、同步卡、知识库行、底部操作条 |
-| 桌面双栏视图 | 860×680 | `rounded-3xl` (24px) | 4px 黑 | 彩色 6px：rickBlue | 头部（rickBlue + 麦克风胶囊）、左字幕窗格（50%）、右 AI Copilot 窗格（50%），以 `border-r-4` 分隔 |
+| 桌面双栏视图 | 860×680 | `rounded-3xl` (24px) | 4px 黑 | 彩色 6px：rickBlue | 头部（rickBlue + 麦克风胶囊）、左实时字幕窗格（50%）、右 AI 辅助 窗格（50%），以 `border-r-4` 分隔 |
 | 手机画幅 | 390×844 | `rounded-[40px]` | 4px 黑 | 黑 8px | 状态栏、标签页、聊天流 / AI 流、底部状态胶囊 |
 
 **圆点矩阵纹理：** 每个界面的根背景——`background-image: radial-gradient(#4a4a5c 1px, transparent 1px); background-size: 20px 20px;`，叠加在主色之上。仅施加在根层（窗口/页面背景），绝不用于滚动容器（性能规则）。
@@ -407,7 +407,7 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 - 微型控制台 → 传送门绿品牌头部 + 底部「开始模拟会话」主按钮（视觉锚点；中间滚动内容可略读）
 - 双栏视图 → 左侧字幕流为主焦点（实时、高频变化）；右栏 AI 时间轴为次
 - 手机端字幕 Tab → 字幕流为主焦点；底部状态胶囊为次（仅提示麦克风状态）
-- 手机端 AI Copilot Tab → 白色策略卡 + 黄色硬阴影为焦点（阅读面）；状态胶囊退居次位
+- 手机端 AI 辅助 Tab → 白色策略卡 + 黄色硬阴影为焦点（阅读面）；状态胶囊退居次位
 - 设置向导 / 音色注册 → 步骤指示器（WizardShell 进度）为焦点；底部操作条为次
 - 术语表 → 术语行列表为主焦点；添加表单为次
 - 简历导入 → 拖放区为唯一焦点；文件行状态为次
@@ -429,16 +429,16 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 |------|------|
 | NexTalkBrand | `NEXTALK` 大写 Space Grotesk Bold，`X` 用 portalGreen（规范 §0）；超级符号 `fa-bolt` 置于黑框贴片；可选 极言 副标题 |
 | HeaderBar | 按界面着色（控制台 portalGreen / 双栏 rickBlue / AI 面板 mortyYellow），`border-b-4`，18px 大写标题，窗口控制（最小化/关闭，纯图标，见无障碍契约） |
-| StealthCard | rickBlue 卡片，`fa-mask`，大写标签 "Stealth Mode"，中文说明，键帽行 `Cmd + Shift + H`（白色键帽、2px 黑边） |
+| StealthCard | rickBlue 卡片，`fa-mask`，大写标签 "隐形模式"，中文说明，键帽行 `Cmd + Shift + H`（白色键帽、2px 黑边） |
 | QrCodeCard | darkerSpace 卡片、portalGreen 4px 边框、白色 144×144 二维码块（4px 黑边）、说明 扫码开启手机跨端辅助展示、`fa-qrcode` 回退 |
 | KnowledgeRow | mortyYellow 按钮式行：`fa-file-pdf` + 文件名 + `fa-check` 成功态；变体：简历（就绪/缺失）、音色（未注册 → CTA）、术语表（术语数） |
 | ChatBubble | 面试官：slate-800 底、gray-600 2px 边框、`rounded-tl-none`、15px/600 英文文本；翻译副行 slate-700、无顶边、13px/700 rickBlue。用户：green-900 底、portalGreen 2px 边框、`rounded-tr-none`、右对齐、15px/700、portalGreen 2px 硬阴影 |
 | LanguageToggle | 逐气泡分段控件：黑色容器、2px 边框、10px/700 大写分段 中 / EN / EN+中；选中段品牌色填充（用户绿、面试官 gray-600），`aria-pressed` 按钮 |
-| PanelHeader | Live Stream：gray-800 条、portalGreen `fa-closed-captioning`；AI Copilot：mortyYellow 条、`fa-brain` + 生成中 `fa-bolt` 脉冲 |
+| PanelHeader | 实时字幕：gray-800 条、portalGreen `fa-closed-captioning`；AI 辅助：mortyYellow 条、`fa-brain` + 生成中 `fa-bolt` 脉冲 |
 | AiTimeline | 引导线（桌面 `left-[12px]` / 手机 `left-[16px]`，`w-1` gray-700）+ 24px/32px 圆节点（灰=上下文 `fa-user-tie`、黄=策略 `fa-lightbulb`、绿=话术 `fa-robot`）；卡片：上下文 slate-800、策略白 + 黄 6px 阴影、话术 portalGreen + 黑 4px 阴影 |
 | StatusCapsule | 手机底部，`#1A1A22` 胶囊 `rounded-full`、4px 黑边 + 阴影、红呼吸点 + 大写标签 + 尾部图标动作（`fa-microphone-slash` / `fa-expand`，纯图标，见无障碍契约），40px 触控目标 |
-| MobileTabs | Subtitles / AI Copilot 分段，4px 黑边框，选中 Tab 品牌色填充 + 同色硬阴影（绿 / 黄），未选 gray-400 |
-| MicStatusPill | red-500、2px 黑边、2px 黑阴影、`animate-pulse`、黑字大写 "MIC ON - LISTENING" |
+| MobileTabs | 字幕 / AI 辅助 分段，4px 黑边框，选中 Tab 品牌色填充 + 同色硬阴影（绿 / 黄），未选 gray-400 |
+| MicStatusPill | red-500、2px 黑边、2px 黑阴影、`animate-pulse`、黑字大写 "麦克风开启-监听中" |
 | TypewriterDots | 三个 portalGreen 圆点，`animate-bounce` 延迟 0s/0.1s/0.2s，`gap-1`，生成中置于流末端 |
 | NeobrutalismButton | 4px 黑边 + 4px 黑阴影；按压：`hover:translate-y-1 hover:shadow-none active:scale-[0.98]`；变体：彩色填充（绿/黄/蓝/红，黑字）、纸色（白底黑字）、幽灵（透明 + 黑边）；标签最多 4 词，桌面绝不换行 |
 | ConfirmModal | 居中模态（spaceDark 卡片、4px 黑边、8px 黑阴影）叠于 black/50 遮罩；标题 + 正文 + [取消 / 破坏性操作]；`Esc` 关闭、焦点陷于框内 |
@@ -482,9 +482,9 @@ Roadmap success criterion 5 requires these six pages implemented in Phase 1 (wir
 
 ## 文案契约 (Copywriting Contract)
 
-**语气：** 中文优先的产品文案 + 英文大写微标签（按参考基准："Stealth Mode"、"Sync Mobile Device"、"Live Stream"、"AI Copilot"、"MIC ON - LISTENING"）。技术术语保留英文原形（K8s、backpressure、幂等性）。UI 文案中任何地方禁用破折号（em-dash）。禁用空洞动词（无缝/赋能/极致作为装饰——「极言」品牌寓意除外，文案必须具体）。
+**语气：** 中文优先的产品文案；所有功能微标签一律以中文渲染（隐形模式、同步手机、实时字幕、AI 辅助、麦克风开启-监听中——按 2026-08-27 用户决定，替换参考 HTML 的英文大写标签）。技术术语保留英文原形（K8s、backpressure、幂等性）。UI 文案中任何地方禁用破折号（em-dash）。禁用空洞动词（无缝/赋能/极致作为装饰——「极言」品牌寓意除外，文案必须具体）。
 
-**UI 文案语言锁：** 所有用户可见的功能命名与文案一律保持中文——按钮标签（开始模拟会话、开始提词、扩展视图、上一步、下一步、完成、重试、添加术语、导入简历）、页面/面板名称（术语表、音色注册、引导向导、简历导入、录音资产、复盘报告）、状态文案、空状态与错误状态文案、确认弹窗文案（全部见下表）锁定为中文。本文档引用这些文案时一律保留中文字样（描述性说明可附英文解释于括号中，但界面实际渲染文案必须为中文）。例外——设计规范锁定保持英文的内容：参考基准的英文大写微标签（"Stealth Mode"、"Sync Mobile Device"、"Live Stream"、"AI Copilot"、"MIC ON - LISTENING"）、语言切换分段 中 / EN / EN+中、以及英文原形技术术语（K8s、backpressure）。
+**UI 文案语言锁：** 所有用户可见的功能命名与文案一律保持中文——按钮标签（开始模拟会话、开始提词、扩展视图、上一步、下一步、完成、重试、添加术语、导入简历）、页面/面板名称（术语表、音色注册、引导向导、简历导入、录音资产、复盘报告）、状态文案、空状态与错误状态文案、确认弹窗文案、功能微标签（隐形模式、同步手机、实时字幕、AI 辅助、麦克风开启-监听中）（全部见下表）锁定为中文。本文档引用这些文案时一律保留中文字样（描述性说明可附英文解释于括号中，但界面实际渲染文案必须为中文）。例外——保留非中文的内容：语言切换分段 中 / EN / EN+中、以及英文原形技术术语（K8s、backpressure）。
 
 | 元素 | 文案 |
 |------|------|
