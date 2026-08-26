@@ -89,13 +89,39 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmapper) | | |
+| AUDI-01 | Phase 3 | Pending |
+| AUDI-02 | Phase 3 | Pending |
+| AUDI-03 | Phase 2 | Pending |
+| AUDI-04 | Phase 2 | Pending |
+| AUDI-05 | Phase 2 | Pending |
+| AUDI-06 | Phase 2 | Pending |
+| AUDI-07 | Phase 4 | Pending |
+| SYNC-01 | Phase 1 | Pending |
+| SYNC-02 | Phase 1 | Pending |
+| SYNC-03 | Phase 1 | Pending |
+| SYNC-04 | Phase 1 | Pending |
+| SYNC-05 | Phase 1 | Pending |
+| DSK-01 | Phase 1 | Pending |
+| DSK-02 | Phase 1 | Pending |
+| DSK-03 | Phase 4 | Pending |
+| DSK-04 | Phase 1 | Pending |
+| COPT-01 | Phase 5 | Pending |
+| COPT-02 | Phase 5 | Pending |
+| COPT-03 | Phase 5 | Pending |
+| COPT-04 | Phase 5 | Pending |
+| REC-01 | Phase 6 | Pending |
+| REC-02 | Phase 6 | Pending |
+| REC-03 | Phase 6 | Pending |
+| REC-04 | Phase 6 | Pending |
+| UI-01 | Phase 1 | Pending |
+| UI-02 | Phase 1 | Pending |
+| UI-03 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 27 total
-- Mapped to phases: 0
-- Unmapped: 27 ⚠️ (awaiting roadmap)
+- Mapped to phases: 27 (Phase 7 Productization is a distribution-hardening phase per research; carries no direct requirement mappings)
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-08-26*
-*Last updated: 2026-08-26 after initial definition*
+*Last updated: 2026-08-27 (roadmap traceability)*
