@@ -36,13 +36,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans
 
 Plans:
-- [ ] 01-01: Workspace skeleton (Tauri 2 + React 19 + Vite + Tailwind v3.4 local, esbuild safari15) + neobrutalism design tokens + reference HTML 4 screens
-- [ ] 01-02: Desktop UI: mini console, dual-pane view, subtitle components + missing pages
-- [ ] 01-03: LAN WebSocket server + shared protocol package + QR pairing (pairing-as-auth token)
-- [ ] 01-04: Phone H5 teleprompter: streaming subtitles, strategy pane, language toggle, typewriter, wake-lock fallback
-- [ ] 01-05: SimSource audio source + mock STT/translate/TTS stages + full end-to-end event flow demo
+- [ ] 01-01: Workspace + toolchain (rustup/pnpm, pnpm workspace, Vite 7 safari15 targets, Vitest/Playwright configs) + design tokens + protocol package (blocking-human package legitimacy gate)
+- [ ] 01-02: Walking skeleton: Tauri two-window frameless shell + axum LAN server (pairing-as-auth, port 8787) + minimal r1 SimSource + H5 stub + e2e skeleton spec
+- [ ] 01-03: Desktop UI complete: console hub (DSK-01) + dual-pane live view with per-bubble language toggles (DSK-02/DSK-04) + six missing pages (UI-02) with mock data
+- [ ] 01-04: Phone H5 complete: full teleprompter UI + wake-lock fallback (SYNC-04) + WS backoff reconnect + sinceSeq resume (SYNC-05) + control round-trip (SYNC-03)
+- [ ] 01-05: Full 4-round SimSource engine + live demo wiring across all surfaces (打断/重听 per D-03) + vendor experiment framework (D-04)
 
-**Research notes**: Run the decisive vendor experiments here (STT A/B Gemini Live vs Deepgram Nova-3 on real interview Chinese, blinded clone listening test MiniMax vs Cartesia vs Fish vs ElevenLabs, network RTT per vendor from user's region, Gemini Live text-modality probe). Results decide the Phase 2 stack wiring.
+**Research notes**: Run the decisive vendor experiments here (STT A/B Gemini Live vs Deepgram Nova-3 on real interview Chinese, blinded clone listening test MiniMax vs Cartesia vs Fish vs ElevenLabs, network RTT per vendor from user's region, Gemini Live text-modality probe). Results decide the Phase 2 stack wiring. Per CONTEXT.md D-04 the experiment FRAMEWORK ships in Phase 1 (01-05 Task 3, zero API keys); the experiments themselves run between Phase 1 and Phase 2 planning.
 **UI hint**: yes
 
 ### Phase 2: Real Cloud Pipeline + Audio Core
