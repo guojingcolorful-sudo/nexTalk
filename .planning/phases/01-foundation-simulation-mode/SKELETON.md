@@ -27,6 +27,7 @@ This replaces the usual skeleton "DB read/write" with the **LAN WS round-trip** 
 | Polyfills | `core-js/proposals/promise-with-resolvers` at both app entries | `Promise.withResolvers` is absent in Safari ≤17.3 — deps may call it at runtime |
 | Test runner | Vitest 4.1.11 (unit, per package) + Playwright 1.62.1 (e2e in real browsers; Tauri shell smoke-tested manually) | A7 tradeoff accepted: WKWebView-specific behavior verified on the real machine, which IS the macOS 12.7 floor |
 | Package manager | pnpm via corepack (workspace `apps/*`, `packages/*`) | STACK.md lock; one lockfile |
+| Dev-run wiring | `tauri dev`'s `beforeDevCommand` = `concurrently "pnpm --filter @nextalk/desktop dev" "pnpm --filter @nextalk/teleprompter build --watch"` — starts the desktop Vite dev server (port 1420 strictPort, the devUrl source) AND the teleprompter watch build (axum serves its dist on 8787). Never `tauri dev` inside `beforeDevCommand` (self-recursion) | One command runs the whole stack in dev: `pnpm --filter @nextalk/desktop tauri dev` |
 | Directory layout | `apps/desktop` (Tauri + both windows' React), `apps/teleprompter` (H5), `packages/protocol`, `packages/design-tokens`; Rust sim/ + lan/ modules under `src-tauri/src` | Source-consumed shared packages (no build step); feature-aligned modules |
 
 ## Stack Touched in Phase 1
@@ -35,7 +36,7 @@ This replaces the usual skeleton "DB read/write" with the **LAN WS round-trip** 
 - [x] Routing — HashRouter in the desktop app: `#/console`, `#/dual`, + 6 missing pages; H5 tab routing
 - [x] "Database read/write" → LAN WS round-trip — axum server + token-checked WS upgrade + broadcast + timeline replay
 - [x] UI — at least one interactive element wired to the integration: 开始模拟会话 starts SimSource → subtitle renders on console + dual + phone
-- [x] Deployment — documented local-run command exercising the full stack: `pnpm --filter @nextalk/teleprompter build && pnpm --filter @nextalk/desktop tauri dev` (axum serves the built H5 on port 8787)
+- [x] Deployment — documented local-run command exercising the full stack: `pnpm --filter @nextalk/desktop tauri dev` — `beforeDevCommand` concurrently starts the desktop Vite dev server on 1420 (the devUrl source) and the teleprompter watch build; axum serves the built H5 on port 8787
 
 ## Out of Scope (Deferred to Later Slices)
 

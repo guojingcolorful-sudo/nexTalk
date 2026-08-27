@@ -125,7 +125,7 @@ Directives extracted from `<home>/nexTalk/CLAUDE.md` that the planner must honor
 | core-js (proposal/promise-with-resolvers) | Polyfill ES2023 `Promise.withResolvers` (absent in Safari ≤17.3) | At every app entry; only polyfill needed if deps use it — add defensively, ~small size [ASSUMED] |
 | @tauri-apps/plugin-global-shortcut 2.3.2 | Cmd+Shift+H registration | Optional in Phase 1 (stealth transition feedback only; real hiding is Phase 4) — only if the demo wants keyboard-triggered transition; otherwise trigger from StealthCard click [ASSUMED — npm registry confirmed] |
 | tauri-plugin-single-instance | — | Not Phase 1 (would prevent double-launch demo windows) — skip |
-| concurrently | — | Root dev script: `tauri dev` + teleprompter `vite build --watch` [ASSUMED] |
+| concurrently | — | `beforeDevCommand` (01-02): desktop vite dev (1420) + teleprompter watch build; root dev convenience script [ASSUMED] |
 | eslint / prettier | — | Formatting/lint per project conventions; versions at planner's discretion |
 
 ### Alternatives Considered
@@ -249,10 +249,10 @@ SimSource script → evaluator emits [QuestionEvent → SubtitleDeltas → Strat
 ```
 nexTalk/
 ├── pnpm-workspace.yaml            # packages: apps/*, packages/*
-├── package.json                   # root scripts: dev (concurrently), build, test
+├── package.json                   # root scripts: dev (concurrently: desktop vite 1420 + teleprompter watch), build, test
 ├── apps/
 │   ├── desktop/                   # Tauri 2 + React 19 + Vite 7 (both windows)
-│   │   ├── package.json
+│   │   ├── package.json           # scripts: dev (vite, port 1420 strictPort), build, test
 │   │   ├── vite.config.ts         # build.target: ['safari15','es2022']
 │   │   ├── tailwind.config.js     # preset: @nextalk/design-tokens
 │   │   ├── index.html
@@ -267,18 +267,20 @@ nexTalk/
 │   │   │   └── styles/            # global.css (dot matrix, tokens import)
 │   │   └── src-tauri/
 │   │       ├── Cargo.toml         # tauri features=["macos-private-api"], axum(ws), ...
-│   │       ├── tauri.conf.json    # app.windows[console|dual], bundle.minimumSystemVersion "12.0"
+│   │       ├── tauri.conf.json    # app.windows[console|dual], bundle.minimumSystemVersion "12.0",
+│   │       │                      #   beforeDevCommand = concurrently(desktop vite 1420 + teleprompter watch)
 │   │       ├── capabilities/default.json
 │   │       └── src/
 │   │           ├── main.rs / lib.rs
-│   │           ├── state.rs       # SessionState (token, timeline, language prefs)
+│   │           ├── state.rs       # SessionState (token, timeline, language prefs, client count, app handle)
 │   │           ├── lan/
-│   │           │   ├── server.rs  # axum router: ServeDir + /ws handler + IP discovery
-│   │           │   └── protocol.rs# serde mirror of @nextalk/protocol types
+│   │           │   ├── mod.rs
+│   │           │   └── server.rs  # axum router: ServeDir + /ws handler + IP discovery + serde mirror of @nextalk/protocol types
 │   │           └── sim/
-│   │               ├── source.rs  # AudioSource trait (Phase 1: SimSource impl only)
-│   │               ├── script.rs  # script.json schema + pure evaluator
-│   │               └── scheduler.rs  # wall-clock driver (injectable time source)
+│   │               ├── mod.rs
+│   │               ├── source.rs  # pure evaluator script_state + wall-clock scheduler (injectable TimeSource)
+│   │               ├── script.rs  # 4-round script data (r1 locked DB-optimization content)
+│   │               └── source_test.rs  # determinism / rounds / interrupt / repeat tests
 │   └── teleprompter/              # Phone H5 (React 19 + Vite 7, static build)
 │       ├── package.json
 │       ├── vite.config.ts         # base:'./', build outDir
@@ -299,7 +301,7 @@ nexTalk/
 
 **Build order (root scripts):**
 1. `pnpm install` (one lockfile; `workspace:*` links)
-2. Dev: `concurrently "pnpm --filter @nextalk/teleprompter build --watch" "pnpm --filter @nextalk/desktop tauri dev"` — Rust axum serves `apps/teleprompter/dist` from disk in dev
+2. Dev: `pnpm --filter @nextalk/desktop tauri dev` — `beforeDevCommand` concurrently starts the desktop Vite dev server (port 1420 strictPort — the devUrl source) and the teleprompter watch build; Rust axum serves `apps/teleprompter/dist` from disk in dev
 3. Prod: `pnpm --filter @nextalk/teleprompter build` → `pnpm --filter @nextalk/desktop tauri build` (beforeBuildCommand runs desktop `vite build`)
 
 ### Pattern 1: Pairing-as-Auth (SYNC-01)
@@ -457,7 +459,7 @@ async fn ws_handler(
   "build": { "beforeDevCommand": "pnpm dev", "beforeBuildCommand": "pnpm build", "devUrl": "http://localhost:1420", "frontendDist": "../dist" }
 }
 ```
-Source: verified via v2.tauri.app reference config (app.windows schema, unique labels, per-window url) + tauri issues #12042/community (transparent+shadow) — [MEDIUM, cross-verified]. Note: `dual` starts `visible: false`; Rust `setup()` shows it when 扩展视图 is clicked.
+Source: verified via v2.tauri.app reference config (app.windows schema, unique labels, per-window url) + tauri issues #12042/community (transparent+shadow) — [MEDIUM, cross-verified]. Note: `dual` starts `visible: false`; Rust `setup()` shows it when 扩展视图 is clicked. In this repo `beforeDevCommand` is the concrete `concurrently "pnpm --filter @nextalk/desktop dev" "pnpm --filter @nextalk/teleprompter build --watch"` (equivalent to root `pnpm dev` — plan 01-02 pins the explicit form so both servers are guaranteed started before the app launches; never put `tauri dev` inside `beforeDevCommand`).
 
 ### Example 2: Rust axum WS server with token pairing (SYNC-01)
 ```rust
