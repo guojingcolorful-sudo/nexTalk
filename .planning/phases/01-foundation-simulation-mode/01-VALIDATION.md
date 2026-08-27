@@ -56,11 +56,11 @@ created: 2026-08-27
 
 ## Wave 0 Requirements
 
-- [ ] `packages/design-tokens/vitest.config.ts` + `tokens.test.ts` — covers UI-01
-- [ ] `packages/protocol/index.test.ts` — covers SYNC-03/SYNC-01 message narrowing
-- [ ] `apps/desktop/src/hooks/useTypewriter.test.tsx` — covers SYNC-05
+- [ ] `packages/design-tokens/vitest.config.ts` + `src/tokens.test.ts` — covers UI-01
+- [ ] `packages/protocol/src/index.test.ts` — covers SYNC-03/SYNC-01 message narrowing
+- [ ] `apps/teleprompter/src/hooks/useTypewriter.test.tsx` — covers SYNC-05
 - [ ] `apps/teleprompter/src/hooks/useWakeLock.test.tsx` — covers SYNC-04 hook logic
-- [ ] `apps/desktop/src-tauri/src/lan/server_test.rs` — covers SYNC-01 token auth
+- [ ] `apps/desktop/src-tauri/src/lan/server.rs` (#[cfg(test)] module) — covers SYNC-01 token auth
 - [ ] `playwright.config.ts` + `e2e/` per-app specs — covers UI-02/DSK-01/DSK-02/SYNC-02
 - [ ] Framework install: vitest, @testing-library/react, jsdom, @playwright/test (+ `playwright install chromium`)
 - [ ] Rust test harness: `cargo test` needs only std + dev-dependencies (tokio test feature)

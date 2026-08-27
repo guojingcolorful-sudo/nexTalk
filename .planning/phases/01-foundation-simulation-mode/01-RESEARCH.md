@@ -51,7 +51,7 @@ None — discussion stayed within phase scope.
 | UI-03 | 零 CDN 本地打包 (Safari 15.6 / WKWebView) | `build.target: ['safari15', 'es2022']` mandatory (Vite 7 default is Safari 16+), core-js promise-with-resolvers polyfill, Tailwind v3.4.19 pinned (v4 requires Safari 16.4+ CSS), FA 6.7.2 tree-shaken, fontsource self-hosted WOFF2 |
 | SYNC-01 | 局域网 WebSocket 服务 + 二维码配对 (token 认证) | axum 0.8.9 `ws` feature + tower-http ServeDir + rand 0.10.2 token + local-ip-address 0.6.13; pairing-as-auth pattern (QR URL carries token, WS upgrade checks it); JS `qrcode` 1.5.4 renders in webview |
 | SYNC-02 | 手机 H5 提词器 (上字幕下策略) | `apps/teleprompter` standalone React+Vite static build served by axum over LAN; browser-native WebSocket; protocol package shared with desktop |
-| SYNC-03 | 语言切换 (全中/全英/双语, 逐气泡) | Protocol `ControlMessage: { language_prefs }` + UI-SPEC LanguageToggle component; re-render on event, no refetch (see Code Example: protocol types) |
+| SYNC-03 | 语言切换 (全中/全英/双语, 逐气泡) | Protocol `ClientMessage { t:'control', language: LanguagePref }` + UI-SPEC LanguageToggle component; re-render on event, no refetch (see Code Example: protocol types) |
 | SYNC-04 | 手机屏幕常亮 (Wake Lock 回退) | Native Wake Lock API unavailable on `http://192.168.x.x` (needs secure context; iOS 16.4+); hidden looping muted video fallback (NoSleep.js technique); user gesture required on iOS even for the video → 「开始提词」 button is the gesture (UI-SPEC copy already locked) |
 | SYNC-05 | 打字机流式渲染 | 30-50ms/char interval on committed text (UI-SPEC); instant render under `prefers-reduced-motion`; deterministic for tests via injected interval + Vitest fake timers (see Pattern: Typewriter) |
 | DSK-01 | 微型控制台 340×680 | Tauri window config (label `console`, fixed 340×680, non-resizable, frameless transparent + `shadow:false`); components per UI-SPEC (NexTalkBrand, StealthCard, QrCodeCard, KnowledgeRow, bottom action bar) |
@@ -241,7 +241,7 @@ Event flow (one demo round):
 SimSource script → evaluator emits [QuestionEvent → SubtitleDeltas → StrategyCard → UserAnswerDeltas → GeneratingDots]
 → SessionState timeline append → (a) Tauri emit to console+dual webviews, (b) WS broadcast to H5
 → both surfaces render with the SAME useTypewriter hook (30-50ms/char)
-→ H5 sends ControlMessage (language change) → SessionState → re-render on all surfaces
+→ H5 sends ClientMessage control (language change) → SessionState → re-render on all surfaces
 ```
 
 ### Recommended Project Structure
@@ -506,6 +506,7 @@ export type ServerEvent =
       zh?: string; en?: string; final: boolean }
   | { t: 'strategy'; id: string; roundId: string; title: string; bullets: string[] }
   | { t: 'status'; session: 'idle' | 'listening' | 'generating' | 'ended' }
+  | { t: 'language'; language: LanguagePref }           // applied-mode observation (01-05 emits)
   | { t: 'timeline'; events: ServerEvent[] };           // replay on reconnect
 
 export type ClientMessage =
@@ -589,24 +590,24 @@ export function useWakeLock() {
 | A9 | Phone H5 testing requires a real phone on the same Wi-Fi (manual) | Environment | No emulator fallback for wake-lock behavior — demo/verify steps must be manual on device |
 | A10 | react-router-dom 7.18.2 HashRouter works under Tauri's SPA fallback (serves index.html for all paths) | Standard Stack | Verified pattern in the community; if it misbehaves in the packaged app, fall back to a 20-line hash-route hook |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Transparent window behavior on macOS 12.7 Intel (A1)**
+1. **Transparent window behavior on macOS 12.7 Intel (A1)** — RESOLVED: 01-02 Task 1 ships the transparency smoke check as a human checkpoint before component work
    - What we know: Tauri 2 supports `transparent: true` on macOS with the private-API feature; `shadow: false` kills the black halo; documented on macOS generally.
    - What's unclear: any 12.7/Intel-specific rendering quirk (old WebKit compositing).
    - Recommendation: make the first desktop scaffold task a "transparency smoke check" before building all components; escalation path = square corners + design sign-off.
 
-2. **Rust toolchain + Xcode 14.2 (A2)**
+2. **Rust toolchain + Xcode 14.2 (A2)** — RESOLVED: 01-01 Task 2 runs rustup, pinning toolchain 1.85 if the 2026 stable chain rejects Xcode 14.2
    - What we know: rustc documents Xcode 9.2 as the floor; Xcode 14.2 is present; Tauri 2.11 MSRV 1.77.2.
    - What's unclear: whether the 2026 stable toolchain (1.8x/1.9x) still accepts the old clang/linker without friction.
    - Recommendation: Wave 0 includes `cargo new` + `cargo build` smoke test before Tauri scaffolding; pin older toolchain if needed.
 
-3. **Dev-mode H5 serving (A4)**
+3. **Dev-mode H5 serving (A4)** — RESOLVED: axum ServeDir + build --watch with an optional `ws=` URL param fallback (01-02 Task 3)
    - What we know: single-origin axum serving is the cleanest prod path.
    - What's unclear: watch-rebuild ergonomics vs H5 Vite dev server with an explicit `ws=` URL param.
    - Recommendation: implement H5 URL parsing to accept optional `ws` param (fallback same-origin); try ServeDir+watch first.
 
-4. **Playwright browser install**
+4. **Playwright browser install** — RESOLVED: `pnpm exec playwright install chromium` runs in 01-01 Task 2 (Wave 0)
    - What we know: Playwright 1.62.1 needs browser binaries downloaded (first run).
    - What's unclear: whether this machine's network allows the download (likely yes).
    - Recommendation: include `pnpm exec playwright install chromium` in Wave 0; fallback: vitest-only for Phase 1 E2E-critical paths.
@@ -670,11 +671,11 @@ export function useWakeLock() {
 - **Phase gate:** `pnpm -r test && pnpm exec playwright test` green before `/gsd:verify-work` + manual device verification (H5 + wake lock)
 
 ### Wave 0 Gaps
-- [ ] `packages/design-tokens/vitest.config.ts` + `tokens.test.ts` — covers UI-01
-- [ ] `packages/protocol/index.test.ts` — covers SYNC-03/SYNC-01 message narrowing
-- [ ] `apps/desktop/src/hooks/useTypewriter.test.tsx` — covers SYNC-05
+- [ ] `packages/design-tokens/vitest.config.ts` + `src/tokens.test.ts` — covers UI-01
+- [ ] `packages/protocol/src/index.test.ts` — covers SYNC-03/SYNC-01 message narrowing
+- [ ] `apps/teleprompter/src/hooks/useTypewriter.test.tsx` — covers SYNC-05
 - [ ] `apps/teleprompter/src/hooks/useWakeLock.test.tsx` — covers SYNC-04 hook logic
-- [ ] `apps/desktop/src-tauri/src/lan/server_test.rs` — covers SYNC-01 token auth
+- [ ] `apps/desktop/src-tauri/src/lan/server.rs` (#[cfg(test)] module) — covers SYNC-01 token auth
 - [ ] `playwright.config.ts` + `e2e/` per-app specs — covers UI-02/DSK-01/DSK-02/SYNC-02
 - [ ] Framework install: vitest, @testing-library/react, jsdom, @playwright/test (+ `playwright install chromium`)
 - [ ] Rust test harness: `cargo test` needs only std + dev-dependencies (tokio test feature)
