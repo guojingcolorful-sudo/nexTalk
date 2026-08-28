@@ -1,0 +1,17 @@
+{
+  "name": "@nextalk/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/tokens.css",
+  "exports": {
+    ".": "./src/tokens.css",
+    "./src/tailwind-preset.js": "./src/tailwind-preset.js"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vite": "7.3.6",
+    "vitest": "4.1.11"
+  }
+}

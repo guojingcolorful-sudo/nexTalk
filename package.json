@@ -1,0 +1,21 @@
+{
+  "name": "nextalk",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter @nextalk/desktop dev\" \"pnpm --filter @nextalk/teleprompter build --watch\"",
+    "build": "pnpm --filter @nextalk/teleprompter build && pnpm --filter @nextalk/desktop build",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm exec playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.53.2",
+    "concurrently": "10.0.5",
+    "eslint": "10.9.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "prettier": "3.9.6",
+    "typescript-eslint": "8.68.0"
+  }
+}

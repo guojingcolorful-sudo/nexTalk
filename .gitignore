@@ -1,0 +1,8 @@
+node_modules/
+dist/
+src-tauri/target/
+playwright-report/
+test-results/
+.DS_Store
+*.log
+.vite/
