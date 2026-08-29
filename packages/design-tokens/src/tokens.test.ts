@@ -1,12 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import cssText from './tokens.css?raw';
+
+// Read the contract file directly: vitest stubs .css imports (incl. ?raw) by default.
+const cssText = readFileSync(fileURLToPath(new URL('./tokens.css', import.meta.url)), 'utf8');
 
 /** Parse custom properties declared inside `:root { ... }` into a name → value map. */
 function parseTokens(css: string): Map<string, string> {
   const map = new Map<string, string>();
   const block = css.match(/:root\s*\{([^}]*)\}/)?.[1];
   if (!block) return map;
-  for (const decl of block.split(';')) {
+  // Strip comments first — a declaration right after `*/` would otherwise
+  // be glued to the comment text by the split below.
+  const clean = block.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const decl of clean.split(';')) {
     const m = decl.match(/^\s*(--[\w-]+)\s*:\s*(.+?)\s*$/);
     if (m) map.set(m[1], m[2].trim());
   }

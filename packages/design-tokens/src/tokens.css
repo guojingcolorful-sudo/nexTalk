@@ -1,0 +1,63 @@
+/*
+ * NexTalk design tokens — UI-SPEC V1.0 (approved 2026-08-27)
+ * Safari 15.6 floor: plain hex values only — NO oklch / color-mix / @property.
+ * Contract snapshot: packages/design-tokens/src/tokens.test.ts (fail loudly on drift).
+ */
+
+:root {
+  /* ── Color — neobrutalism dark-space palette ─────────────────────────── */
+  --color-darker-space: #151519;
+  --color-space-dark: #1E1E24;
+  --color-panel: #1A1A22;
+  --color-slate-800: #1E293B;
+  --color-slate-700: #334155;
+  --color-portal-green: #97ce4c;
+  --color-morty-yellow: #fbf061;
+  --color-rick-blue: #00b5cc;
+  --color-red: #ef4444;
+  --color-ink: #000000;
+  --color-paper: #FFFFFF;
+
+  /* ── Hard shadows — black 4px (spec §5.1), colored 6px (reference HTML), mobile 8px ── */
+  --shadow-black-4: 4px 4px 0 0 #000;
+  --shadow-black-8: 8px 8px 0 0 #000;
+  --shadow-green-6: 6px 6px 0 0 #97ce4c;
+  --shadow-yellow-6: 6px 6px 0 0 #fbf061;
+  --shadow-blue-6: 6px 6px 0 0 #00b5cc;
+
+  /* ── Typography — Space Grotesk only, spec-locked 5 sizes / 3 weights ── */
+  --font-sans: 'Space Grotesk', 'PingFang SC', system-ui, -apple-system, sans-serif;
+  --text-panel-title: 18px;
+  --leading-panel-title: 28px;
+  --weight-panel-title: 700;
+  --text-dialogue: 15px;
+  --weight-dialogue: 600;
+  --text-translation: 13px;
+  --weight-translation: 700;
+  --text-label: 12px;
+  --leading-label: 16px;
+  --weight-label: 700;
+  --text-mini: 10px;
+  --leading-mini: 14px;
+  --weight-mini: 700;
+
+  /* ── Spacing scale — 4px multiplier (spec §4.2) ─────────────────────── */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 20px;
+  --space-2lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* ── Radii — shape consistency lock ─────────────────────────────────── */
+  --radius-card: 12px;
+  --radius-window: 24px;
+  --radius-mobile: 40px;
+  --radius-full: 9999px;
+
+  /* ── Dot-matrix texture — root surfaces only, never scroll containers ── */
+  --bg-dot-matrix: radial-gradient(#4a4a5c 1px, transparent 1px);
+  --bg-dot-matrix-size: 20px 20px;
+}
