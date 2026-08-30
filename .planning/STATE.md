@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-08-28T06:15:33.113Z"
-last_activity: 2026-08-28 -- Phase 1 planning complete
+stopped_at: Plan 1 of Phase 1 complete
+last_updated: "2026-08-29T08:20:00.000Z"
+last_activity: 2026-08-29 -- 01-01 workspace + contracts complete
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 20
 ---
 
 # Project State
@@ -26,30 +26,29 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 1 of 7 (Foundation + Simulation Mode)
-Plan: 0 of 5 in current phase
-Status: Ready to execute
-Last activity: 2026-08-28 -- Phase 1 planning complete
+Plan: 1 of 5 in current phase (01-01 complete)
+Status: Ready to execute next plan (01-02)
+Last activity: 2026-08-29 -- 01-01 workspace + contract packages complete
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: -
+- Total plans completed: 1
+- Average duration: 26h (01-01; wall clock incl. slow-connection installs)
+- Total execution time: 26h
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 1. Foundation + Simulation Mode | 1 | 5 | 26h |
 
 **Recent Trend:**
 
-- Last 5 plans: -
-- Trend: -
+- 01-01 workspace + contracts (2026-08-29): green harness, 33 tests, 5 auto-fixed deviations
 
 *Updated after each plan completion*
 
@@ -60,6 +59,12 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [01-01 Task 1 gate]: USER APPROVED all 20 npm audit-table packages (2026-08-28) after re-verifying @fortawesome/fontawesome-free 6.7.2 against the npm registry — repo matches FortAwesome/Font-Awesome, scripts={}, publisher fortawesome-admin, dist.integrity present; observed weekly downloads 2.5M vs audit's ~15M (same magnitude, not a risk)
+- [01-01]: Rust stable 1.98.0 (2026-08-18) builds against Xcode 14.2 — Open Question A2 resolved favorably, no 1.85 toolchain pin needed
+- [01-01]: pnpm 11.24.0 via corepack; locked `packageManager: "pnpm@11.24.0"`; pnpm 11 `allowBuilds` approved for core-js + esbuild postinstall scripts
+- [01-01]: @vitejs/plugin-react pinned 5.1.4 (plan's 6.1.0 requires vite 8; plan locks vite 7.3.6)
+- [01-01]: @playwright/test pinned 1.53.2 (plan's 1.62.1 cannot install browsers on macOS 12; 1.53.2 is the newest mac12-compatible line — upgrade blocked until OS upgrade)
+- [01-01]: contract tests read tokens.css via node:fs (vitest 4 stubs .css imports incl. ?raw)
 - [Roadmap]: Follow research build order — protocol/UI first on SimSource (driver off critical path), real pipeline + latency rig before virtual device, copilot after transcript pipeline, consent gate ships with recording
 - [Roadmap]: AUDI-07 glossary term protection mapped to Phase 4 (per research); glossary page UI built in Phase 1, wiring into Phase 2 pipeline stages happens in Phase 4
 - [Roadmap]: Phase 7 Productization carries no v1 requirement mappings — distribution hardening per research (signing/notarization, clean-machine test, compliance)
@@ -77,6 +82,8 @@ None yet.
 - Phase 1 must run the decisive vendor experiments (STT A/B, clone listening test, network RTT) before Phase 2 stack wiring — results may change provider choices
 - Claude Sonnet 5 intro pricing and Fish Audio free tier end 2026-08-31 — cost model must assume post-intro pricing
 - BlackHole install/signing is a process risk (Gatekeeper, notarization, meeting-app device caches) — isolated in Phase 3
+- Playwright capped at 1.53.2 while this machine runs macOS 12 (1.62.1 refuses mac12) — OS upgrade unblocks newer Playwright; e2e runs on the 1.53.2 chromium build
+- 01-03/01-04 entry CSS must `import '@nextalk/design-tokens'` and `import 'core-js/proposals/promise-with-resolvers'` (Pitfall 5) — no entry CSS exists yet (flagged in 01-01-SUMMARY)
 
 ## Deferred Items
 
@@ -88,6 +95,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-26T16:32:25.321Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-foundation-simulation-mode/01-CONTEXT.md
+Last session: 2026-08-29T08:20:00.000Z
+Stopped at: Completed 01-01-PLAN.md (workspace + contract packages)
+Resume file: .planning/phases/01-foundation-simulation-mode/01-01-SUMMARY.md

@@ -42,7 +42,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01: Workspace + toolchain (rustup/pnpm, pnpm workspace, Vite 7 safari15 targets, Vitest/Playwright configs) + design tokens + protocol package (blocking-human package legitimacy gate)
+- [x] 01-01: Workspace + toolchain (rustup/pnpm, pnpm workspace, Vite 7 safari15 targets, Vitest/Playwright configs) + design tokens + protocol package (blocking-human package legitimacy gate) — complete 2026-08-29
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Simulation Mode | 0/5 | Not started | - |
+| 1. Foundation + Simulation Mode | 1/5 | In progress | 01-01 (2026-08-29) |
 | 2. Real Cloud Pipeline + Audio Core | 0/5 | Not started | - |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |
