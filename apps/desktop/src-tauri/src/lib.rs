@@ -8,6 +8,12 @@
 use serde::Serialize;
 use tauri::Emitter;
 
+// 01-02 Task 2: LAN server (pairing-as-auth WS + static H5), session state and
+// the deterministic SimSource. Commands below get wired to them in GREEN.
+mod lan;
+mod sim;
+mod state;
+
 /// Placeholder pairing info returned by the Task-1 stub; the real value comes
 /// from SessionState::pairing_url() once state.rs lands (Task 2).
 #[derive(Serialize)]
