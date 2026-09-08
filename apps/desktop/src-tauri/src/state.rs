@@ -36,12 +36,35 @@ struct SessionStateInner {
 impl SessionState {
     /// Fresh state with a new random pairing token (128-bit, 32 hex chars).
     pub fn new(port: u16) -> Self {
-        todo!("01-02 GREEN: SysRng 128-bit token + broadcast channel")
+        use rand::rngs::SysRng;
+        use rand::TryRng;
+
+        let mut bytes = [0u8; TOKEN_BYTES];
+        SysRng
+            .try_fill_bytes(&mut bytes)
+            .expect("OS entropy unavailable for pairing token");
+        let pairing_token = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+        let (broadcast_tx, _) = broadcast::channel(64);
+        Self {
+            inner: Arc::new(RwLock::new(SessionStateInner {
+                pairing_token,
+                timeline: Vec::new(),
+                language_prefs: LanguagePref::Bilingual,
+                session_status: SessionStatus::Idle,
+                port,
+            })),
+            broadcast_tx,
+        }
     }
 
     /// The 32-hex-char pairing token (T-01-01).
     pub fn pairing_token(&self) -> String {
-        self.inner.read().expect("state lock poisoned").pairing_token.clone()
+        self.inner
+            .read()
+            .expect("state lock poisoned")
+            .pairing_token
+            .clone()
     }
 
     /// LAN port the H5 connects to.
@@ -54,11 +77,18 @@ impl SessionState {
         let ip = local_ip_address::local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|_| "127.0.0.1".to_string());
-        format!("http://{ip}:{}/?token={}", self.port(), self.pairing_token())
+        format!(
+            "http://{ip}:{}/?token={}",
+            self.port(),
+            self.pairing_token()
+        )
     }
 
     pub fn session_status(&self) -> SessionStatus {
-        self.inner.read().expect("state lock poisoned").session_status
+        self.inner
+            .read()
+            .expect("state lock poisoned")
+            .session_status
     }
 
     /// Sets the status; returns the previous one (guards double-start).
@@ -69,22 +99,38 @@ impl SessionState {
         previous
     }
 
+    /// Read by the H5 copilot language controls landing in 01-05.
+    #[allow(dead_code)]
     pub fn language_prefs(&self) -> LanguagePref {
-        self.inner.read().expect("state lock poisoned").language_prefs
+        self.inner
+            .read()
+            .expect("state lock poisoned")
+            .language_prefs
     }
 
     pub fn set_language_prefs(&self, pref: LanguagePref) {
-        self.inner.write().expect("state lock poisoned").language_prefs = pref;
+        self.inner
+            .write()
+            .expect("state lock poisoned")
+            .language_prefs = pref;
     }
 
     /// Snapshot of the full event timeline.
     pub fn timeline(&self) -> Vec<ServerEvent> {
-        self.inner.read().expect("state lock poisoned").timeline.clone()
+        self.inner
+            .read()
+            .expect("state lock poisoned")
+            .timeline
+            .clone()
     }
 
     /// Clears the timeline (new session).
     pub fn reset_timeline(&self) {
-        self.inner.write().expect("state lock poisoned").timeline.clear();
+        self.inner
+            .write()
+            .expect("state lock poisoned")
+            .timeline
+            .clear();
     }
 
     /// Appends an event to the timeline and broadcasts it to every subscriber
@@ -92,7 +138,11 @@ impl SessionState {
     /// no client is connected and are intentionally ignored — the timeline
     /// remains the source of truth for later replays.
     pub fn append_event(&self, event: ServerEvent) {
-        self.inner.write().expect("state lock poisoned").timeline.push(event.clone());
+        self.inner
+            .write()
+            .expect("state lock poisoned")
+            .timeline
+            .push(event.clone());
         let _ = self.broadcast_tx.send(event);
     }
 
@@ -130,7 +180,10 @@ mod tests {
         let state = SessionState::new(8787);
         let token = state.pairing_token();
         assert_eq!(token.len(), 32, "token must be 32 hex chars");
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit()), "token must be hex");
+        assert!(
+            token.chars().all(|c| c.is_ascii_hexdigit()),
+            "token must be hex"
+        );
     }
 
     #[test]
@@ -161,7 +214,10 @@ mod tests {
     #[test]
     fn set_session_status_returns_previous() {
         let state = SessionState::new(8787);
-        assert_eq!(state.set_session_status(SessionStatus::Listening), SessionStatus::Idle);
+        assert_eq!(
+            state.set_session_status(SessionStatus::Listening),
+            SessionStatus::Idle
+        );
         assert_eq!(state.session_status(), SessionStatus::Listening);
         assert_eq!(
             state.set_session_status(SessionStatus::Ended),
@@ -179,8 +235,14 @@ mod tests {
         state.append_event(strat.clone());
         state.append_event(answer.clone());
 
-        assert_eq!(state.replay_after_subtitle_seq(0), vec![q, strat.clone(), answer.clone()]);
-        assert_eq!(state.replay_after_subtitle_seq(1), vec![strat.clone(), answer.clone()]);
+        assert_eq!(
+            state.replay_after_subtitle_seq(0),
+            vec![q, strat.clone(), answer.clone()]
+        );
+        assert_eq!(
+            state.replay_after_subtitle_seq(1),
+            vec![strat.clone(), answer.clone()]
+        );
         assert_eq!(state.replay_after_subtitle_seq(2), vec![]);
     }
 

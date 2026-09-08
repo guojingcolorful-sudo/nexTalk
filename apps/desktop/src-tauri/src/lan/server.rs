@@ -16,13 +16,14 @@ use std::path::PathBuf;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::header::{CACHE_CONTROL, HeaderValue};
+use axum::http::header::{HeaderValue, CACHE_CONTROL};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::state::SessionState;
 
@@ -112,7 +113,17 @@ pub struct PairingParams {
 
 /// Full LAN router: pairing WS endpoint + static H5 bundle (no-store).
 pub fn router(state: SessionState, teleprompter_dist: PathBuf) -> Router {
-    todo!("01-02 GREEN: /ws token gate + ServeDir with no-store header layer")
+    Router::new()
+        .route("/ws", axum::routing::get(ws_handler))
+        .fallback_service(ServeDir::new(teleprompter_dist))
+        // T-01-03: static responses must never be cached (pairing tokens and
+        // transcript content change per session). The layer also lands on the
+        // 101 upgrade response, which clients ignore — harmless and uniform.
+        .layer(SetResponseHeaderLayer::overriding(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .with_state(state)
 }
 
 /// Upgrade handler: 401 on token mismatch, else run the client loop.
@@ -121,13 +132,77 @@ async fn ws_handler(
     Query(params): Query<PairingParams>,
     State(state): State<SessionState>,
 ) -> Response {
-    todo!("01-02 GREEN: 401 on token mismatch, else on_upgrade(client_loop)")
+    if params.token != state.pairing_token() {
+        return (StatusCode::UNAUTHORIZED, "invalid pairing token").into_response();
+    }
+    ws.on_upgrade(move |socket| client_loop(socket, state))
 }
 
 /// Per-connection loop: broadcast fan-out to the H5 + strict inbound parse
 /// (resume replay, language control, deny_unknown_fields drop).
 async fn client_loop(socket: WebSocket, state: SessionState) {
-    todo!("01-02 GREEN: broadcast fan-out + strict inbound parse")
+    let (mut sender, mut receiver) = socket.split();
+    let (tx_msgs, rx_msgs) = tokio::sync::mpsc::channel::<Message>(32);
+
+    // Sink task: forwards the outbound queue onto the socket.
+    let send_task = tokio::spawn(async move {
+        let mut rx_msgs = rx_msgs;
+        while let Some(msg) = rx_msgs.recv().await {
+            if sender.send(msg).await.is_err() {
+                break; // client gone
+            }
+        }
+    });
+
+    // Broadcast fan-out: session events -> outbound queue.
+    let mut broadcast_rx = state.subscribe();
+    let tx_broadcast = tx_msgs.clone();
+    let broadcast_task = tokio::spawn(async move {
+        while let Ok(event) = broadcast_rx.recv().await {
+            let Ok(text) = serde_json::to_string(&event) else {
+                continue;
+            };
+            if tx_broadcast.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Read half: strict protocol handling (T-01-02).
+    while let Some(msg) = receiver.next().await {
+        let Ok(msg) = msg else { break };
+        match msg {
+            Message::Text(text) => {
+                if text.len() > MAX_FRAME_BYTES {
+                    break; // oversize frame -> drop
+                }
+                match serde_json::from_str::<ClientMessage>(&text) {
+                    Ok(ClientMessage::Resume { since_seq }) => {
+                        let events = state.replay_after_subtitle_seq(since_seq);
+                        let Some(payload) =
+                            serde_json::to_string(&ServerEvent::Timeline { events }).ok()
+                        else {
+                            break;
+                        };
+                        if tx_msgs.send(Message::Text(payload.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(ClientMessage::Control { language }) => {
+                        state.set_language_prefs(language);
+                    }
+                    Err(_) => break, // unknown fields / malformed -> drop
+                }
+            }
+            Message::Binary(_) => break, // binary protocol not supported
+            Message::Close(_) => break,
+            // axum answers pings automatically; ignore heartbeats here.
+            Message::Ping(_) | Message::Pong(_) => {}
+        }
+    }
+
+    send_task.abort();
+    broadcast_task.abort();
 }
 
 /// Path to the teleprompter H5 build served over LAN (`apps/teleprompter/dist`).
@@ -193,8 +268,8 @@ mod tests {
     use futures_util::{SinkExt, StreamExt};
     use std::time::Duration;
     use tokio_tungstenite::connect_async;
-    use tokio_tungstenite::tungstenite::Message as ClientFrame;
     use tokio_tungstenite::tungstenite::Error as WsError;
+    use tokio_tungstenite::tungstenite::Message as ClientFrame;
 
     /// Boots the real router on an ephemeral port; returns base ws:// URL.
     async fn spawn_server() -> (String, SessionState) {
@@ -280,7 +355,12 @@ mod tests {
             .await
             .expect("send resume");
         let reply = read_event(&mut ws).await.expect("resume reply");
-        assert_eq!(reply, ServerEvent::Timeline { events: vec![strat] });
+        assert_eq!(
+            reply,
+            ServerEvent::Timeline {
+                events: vec![strat]
+            }
+        );
     }
 
     #[tokio::test]
@@ -322,9 +402,8 @@ mod tests {
         .expect("subtitle wire shape");
         assert!(matches!(subtitle, ServerEvent::Subtitle { seq: 1, .. }));
 
-        let language: ServerEvent =
-            serde_json::from_str(r#"{"t":"language","language":"all-zh"}"#)
-                .expect("language wire shape");
+        let language: ServerEvent = serde_json::from_str(r#"{"t":"language","language":"all-zh"}"#)
+            .expect("language wire shape");
         assert!(matches!(
             language,
             ServerEvent::Language {
@@ -332,9 +411,8 @@ mod tests {
             }
         ));
 
-        let status: ServerEvent =
-            serde_json::from_str(r#"{"t":"status","session":"generating"}"#)
-                .expect("status wire shape");
+        let status: ServerEvent = serde_json::from_str(r#"{"t":"status","session":"generating"}"#)
+            .expect("status wire shape");
         assert!(matches!(
             status,
             ServerEvent::Status {
@@ -342,8 +420,8 @@ mod tests {
             }
         ));
 
-        let timeline: ServerEvent = serde_json::from_str(r#"{"t":"timeline","events":[]}"#)
-            .expect("timeline wire shape");
+        let timeline: ServerEvent =
+            serde_json::from_str(r#"{"t":"timeline","events":[]}"#).expect("timeline wire shape");
         assert!(matches!(timeline, ServerEvent::Timeline { .. }));
 
         // A subtitle without `en` must NOT serialize a null key — the TS
@@ -357,7 +435,10 @@ mod tests {
             final_flag: true,
         };
         let json = serde_json::to_value(&no_en).expect("serialize subtitle");
-        assert!(json.get("en").is_none(), "absent en must not serialize as null");
+        assert!(
+            json.get("en").is_none(),
+            "absent en must not serialize as null"
+        );
 
         // H5 control wire parses back into the enum mirror.
         let control: ClientMessage =

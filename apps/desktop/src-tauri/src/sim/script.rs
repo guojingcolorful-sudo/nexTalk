@@ -25,8 +25,9 @@ pub const QUESTION_ID: &str = "r1-q";
 pub const ANSWER_ID: &str = "r1-a";
 pub const STRATEGY_ID: &str = "s-r1";
 
-/// Offsets (ms after session start) at which script events fire.
-pub const QUESTION_AT_MS: u64 = 0;
+/// Offsets (ms after session start) at which script events fire. The
+/// interviewer question opens the round at offset 0, so the evaluator pushes
+/// it unconditionally (any elapsed time >= 0 includes it).
 pub const STRATEGY_AT_MS: u64 = 2_500;
 pub const ANSWER_AT_MS: u64 = 6_000;
 pub const GENERATING_AT_MS: u64 = 6_500;
