@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-darker-space);
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dot-matrix texture token — applied only at the root surface layer
+   (the phone's teleprompter surface), never inside scroll containers. */
+.dot-matrix-root {
+  background-color: var(--color-darker-space);
+  background-image: var(--bg-dot-matrix);
+  background-size: var(--bg-dot-matrix-size);
+}

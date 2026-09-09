@@ -13,10 +13,16 @@ export default defineConfig({
     {
       name: 'desktop',
       use: { baseURL: 'http://localhost:1420' },
+      // skeleton.spec.ts exercises the phone H5 over a mock WS — desktop app
+      // specs land in 01-03 and run under this project.
+      testIgnore: '**/skeleton.spec.ts',
     },
     {
       name: 'teleprompter',
-      use: { baseURL: 'http://localhost:8787' },
+      // 8791: the H5's real port (8787) is the desktop LAN server's port AND
+      // collides with a long-running local tool on 127.0.0.1:8787 — e2e
+      // previews must not fight the desktop's production port.
+      use: { baseURL: 'http://localhost:8791' },
     },
   ],
   webServer: [
@@ -26,8 +32,8 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command: 'pnpm --filter @nextalk/teleprompter preview --port 8787 --strictPort',
-      url: 'http://localhost:8787',
+      command: 'pnpm --filter @nextalk/teleprompter preview --port 8791 --strictPort',
+      url: 'http://localhost:8791',
       reuseExistingServer: true,
     },
   ],
