@@ -46,7 +46,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02: Walking skeleton: Tauri two-window frameless shell + axum LAN server (pairing-as-auth, port 8787) + minimal r1 SimSource + H5 stub + e2e skeleton spec
+- [x] 01-02: Walking skeleton: Tauri two-window frameless shell + axum LAN server (pairing-as-auth, port 8787) + minimal r1 SimSource + H5 stub + e2e skeleton spec — complete 2026-09-09
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Simulation Mode | 1/5 | In progress | 01-01 (2026-08-29) |
+| 1. Foundation + Simulation Mode | 2/5 | In progress | 01-01 (2026-08-29), 01-02 (2026-09-09) |
 | 2. Real Cloud Pipeline + Audio Core | 0/5 | Not started | - |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |

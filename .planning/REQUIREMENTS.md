@@ -19,16 +19,16 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Sync (SYNC)
 
-- [ ] **SYNC-01**: 局域网 WebSocket 服务 + 二维码配对（token 认证，手机无需安装 App）
-- [ ] **SYNC-02**: 手机 H5 提词器：上半屏双语流式字幕、下半屏 AI 策略卡片
+- [x] **SYNC-01**: 局域网 WebSocket 服务 + 二维码配对（token 认证，手机无需安装 App）— 01-02: axum LAN server 8787, pairing-as-auth, 401 on bad token, QR encodes token URL
+- [ ] **SYNC-02**: 手机 H5 提词器：上半屏双语流式字幕、下半屏 AI 策略卡片 — 01-04 (stub page + WS render proven in 01-02)
 - [ ] **SYNC-03**: 语言切换（全中/全英/双语），面试官与用户气泡独立切换
 - [ ] **SYNC-04**: 手机屏幕常亮（Wake Lock 安全上下文失败时回退方案）
-- [ ] **SYNC-05**: 打字机流式渲染（字逐个出现，掩盖 LLM 生成延迟）
+- [x] **SYNC-05**: 打字机流式渲染（字逐个出现，掩盖 LLM 生成延迟）— 01-02: useTypewriter 40ms cadence + reduced-motion collapse, vitest-proven
 
 ### Desktop (DSK)
 
-- [ ] **DSK-01**: 微型控制台（340×680）：隐形模式、跨端同步、知识库状态
-- [ ] **DSK-02**: 双栏扩展视图（860×680）：左双语字幕、右 AI 辅助流
+- [x] **DSK-01**: 微型控制台（340×680）：隐形模式、跨端同步、知识库状态 — 01-02: two-window shell (console visible) + design-system console page + live QR pairing card (full hub in 01-03)
+- [x] **DSK-02**: 双栏扩展视图（860×680）：左双语字幕、右 AI 辅助流 — 01-02: window shell instantiated (dual hidden, shown from console); full surfaces in 01-03
 - [ ] **DSK-03**: Cmd+Shift+H 一键真隐藏/唤出（窗口 orderOut 脱离层级，音频引擎与 UI 进程分离持续运行）
 - [ ] **DSK-04**: 桌面双语字幕 + 单语/双语切换
 
@@ -48,9 +48,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### UI Design System (UI)
 
-- [ ] **UI-01**: 新粗野主义设计系统落地（设计规范 V1.0：4px 粗黑边框、硬偏移阴影、三功能色、Space Grotesk、圆点矩阵背景）
-- [ ] **UI-02**: 参考 HTML 4 屏实现 + 缺页补齐（引导向导、录音资产、复盘报告、音色注册、术语表、简历导入）
-- [ ] **UI-03**: 零 CDN 本地打包（Tailwind v3.4，兼容 macOS 12.7 Safari 15.6 / WKWebView）
+- [x] **UI-01**: 新粗野主义设计系统落地（设计规范 V1.0：4px 粗黑边框、硬偏移阴影、三功能色、Space Grotesk、圆点矩阵背景）— 01-02: tokens + preset (01-01) instantiated in console page, H5 stub, QR card
+- [ ] **UI-02**: 参考 HTML 4 屏实现 + 缺页补齐（引导向导、录音资产、复盘报告、音色注册、术语表、简历导入）— 01-03/01-04
+- [x] **UI-03**: 零 CDN 本地打包（Tailwind v3.4，兼容 macOS 12.7 Safari 15.6 / WKWebView）— 01-02: both app bundles zero external http(s) refs, safari15 build target
 
 ## v2 Requirements
 
@@ -96,13 +96,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDI-05 | Phase 2 | Pending |
 | AUDI-06 | Phase 2 | Pending |
 | AUDI-07 | Phase 4 | Pending |
-| SYNC-01 | Phase 1 | Pending |
-| SYNC-02 | Phase 1 | Pending |
+| SYNC-01 | Phase 1 | Complete (01-02) |
+| SYNC-02 | Phase 1 | Pending (01-04) |
 | SYNC-03 | Phase 1 | Pending |
 | SYNC-04 | Phase 1 | Pending |
-| SYNC-05 | Phase 1 | Pending |
-| DSK-01 | Phase 1 | Pending |
-| DSK-02 | Phase 1 | Pending |
+| SYNC-05 | Phase 1 | Complete (01-02) |
+| DSK-01 | Phase 1 | Complete (01-02) |
+| DSK-02 | Phase 1 | Complete (01-02) |
 | DSK-03 | Phase 4 | Pending |
 | DSK-04 | Phase 1 | Pending |
 | COPT-01 | Phase 5 | Pending |
@@ -113,9 +113,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REC-02 | Phase 6 | Pending |
 | REC-03 | Phase 6 | Pending |
 | REC-04 | Phase 6 | Pending |
-| UI-01 | Phase 1 | Pending |
-| UI-02 | Phase 1 | Pending |
-| UI-03 | Phase 1 | Pending |
+| UI-01 | Phase 1 | Complete (01-02) |
+| UI-02 | Phase 1 | Pending (01-03/01-04) |
+| UI-03 | Phase 1 | Complete (01-02) |
 
 **Coverage:**
 - v1 requirements: 27 total
