@@ -1,0 +1,9 @@
+# Deferred Items — Phase 1
+
+Out-of-scope discoveries logged during execution (never fixed in the plan that found them).
+
+| Found during | Item | Evidence | Impact | Suggested owner |
+|--------------|------|----------|--------|-----------------|
+| 01-03 Task 1 | `@nextalk/desktop` has no `@types/react` / `@types/react-dom` (and never had) | `pnpm exec tsc -p apps/desktop/tsconfig.json --noEmit` reports 128 TS7026 (no `JSX.IntrinsicElements`) + 28 TS7016 (`react/jsx-runtime`) — including pre-existing `pages/DualPanePage.tsx` from 01-02 | `tsc --noEmit` is not a usable gate for the desktop app; the only type-check signal comes from `vite build` + tests. Nothing in 01-01/01-02/01-03 verify steps runs tsc, so no task is blocked | 01-05 or Phase 7 (add devDeps + a type-check script) |
+| 01-03 Task 1 | Pre-existing lint errors outside the desktop app | `pnpm exec eslint .` → `apps/teleprompter/src/hooks/useWs.ts` (`react-hooks/set-state-in-effect`, `exhaustive-deps` warning), `apps/teleprompter/tailwind.config.js` + `packages/design-tokens/src/tailwind-preset.js` (`no-require-imports`, `no-undef` for `module`) | Repo-wide `eslint .` is red, so lint cannot be used as a per-plan gate; `eslint apps/desktop/src` is clean | Phase 7 hardening |
+| 01-03 Task 1 | Playwright project split let the H5 project collect desktop specs | `teleprompter` project had no `testIgnore`, so `e2e/desktop.spec.ts` ran against `http://localhost:8791` (the H5 origin) and failed 7/7 | Fixed in 01-03 Task 1 (Rule 3): `testIgnore: '**/desktop.spec.ts'` added to the teleprompter project | fixed |
