@@ -68,3 +68,55 @@ export const MOCK_VOICE_READING_TEXT =
 
 /** Placeholder playback tile caption — no real audio in Phase 1. */
 export const MOCK_VOICE_SAMPLE_LABEL = '音色样本占位';
+
+export interface MockRecording {
+  id: string;
+  dateLabel: string;
+  timeLabel: string;
+  durationLabel: string;
+}
+
+/** ONE record so 录音资产 shows its populated state (recording is Phase 6). */
+export const MOCK_RECORDINGS: readonly MockRecording[] = [
+  { id: 'rec-mock-01', dateLabel: '2026-08-27', timeLabel: '14:05', durationLabel: '18 分 42 秒' },
+];
+
+/** Export formats the recordings page offers (wiring is Phase 6). */
+export const RECORDING_EXPORT_FORMATS: readonly string[] = ['SRT', 'Markdown', 'Word'];
+
+export interface MockReviewSentiment {
+  label: string;
+  /** Single color-coded pill tone. */
+  tone: 'green' | 'yellow';
+}
+
+export interface MockReviewReplay {
+  id: string;
+  question: string;
+  at: string;
+}
+
+export interface MockReviewReport {
+  sentiment: MockReviewSentiment;
+  actionItems: readonly string[];
+  concerns: readonly string[];
+  replays: readonly MockReviewReplay[];
+}
+
+/** Mock review report — every line is 模拟数据 until Phase 6 generates one. */
+export const MOCK_REVIEW_REPORT: MockReviewReport = {
+  sentiment: { label: '整体表现良好', tone: 'green' },
+  actionItems: [
+    '把「慢查询日志 → 索引重建」的因果链讲完整，补上你实际使用的工具名',
+    '准备一个 30 秒版本的项目背景，把 5 年经验压到一句话',
+    '为「拆连表查询」补上量化结果，例如 P99 从 800 毫秒降到 200 毫秒以内',
+  ],
+  concerns: [
+    '数据库优化的量化结果没有说出口，面试官只能自己推断收益',
+    '回答中出现了两次「大概」这类模糊表述，容易被追问细节',
+  ],
+  replays: [
+    { id: 'r1-q', question: '你能详细说一下你优化数据库的具体步骤吗？', at: '14:05' },
+    { id: 'r1-a', question: '你的回答：首先，我们分析了慢查询日志……', at: '14:06' },
+  ],
+};

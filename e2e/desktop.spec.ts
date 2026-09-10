@@ -101,15 +101,14 @@ function installTauriMock(): void {
 
 const CONSOLE_VIEWPORT = { width: 340, height: 680 };
 
-/** `stub: true` marks routes that still render PageStub (Task 4 replaces
- *  简历导入 / 录音资产 / 复盘报告). */
+/** Every hub control, its route, and the heading its real page renders. */
 const HUB_ROUTES = [
-  { control: '模拟简历.pdf', path: '/resume', title: '简历导入', stub: true },
-  { control: '术语表', path: '/glossary', title: '术语表', stub: false },
-  { control: '音色注册', path: '/voice', title: '音色注册', stub: false },
-  { control: '录音资产', path: '/recordings', title: '录音资产', stub: true },
-  { control: '复盘报告', path: '/review', title: '复盘报告', stub: true },
-  { control: '设置', path: '/setup', title: '引导向导', stub: false },
+  { control: '模拟简历.pdf', path: '/resume', title: '简历导入' },
+  { control: '术语表', path: '/glossary', title: '术语表' },
+  { control: '音色注册', path: '/voice', title: '音色注册' },
+  { control: '录音资产', path: '/recordings', title: '录音资产' },
+  { control: '复盘报告', path: '/review', title: '复盘报告' },
+  { control: '设置', path: '/setup', title: '引导向导' },
 ];
 
 async function calls(page: Page): Promise<{ cmd: string; args: Record<string, unknown> }[]> {
@@ -190,11 +189,7 @@ test.describe('console hub', () => {
     for (const entry of HUB_ROUTES) {
       await page.getByRole('button', { name: new RegExp(entry.control) }).click();
       await expect(page).toHaveURL(new RegExp(`#${entry.path}$`));
-      if (entry.stub) {
-        await expect(page.getByTestId('page-stub')).toContainText(entry.title);
-      } else {
-        await expect(page.getByRole('heading', { name: entry.title })).toBeVisible();
-      }
+      await expect(page.getByRole('heading', { name: entry.title })).toBeVisible();
 
       await page.getByRole('button', { name: '返回控制台' }).click();
       await expect(page).toHaveURL(/#\/console$/);
@@ -551,5 +546,114 @@ test.describe('glossary', () => {
     await expect(list.getByText('术语表为空')).toBeVisible();
     await expect(list.getByText('添加专有名词（如 K8s、幂等性），翻译时将保持原样')).toBeVisible();
     await expect(list.getByRole('button', { name: '添加术语' })).toBeVisible();
+  });
+});
+
+test.describe('resume import', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('imports by drop, then removes the resume through the confirm modal', async ({ page }) => {
+    await page.goto('/#/resume');
+
+    await expect(page.getByRole('heading', { name: '简历导入' })).toBeVisible();
+    const zone = page.getByTestId('file-drop-zone');
+    await expect(zone).toContainText('尚未导入简历');
+    await expect(zone).toContainText('导入 PDF 或 Word 简历，AI 策略将基于真实经历生成');
+    await expect(zone.getByRole('button', { name: '导入简历' })).toBeVisible();
+
+    // Drag-over state fills the zone before anything is dropped.
+    await zone.dispatchEvent('dragover');
+    await expect(zone).toHaveClass(/bg-portalGreen/);
+    await expect(zone).toContainText('松手即导入');
+
+    // Dropping imports the mock resume: file row + portalGreen success state.
+    await zone.dispatchEvent('drop');
+    const fileRow = page.getByRole('region', { name: '已导入简历' });
+    await expect(fileRow).toContainText('模拟简历.pdf');
+    await expect(fileRow).toContainText('248 KB');
+    await expect(fileRow).toContainText('已就绪');
+    await expect(fileRow).toContainText('模拟数据');
+
+    await fileRow.getByRole('button', { name: '移除' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('移除简历？');
+    await expect(dialog).toContainText('AI 策略将不再参考该简历');
+    await dialog.getByRole('button', { name: '移除' }).click();
+
+    await expect(page.getByTestId('file-drop-zone')).toContainText('尚未导入简历');
+  });
+});
+
+test.describe('recordings', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('shows the mock dual-track record and deletes it behind the confirm modal', async ({
+    page,
+  }) => {
+    await page.goto('/#/recordings');
+
+    await expect(page.getByRole('heading', { name: '录音资产' })).toBeVisible();
+    const list = page.getByRole('region', { name: '录音列表' });
+    await expect(list).toContainText('2026-08-27 14:05');
+    await expect(list).toContainText('18 分 42 秒');
+    await expect(list).toContainText('用户轨');
+    await expect(list).toContainText('面试官轨');
+    await expect(list).toContainText('模拟数据');
+    for (const format of ['SRT', 'Markdown', 'Word']) {
+      await expect(list.getByRole('button', { name: format })).toBeDisabled();
+    }
+
+    // Cancel keeps the recording …
+    const deleteButton = list.getByRole('button', { name: '删除录音 2026-08-27 14:05' });
+    await deleteButton.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('删除录音？');
+    await expect(dialog).toContainText('该会话的录音将被永久删除，不可恢复');
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await expect(list).toContainText('2026-08-27 14:05');
+
+    // … confirming deletes it and reveals the empty state.
+    await deleteButton.click();
+    await dialog.getByRole('button', { name: '删除' }).click();
+    await expect(list).toContainText('暂无录音');
+    await expect(list).toContainText('会话结束后，双轨录音会出现在这里');
+  });
+});
+
+test.describe('review report', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('generates the mock report from the empty state', async ({ page }) => {
+    await page.goto('/#/review');
+
+    await expect(page.getByRole('heading', { name: '复盘报告' })).toBeVisible();
+    await expect(page.getByText('暂无复盘报告')).toBeVisible();
+    await expect(page.getByText('生成报告后，可查看 Action Items 与关键关注点')).toBeVisible();
+
+    await page.getByRole('button', { name: '生成报告' }).click();
+
+    const report = page.getByRole('region', { name: '复盘报告内容' });
+    await expect(report).toBeVisible();
+    await expect(report).toContainText('整体表现良好');
+    await expect(report).toContainText('模拟数据');
+    await expect(report.getByRole('heading', { name: 'Action Items' })).toBeVisible();
+    await expect(report.getByRole('heading', { name: '关键关注点' })).toBeVisible();
+    await expect(report.getByRole('heading', { name: '逐题回放' })).toBeVisible();
+    await expect(
+      report.getByRole('listitem').filter({ hasText: '慢查询日志' }).first(),
+    ).toBeVisible();
+    await expect(report.getByRole('button', { name: /你能详细说一下/ })).toBeDisabled();
   });
 });
