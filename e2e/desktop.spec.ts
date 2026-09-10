@@ -101,13 +101,15 @@ function installTauriMock(): void {
 
 const CONSOLE_VIEWPORT = { width: 340, height: 680 };
 
+/** `stub: true` marks routes that still render PageStub (Task 4 replaces
+ *  简历导入 / 录音资产 / 复盘报告). */
 const HUB_ROUTES = [
-  { control: '模拟简历.pdf', path: '/resume', title: '简历导入' },
-  { control: '术语表', path: '/glossary', title: '术语表' },
-  { control: '音色注册', path: '/voice', title: '音色注册' },
-  { control: '录音资产', path: '/recordings', title: '录音资产' },
-  { control: '复盘报告', path: '/review', title: '复盘报告' },
-  { control: '设置', path: '/setup', title: '引导向导' },
+  { control: '模拟简历.pdf', path: '/resume', title: '简历导入', stub: true },
+  { control: '术语表', path: '/glossary', title: '术语表', stub: false },
+  { control: '音色注册', path: '/voice', title: '音色注册', stub: false },
+  { control: '录音资产', path: '/recordings', title: '录音资产', stub: true },
+  { control: '复盘报告', path: '/review', title: '复盘报告', stub: true },
+  { control: '设置', path: '/setup', title: '引导向导', stub: false },
 ];
 
 async function calls(page: Page): Promise<{ cmd: string; args: Record<string, unknown> }[]> {
@@ -188,7 +190,11 @@ test.describe('console hub', () => {
     for (const entry of HUB_ROUTES) {
       await page.getByRole('button', { name: new RegExp(entry.control) }).click();
       await expect(page).toHaveURL(new RegExp(`#${entry.path}$`));
-      await expect(page.getByTestId('page-stub')).toContainText(entry.title);
+      if (entry.stub) {
+        await expect(page.getByTestId('page-stub')).toContainText(entry.title);
+      } else {
+        await expect(page.getByRole('heading', { name: entry.title })).toBeVisible();
+      }
 
       await page.getByRole('button', { name: '返回控制台' }).click();
       await expect(page).toHaveURL(/#\/console$/);
@@ -247,6 +253,24 @@ test.describe('console hub', () => {
 
 /** The locked sim script (src-tauri/src/sim/script.rs) — the dual pane must
  *  render exactly this content. */
+/** Serialized into the page: the mic request is refused (unavailable path). */
+function denyMicrophone(): void {
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: () => Promise.reject(new Error('NotAllowedError')) },
+  });
+}
+
+/** Serialized into the page: a silent fake stream so recording can start. */
+function grantMicrophone(): void {
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: () => Promise.resolve({ getTracks: () => [{ stop: () => undefined }] }),
+    },
+  });
+}
+
 const QUESTION_EN =
   'Could you walk me through the specific steps you took to optimize the database?';
 const QUESTION_ZH = '你能详细说一下你优化数据库的具体步骤吗？';
@@ -388,5 +412,144 @@ test.describe('dual pane extended view', () => {
     await emit(page, 'session_status', { session: 'ended' });
     await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
     await expect(page.getByRole('status', { name: '正在生成' })).toHaveCount(0);
+  });
+});
+
+const VOICE_READING_TEXT =
+  '在过去三年里，我主要负责后端服务的性能优化与稳定性建设，把核心接口的 P99 延迟从 800 毫秒降到了 200 毫秒以内。';
+
+test.describe('setup wizard', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('walks the four steps and finishes back at the console', async ({ page }) => {
+    await page.goto('/#/setup');
+
+    await expect(page.getByRole('heading', { name: '引导向导' })).toBeVisible();
+    await expect(page.getByText('模拟模式').first()).toBeVisible();
+    await expect(page.getByRole('heading', { name: '欢迎使用极言' })).toBeVisible();
+
+    await page.getByRole('button', { name: '下一步' }).click();
+    await expect(page.getByRole('heading', { name: '安装 BlackHole' })).toBeVisible();
+    await expect(page.getByText('打开随应用附带的 BlackHole 2ch.pkg 安装包。')).toBeVisible();
+
+    await page.getByRole('button', { name: '下一步' }).click();
+    await expect(page.getByRole('heading', { name: '检测与权限' })).toBeVisible();
+    const checks = page.getByRole('region', { name: '环境检测' });
+    await expect(checks).toContainText('未检测');
+    await expect(checks).toContainText('模拟数据');
+
+    await page.getByRole('button', { name: '重新检测' }).click();
+    await expect(checks).toContainText('已就绪');
+
+    await page.getByRole('button', { name: '下一步' }).click();
+    await expect(page.getByRole('heading', { name: '配置完成' })).toBeVisible();
+
+    await page.getByRole('button', { name: '完成' }).click();
+    await expect(page).toHaveURL(/#\/console$/);
+  });
+});
+
+test.describe('voice enrollment', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+    await page.addInitScript(denyMicrophone);
+  });
+
+  test('shows the locked mic-unavailable banner when the mic is refused', async ({ page }) => {
+    await page.goto('/#/voice');
+
+    await expect(page.getByRole('heading', { name: '音色注册' })).toBeVisible();
+    await expect(page.getByText(VOICE_READING_TEXT)).toBeVisible();
+
+    await page.getByRole('button', { name: '下一步' }).click();
+    await expect(page.getByRole('heading', { name: '录音 1-3 分钟' })).toBeVisible();
+    await expect(page.getByTestId('recording-countdown')).toHaveText('03:00');
+
+    await page.getByRole('button', { name: '开始录音' }).click();
+
+    const banner = page.getByRole('alert');
+    await expect(banner).toContainText('麦克风不可用');
+    await expect(banner).toContainText('请在 系统设置 → 隐私与安全性 → 麦克风 中允许访问');
+    // Nothing was captured — the wizard stays on the recording step.
+    await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
+    await expect(page.getByTestId('recording-countdown')).toHaveText('03:00');
+  });
+
+  test('records with a countdown, then finishes on the sample step', async ({ page }) => {
+    await page.addInitScript(grantMicrophone);
+    await page.goto('/#/voice');
+
+    await page.getByRole('button', { name: '下一步' }).click();
+    await page.getByRole('button', { name: '开始录音' }).click();
+
+    await expect(page.getByText('麦克风开启-监听中')).toBeVisible();
+    await expect(page.getByTestId('recording-countdown')).toHaveText(/^0[23]:\d{2}$/);
+
+    await page.getByRole('button', { name: '停止录音' }).click();
+    await expect(page.getByRole('heading', { name: '试听与完成' })).toBeVisible();
+    await expect(page.getByText('音色样本占位')).toBeVisible();
+    await expect(page.getByText('模拟数据')).toBeVisible();
+    await expect(page.getByRole('button', { name: '播放' })).toBeDisabled();
+
+    await page.getByRole('button', { name: '完成' }).click();
+    await expect(page).toHaveURL(/#\/console$/);
+  });
+});
+
+test.describe('glossary', () => {
+  test.use({ viewport: CONSOLE_VIEWPORT });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('adds a term, refuses duplicates, and deletes through the confirm modal', async ({
+    page,
+  }) => {
+    await page.goto('/#/glossary');
+
+    await expect(page.getByRole('heading', { name: '术语表' })).toBeVisible();
+    await expect(page.getByText('模拟数据')).toBeVisible();
+    const list = page.getByRole('region', { name: '术语列表' });
+    await expect(list.getByText('K8s', { exact: true })).toBeVisible();
+    await expect(list.getByText('幂等性', { exact: true })).toBeVisible();
+    await expect(list.getByText('backpressure', { exact: true })).toBeVisible();
+
+    // Duplicate guard renders the field error.
+    await page.getByLabel('术语名称').fill('K8s');
+    await page.getByRole('button', { name: '添加术语' }).click();
+    await expect(page.getByText('该术语已在术语表中')).toBeVisible();
+
+    await page.getByLabel('术语名称').fill('灰度发布');
+    await page.getByRole('button', { name: '添加术语' }).click();
+    await expect(list.getByText('灰度发布', { exact: true })).toBeVisible();
+
+    // Cancel keeps the term …
+    await list.getByRole('button', { name: '删除术语 K8s' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('删除术语「K8s」？');
+    await expect(dialog).toContainText('该术语将不再受保护');
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await expect(list.getByText('K8s', { exact: true })).toBeVisible();
+
+    // … confirming removes it.
+    await list.getByRole('button', { name: '删除术语 K8s' }).click();
+    await dialog.getByRole('button', { name: '删除' }).click();
+    await expect(list.getByText('K8s', { exact: true })).toHaveCount(0);
+
+    for (const term of ['幂等性', 'backpressure', '灰度发布']) {
+      await list.getByRole('button', { name: `删除术语 ${term}` }).click();
+      await dialog.getByRole('button', { name: '删除' }).click();
+    }
+
+    await expect(list.getByText('术语表为空')).toBeVisible();
+    await expect(list.getByText('添加专有名词（如 K8s、幂等性），翻译时将保持原样')).toBeVisible();
+    await expect(list.getByRole('button', { name: '添加术语' })).toBeVisible();
   });
 });

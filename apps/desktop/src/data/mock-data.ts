@@ -45,3 +45,26 @@ export const MOCK_GLOSSARY_TERMS: readonly MockGlossaryTerm[] = [
   { id: 'term-mock-02', term: '幂等性', category: '架构' },
   { id: 'term-mock-03', term: 'backpressure', category: '系统' },
 ];
+
+/** SimSource chip on the setup wizard (UI-SPEC Missing Pages Contract). */
+export const SIM_SOURCE_BADGE_LABEL = '模拟模式';
+
+export interface MockDetectionItem {
+  id: string;
+  label: string;
+  /** Where the check resolves in the real product (Phase 3). */
+  detail: string;
+}
+
+/** Environment checks the wizard reports after 重新检测 (real probing is Phase 3). */
+export const MOCK_DETECTION_ITEMS: readonly MockDetectionItem[] = [
+  { id: 'det-driver', label: '虚拟音频驱动', detail: 'BlackHole 2ch' },
+  { id: 'det-mic', label: '麦克风权限', detail: '系统设置 → 隐私与安全性 → 麦克风' },
+];
+
+/** Sentence the user reads aloud while enrolling (the clone is Phase 2). */
+export const MOCK_VOICE_READING_TEXT =
+  '在过去三年里，我主要负责后端服务的性能优化与稳定性建设，把核心接口的 P99 延迟从 800 毫秒降到了 200 毫秒以内。';
+
+/** Placeholder playback tile caption — no real audio in Phase 1. */
+export const MOCK_VOICE_SAMPLE_LABEL = '音色样本占位';
