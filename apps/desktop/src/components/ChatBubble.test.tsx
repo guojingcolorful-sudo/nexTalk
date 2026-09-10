@@ -1,6 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import ChatBubble from './ChatBubble';
+
+// Testing Library only self-registers its afterEach cleanup when the runner
+// injects globals (vitest globals are off here) — without this, a previous
+// render leaks into the next query.
+afterEach(cleanup);
 
 const ANSWER_ZH = '首先，我们分析了慢查询日志，发现主要瓶颈在商品详情页的连表查询上。';
 const QUESTION_ZH = '你能详细说一下你优化数据库的具体步骤吗？';

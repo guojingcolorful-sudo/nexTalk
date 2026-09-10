@@ -114,6 +114,23 @@ async function calls(page: Page): Promise<{ cmd: string; args: Record<string, un
   return page.evaluate(() => window.__tauriCalls ?? []);
 }
 
+/** Pushes a Rust event through the same path the event plugin uses. */
+async function emit(page: Page, event: string, payload: unknown): Promise<void> {
+  await page.evaluate(
+    ([name, data]) => window.__tauriEmit?.(name, data),
+    [event, payload] as [string, unknown],
+  );
+}
+
+/** The webview only receives events once the event plugin has registered the
+ *  listener; wait for that invoke before emitting, so a test never races the
+ *  app's mount effect. */
+async function waitForListeners(page: Page): Promise<void> {
+  await expect
+    .poll(async () => (await calls(page)).filter((call) => call.cmd === 'plugin:event|listen').length)
+    .toBeGreaterThanOrEqual(3);
+}
+
 /** Vertical position, used to prove the widget's fixed card order. */
 async function yOf(locator: Locator): Promise<number> {
   const box = await locator.boundingBox();
@@ -225,5 +242,151 @@ test.describe('console hub', () => {
     await expect
       .poll(async () => (await calls(page)).filter((call) => call.cmd === 'get_pairing_info').length)
       .toBeGreaterThan(before);
+  });
+});
+
+/** The locked sim script (src-tauri/src/sim/script.rs) — the dual pane must
+ *  render exactly this content. */
+const QUESTION_EN =
+  'Could you walk me through the specific steps you took to optimize the database?';
+const QUESTION_ZH = '你能详细说一下你优化数据库的具体步骤吗？';
+const ANSWER_ZH = '首先，我们分析了慢查询日志，发现主要瓶颈在商品详情页的连表查询上。';
+const STRATEGY_BULLETS = ['慢查询日志定位', '拆连表查询', 'Redis 缓存层'];
+
+const QUESTION_EVENT = {
+  t: 'subtitle',
+  id: 'r1-q',
+  speaker: 'interviewer',
+  seq: 1,
+  zh: QUESTION_ZH,
+  en: QUESTION_EN,
+  final: true,
+};
+const ANSWER_EVENT = { t: 'subtitle', id: 'r1-a', speaker: 'user', seq: 2, zh: ANSWER_ZH, final: true };
+const STRATEGY_EVENT = {
+  t: 'strategy',
+  id: 's-r1',
+  roundId: 'r1',
+  title: '数据库优化',
+  bullets: STRATEGY_BULLETS,
+};
+
+test.describe('dual pane extended view', () => {
+  test.use({ viewport: { width: 860, height: 680 } });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installTauriMock);
+  });
+
+  test('renders both panes with their locked empty states', async ({ page }) => {
+    await page.goto('/#/dual');
+
+    const subtitles = page.getByRole('region', { name: '实时字幕' });
+    const ai = page.getByRole('region', { name: 'AI 辅助' });
+
+    await expect(page.getByRole('heading', { name: '扩展视图' })).toBeVisible();
+    await expect(subtitles.getByRole('heading', { name: '实时字幕' })).toBeVisible();
+    await expect(ai.getByRole('heading', { name: 'AI 辅助' })).toBeVisible();
+    await expect(subtitles).toContainText('等待语音输入');
+    await expect(subtitles).toContainText('模拟会话开始后，双语字幕将显示在这里');
+    await expect(ai).toContainText('AI 策略将自动生成');
+    await expect(ai).toContainText('提问结束后，策略卡片会出现在这里');
+    // Idle session: no capture pill claims the mic is live.
+    await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
+  });
+
+  test('streams the simulated question, answer, and strategy into place', async ({ page }) => {
+    await page.goto('/#/dual');
+    await waitForListeners(page);
+
+    await emit(page, 'session', QUESTION_EVENT);
+    const subtitles = page.getByRole('region', { name: '实时字幕' });
+    await expect(subtitles).toContainText(QUESTION_EN);
+    await expect(subtitles).toContainText(QUESTION_ZH);
+    await expect(subtitles).toContainText('面试官');
+
+    await emit(page, 'session', ANSWER_EVENT);
+    await expect(subtitles).toContainText(ANSWER_ZH);
+    await expect(subtitles).toContainText('用户');
+    await expect(subtitles).not.toContainText('等待语音输入');
+
+    await emit(page, 'session', STRATEGY_EVENT);
+    const ai = page.getByRole('region', { name: 'AI 辅助' });
+    await expect(ai).toContainText('数据库优化');
+    for (const bullet of STRATEGY_BULLETS) {
+      await expect(ai.getByRole('listitem').filter({ hasText: bullet })).toBeVisible();
+    }
+    await expect(ai).not.toContainText('AI 策略将自动生成');
+  });
+
+  test('keeps each bubble language choice independent', async ({ page }) => {
+    await page.goto('/#/dual');
+    await waitForListeners(page);
+    await emit(page, 'session', QUESTION_EVENT);
+    await emit(page, 'session', ANSWER_EVENT);
+
+    const interviewerToggle = page.getByRole('group', { name: '面试官语言' });
+    const userToggle = page.getByRole('group', { name: '用户语言' });
+    await expect(interviewerToggle.getByRole('button', { name: 'EN+中', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(userToggle.getByRole('button', { name: '中', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await interviewerToggle.getByRole('button', { name: '中', exact: true }).click();
+
+    // Only the interviewer bubble reacted — its English line is gone from the
+    // stream (the AI pane's context card keeps the original wording) …
+    const subtitles = page.getByRole('region', { name: '实时字幕' });
+    await expect(subtitles.getByText(QUESTION_EN)).toHaveCount(0);
+    await expect(subtitles).toContainText(QUESTION_ZH);
+    // … the user bubble kept its own preference and its text.
+    await expect(page.getByText(ANSWER_ZH)).toBeVisible();
+    await expect(userToggle.getByRole('button', { name: '中', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  test('drops a malformed payload before it can render', async ({ page }) => {
+    await page.goto('/#/dual');
+    await waitForListeners(page);
+    await emit(page, 'session', QUESTION_EVENT);
+    await expect(page.getByRole('region', { name: '实时字幕' })).toContainText(QUESTION_EN);
+
+    const bubblesBefore = await page.locator('[data-testid="subtitle-stream"] > div').count();
+
+    // seq must be a number — the narrowing guard rejects the whole payload.
+    await emit(page, 'session', {
+      t: 'subtitle',
+      id: 'bad-1',
+      speaker: 'interviewer',
+      seq: 'not-a-number',
+      en: 'MALFORMED-SHOULD-NOT-RENDER',
+      final: true,
+    });
+    // A payload that is not a ServerEvent at all is dropped too.
+    await emit(page, 'session', { t: 'subtitle-hostile', en: 'MALFORMED-SHOULD-NOT-RENDER' });
+
+    await expect(page.getByText('MALFORMED-SHOULD-NOT-RENDER')).toHaveCount(0);
+    await expect(page.locator('[data-testid="subtitle-stream"] > div')).toHaveCount(bubblesBefore);
+  });
+
+  test('reflects listening, generating, and ended session states', async ({ page }) => {
+    await page.goto('/#/dual');
+    await waitForListeners(page);
+
+    await emit(page, 'session_status', { session: 'listening' });
+    await expect(page.getByText('麦克风开启-监听中')).toBeVisible();
+
+    await emit(page, 'session_status', { session: 'generating' });
+    await expect(page.getByRole('status', { name: '正在生成' })).toBeVisible();
+
+    await emit(page, 'session_status', { session: 'ended' });
+    await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
+    await expect(page.getByRole('status', { name: '正在生成' })).toHaveCount(0);
   });
 });

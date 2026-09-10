@@ -1,6 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import LanguageToggle from './LanguageToggle';
+
+// Testing Library only self-registers its afterEach cleanup when the runner
+// injects globals (vitest globals are off here) — without this, a previous
+// render leaks into the next query.
+afterEach(cleanup);
 
 describe('LanguageToggle', () => {
   it('exposes the three segments as pressed buttons inside a labelled group', () => {
