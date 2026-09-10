@@ -50,7 +50,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03: Desktop UI complete: console hub (DSK-01) + dual-pane live view with per-bubble language toggles (DSK-02/DSK-04) + six missing pages (UI-02) with mock data
+- [x] 01-03: Desktop UI complete: console hub (DSK-01) + dual-pane live view with per-bubble language toggles (DSK-02/DSK-04) + six missing pages (UI-02) with mock data
 - [ ] 01-04: Phone H5 complete: full teleprompter UI + wake-lock fallback (SYNC-04) + WS backoff reconnect + sinceSeq resume (SYNC-05) + control round-trip (SYNC-03)
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Simulation Mode | 2/5 | In progress | 01-01 (2026-08-29), 01-02 (2026-09-09) |
+| 1. Foundation + Simulation Mode | 3/5 | In progress | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10) |
 | 2. Real Cloud Pipeline + Audio Core | 0/5 | Not started | - |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |
