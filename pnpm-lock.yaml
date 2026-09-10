@@ -53,6 +53,9 @@ importers:
       '@nextalk/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@nextalk/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@tauri-apps/api':
         specifier: 2.11.1
         version: 2.11.1

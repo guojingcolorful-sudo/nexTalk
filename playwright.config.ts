@@ -14,7 +14,7 @@ export default defineConfig({
       name: 'desktop',
       use: { baseURL: 'http://localhost:1420' },
       // skeleton.spec.ts exercises the phone H5 over a mock WS — desktop app
-      // specs land in 01-03 and run under this project.
+      // specs (desktop.spec.ts) run under this project.
       testIgnore: '**/skeleton.spec.ts',
     },
     {
@@ -23,6 +23,9 @@ export default defineConfig({
       // collides with a long-running local tool on 127.0.0.1:8787 — e2e
       // previews must not fight the desktop's production port.
       use: { baseURL: 'http://localhost:8791' },
+      // The desktop surface needs the 1420 preview + Tauri IPC mock; running
+      // desktop.spec.ts against the H5 origin would test the wrong app.
+      testIgnore: '**/desktop.spec.ts',
     },
   ],
   webServer: [

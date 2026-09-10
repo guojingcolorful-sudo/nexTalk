@@ -1,26 +1,58 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faClosedCaptioning } from '@fortawesome/free-solid-svg-icons';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import {
+  faBook,
+  faFilePdf,
+  faMicrophone,
+  faRotate,
+  faWaveSquare,
+} from '@fortawesome/free-solid-svg-icons';
 import HeaderBar from '../components/HeaderBar';
 import NexTalkBrand from '../components/NexTalkBrand';
+import StealthCard from '../components/StealthCard';
 import QrCodeCard from '../components/QrCodeCard';
+import KnowledgeRow from '../components/KnowledgeRow';
+import NeobrutalismButton from '../components/NeobrutalismButton';
+import ErrorBanner from '../components/ErrorBanner';
+import { MOCK_GLOSSARY_TERMS, MOCK_RESUME } from '../data/mock-data';
 
 /**
- * Console page (340x680) — the hub window (DSK-01). Skeleton slice:
- * brand header, live pairing QR (QrCodeCard), subtitles empty state,
- * and the 开始模拟会话 primary CTA. The full hub (stealth card,
- * knowledge rows, secondary actions) is 01-03.
+ * Console page (340x680) — the hub window (DSK-01).
+ *
+ * Fixed card order per the UI-SPEC Navigation contract: brand header →
+ * StealthCard → sync QR → knowledge base rows (简历导入 / 术语表 / 音色注册)
+ * → 本地资产 (录音资产 / 复盘报告), with the action bar pinned at the bottom
+ * (开始模拟会话 / 扩展视图 / 设置).
+ *
+ * The widget is the only entry point for every other surface: the dual-pane
+ * window opens through the Tauri window API, and each missing page opens as a
+ * full-width view inside this window.
  */
 export default function ConsolePage() {
+  const navigate = useNavigate();
   const [sessionRunning, setSessionRunning] = useState(false);
+  const [startFailed, setStartFailed] = useState(false);
 
   const startSession = () => {
+    setStartFailed(false);
     invoke('start_session')
       .then(() => setSessionRunning(true))
       .catch((err) => {
         console.error('start_session failed', err);
+        setStartFailed(true);
       });
+  };
+
+  const openDualPane = async () => {
+    try {
+      // The dual window starts hidden (tauri.conf.json) and is revealed here.
+      const dual = await WebviewWindow.getByLabel('dual');
+      await dual?.show();
+    } catch (err) {
+      console.error('showing the dual window failed', err);
+    }
   };
 
   return (
@@ -30,31 +62,74 @@ export default function ConsolePage() {
       </HeaderBar>
 
       <main className="flex-1 space-y-4 overflow-y-auto p-4">
-        {/* Live pairing QR — real get_pairing_info + qrcode rendering */}
+        <StealthCard />
+
         <QrCodeCard />
 
-        {/* Subtitles empty state (pre-session) */}
-        <section
-          aria-label="实时字幕"
-          className="flex flex-col items-center gap-1 rounded-xl border-4 border-black bg-spaceDark p-4 text-center"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg border-2 border-black bg-portalGreen text-black">
-            <FontAwesomeIcon icon={faClosedCaptioning} aria-hidden="true" />
-          </span>
-          <p className="mt-2 text-[13px] font-bold text-white">等待语音输入</p>
-          <p className="text-xs text-gray-400">模拟会话开始后，双语字幕将显示在这里</p>
+        <section aria-label="知识库" className="space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400">知识库</h2>
+          <KnowledgeRow
+            icon={faFilePdf}
+            label={MOCK_RESUME.fileName}
+            state="success"
+            onClick={() => navigate('/resume')}
+          />
+          <KnowledgeRow
+            icon={faBook}
+            label="术语表"
+            value={`${MOCK_GLOSSARY_TERMS.length} 个术语`}
+            onClick={() => navigate('/glossary')}
+          />
+          <KnowledgeRow
+            icon={faMicrophone}
+            label="音色注册"
+            value="未注册"
+            onClick={() => navigate('/voice')}
+          />
+        </section>
+
+        <section aria-label="本地资产" className="space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400">本地资产</h2>
+          <KnowledgeRow
+            icon={faWaveSquare}
+            label="录音资产"
+            onClick={() => navigate('/recordings')}
+          />
+          <KnowledgeRow icon={faRotate} label="复盘报告" onClick={() => navigate('/review')} />
         </section>
       </main>
 
-      <footer className="shrink-0 border-t-4 border-black bg-spaceDark p-3">
-        <button
-          type="button"
+      {startFailed ? (
+        <div className="px-4 pb-2">
+          <ErrorBanner
+            title="模拟音频加载失败"
+            body="请重新开始模拟会话"
+            action={
+              <NeobrutalismButton variant="paper" size="sm" onClick={startSession}>
+                重试
+              </NeobrutalismButton>
+            }
+          />
+        </div>
+      ) : null}
+
+      <footer className="shrink-0 space-y-2 border-t-4 border-black bg-spaceDark p-3">
+        <NeobrutalismButton
+          variant="green"
+          className="w-full"
           onClick={startSession}
           disabled={sessionRunning}
-          className="w-full rounded-xl border-4 border-black bg-portalGreen px-4 py-3 text-sm font-bold uppercase tracking-wider text-black shadow-cartoon-black transition hover:translate-y-1 hover:shadow-none active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-not-allowed disabled:opacity-50"
         >
           {sessionRunning ? '会话进行中' : '开始模拟会话'}
-        </button>
+        </NeobrutalismButton>
+        <div className="flex gap-2">
+          <NeobrutalismButton variant="blue" className="flex-1" onClick={openDualPane}>
+            扩展视图
+          </NeobrutalismButton>
+          <NeobrutalismButton variant="ghost" onClick={() => navigate('/setup')}>
+            设置
+          </NeobrutalismButton>
+        </div>
       </footer>
     </div>
   );
