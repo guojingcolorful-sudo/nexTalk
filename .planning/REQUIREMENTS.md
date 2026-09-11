@@ -20,9 +20,9 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Sync (SYNC)
 
 - [x] **SYNC-01**: 局域网 WebSocket 服务 + 二维码配对（token 认证，手机无需安装 App）— 01-02: axum LAN server 8787, pairing-as-auth, 401 on bad token, QR encodes token URL
-- [ ] **SYNC-02**: 手机 H5 提词器：上半屏双语流式字幕、下半屏 AI 策略卡片 — 01-04 (stub page + WS render proven in 01-02)
-- [ ] **SYNC-03**: 语言切换（全中/全英/双语），面试官与用户气泡独立切换
-- [ ] **SYNC-04**: 手机屏幕常亮（Wake Lock 安全上下文失败时回退方案）
+- [x] **SYNC-02**: 手机 H5 提词器：上半屏双语流式字幕、下半屏 AI 策略卡片 — 01-04: 字幕/AI 辅助 双 tab 完整提词器，mock-WS e2e 五段全绿（01-02 已证 WS 渲染）
+- [x] **SYNC-03**: 语言切换（全中/全英/双语），面试官与用户气泡独立切换 — 01-03 桌面端逐气泡独立切换；01-04 手机端会话级模式回推 {t:control,language}（字段名已断言）
+- [x] **SYNC-04**: 手机屏幕常亮（Wake Lock 安全上下文失败时回退方案）— 01-04: 安全上下文走 wakeLock.request，http:// LAN 走 1×1 隐藏循环视频回退（真实手机常亮待人工验证）
 - [x] **SYNC-05**: 打字机流式渲染（字逐个出现，掩盖 LLM 生成延迟）— 01-02: useTypewriter 40ms cadence + reduced-motion collapse, vitest-proven
 
 ### Desktop (DSK)
@@ -49,7 +49,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### UI Design System (UI)
 
 - [x] **UI-01**: 新粗野主义设计系统落地（设计规范 V1.0：4px 粗黑边框、硬偏移阴影、三功能色、Space Grotesk、圆点矩阵背景）— 01-02: tokens + preset (01-01) instantiated in console page, H5 stub, QR card
-- [ ] **UI-02**: 参考 HTML 4 屏实现 + 缺页补齐（引导向导、录音资产、复盘报告、音色注册、术语表、简历导入）— 01-03/01-04
+- [x] **UI-02**: 参考 HTML 4 屏实现 + 缺页补齐（引导向导、录音资产、复盘报告、音色注册、术语表、简历导入）— 01-03 桌面六页 + 01-04 手机提词器 H5
 - [x] **UI-03**: 零 CDN 本地打包（Tailwind v3.4，兼容 macOS 12.7 Safari 15.6 / WKWebView）— 01-02: both app bundles zero external http(s) refs, safari15 build target
 
 ## v2 Requirements
@@ -97,9 +97,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDI-06 | Phase 2 | Pending |
 | AUDI-07 | Phase 4 | Pending |
 | SYNC-01 | Phase 1 | Complete (01-02) |
-| SYNC-02 | Phase 1 | Pending (01-04) |
-| SYNC-03 | Phase 1 | Pending |
-| SYNC-04 | Phase 1 | Pending |
+| SYNC-02 | Phase 1 | Complete (01-04) |
+| SYNC-03 | Phase 1 | Complete (01-03/01-04) |
+| SYNC-04 | Phase 1 | Complete (01-04) |
 | SYNC-05 | Phase 1 | Complete (01-02) |
 | DSK-01 | Phase 1 | Complete (01-02) |
 | DSK-02 | Phase 1 | Complete (01-02) |
@@ -114,7 +114,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REC-03 | Phase 6 | Pending |
 | REC-04 | Phase 6 | Pending |
 | UI-01 | Phase 1 | Complete (01-02) |
-| UI-02 | Phase 1 | Pending (01-03/01-04) |
+| UI-02 | Phase 1 | Complete (01-03/01-04) |
 | UI-03 | Phase 1 | Complete (01-02) |
 
 **Coverage:**

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Plan 3 of Phase 1 complete
-last_updated: "2026-09-10T04:40:00.000Z"
-last_activity: 2026-09-10 -- 01-03 desktop surface complete
+stopped_at: Plan 4 of Phase 1 complete
+last_updated: "2026-09-11T05:25:00.000Z"
+last_activity: 2026-09-11 -- 01-04 phone teleprompter complete
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,28 +26,29 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 1 of 7 (Foundation + Simulation Mode)
-Plan: 3 of 5 in current phase (01-01, 01-02, 01-03 complete)
-Status: Ready to execute next plan (01-04)
-Last activity: 2026-09-10 -- 01-03 desktop surface complete
+Plan: 4 of 5 in current phase (01-01, 01-02, 01-03, 01-04 complete)
+Status: Ready to execute next plan (01-05)
+Last activity: 2026-09-11 -- 01-04 phone teleprompter complete
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
-- Average duration: ~11d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active)
-- Total execution time: 26h + ~7h + ~1h active
+- Total plans completed: 4
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Foundation + Simulation Mode | 3 | 5 | ~11d wall (incl. idle gaps) |
+| 1. Foundation + Simulation Mode | 4 | 5 | ~1d wall avg (incl. idle gaps) |
 
 **Recent Trend:**
 
+- 01-04 phone teleprompter (2026-09-11): 4 commits (1 RED + 1 GREEN), 27 vitest + 5 new playwright specs (10/10 with --repeat-each=2, 26/26 full suite) green, build 93.30 kB gz JS / 4.48 kB gz CSS, 8 auto-fixed deviations
 - 01-03 desktop surface (2026-09-10): 5 commits (1 RED + 1 GREEN), 11 vitest + 19 desktop e2e (21 total across projects) green, build 128.70 kB gz JS / 5.37 kB gz CSS, 7 auto-fixed deviations
 - 01-02 walking skeleton (2026-09-09): 5 commits, 17 cargo + 3 vitest + 2 e2e tests green, 7 auto-fixed deviations
 
@@ -60,6 +61,11 @@ Progress: [██████░░░░] 60%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [01-04]: The phone owns ONE session-level language mode (中/EN/EN+中) pushed as {t:control,language} — per-bubble toggles stay desktop-only; the inbound `language` ServerEvent renders nothing on the phone (it is the desktop observation channel for 01-05)
+- [01-04]: The phone's wake-lock fallback is a bundled 977-byte H.264 loop fetched with Vite `?no-inline` (real cached asset, zero CDN, no runtime media synthesis); it needs the same 开始提词 gesture as `wakeLock.request`
+- [01-04]: Teleprompter tab is URL state (`?tab=ai`) written with history.replaceState so `?token=` survives; a phone waking from sleep returns to the tab it was reading
+- [01-04]: Playwright clock discipline — `page.clock.install()` alone still lets real time through (a leaked tick made the 20-char typewriter checkpoint read 21); freeze with `install()` + `pauseAt()` before navigation and poll the DOM from Node, because Playwright auto-wait polls with page rAF
+- [01-04]: e2e mocks the desktop with its own `ws` server on an EPHEMERAL port reached through the `?ws=` override — no port is reserved, and 8787 stays the untouched product default
 - [01-03]: Language preference is per-bubble local state (not a global store) — each ChatBubble seeds itself from the speaker default (interviewer `bilingual`, user `all-zh`) and toggles independently, satisfying SYNC-03
 - [01-03]: The locked @nextalk/protocol ServerEvent union has NO draft variant, so the UI-SPEC green draft timeline node has no producer in Phase 1 — AiTimeline ships context + strategy nodes only; a protocol decision is needed before the draft node can exist
 - [01-03]: Testing Library auto-cleanup is not active (vitest globals are off) — React specs MUST call afterEach(cleanup) explicitly or a prior render leaks into the next query
@@ -98,7 +104,8 @@ None yet.
 - `tsc` is unusable as a gate: `@types/react` / `@types/react-dom` are not installed in the workspace, so typecheck output is dominated by pre-existing errors (see 01-03 deferred-items.md)
 - 01-03 Task 4 `<human-check>` (`pnpm --filter @nextalk/desktop tauri dev` manual walkthrough) is still outstanding — the executor ran the full automated suite (21 e2e across both projects) but cannot drive a GUI session
 - Dev-machine port collision: an unrelated long-running tool (tools/jd-inbox-server.mjs) holds 127.0.0.1:8787 — the desktop LAN server binds 0.0.0.0:8787 and will EADDRINUSE while that tool runs (app degrades gracefully: bind failure logged, app continues); e2e previews already moved to 8791. Stop the tool before real-device pairing tests
-- Playwright e2e now proves the mock-WS flow; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
+- 01-04 Task 3 `<human-check>` (real-device pass: QR scan → 开始提词 → screen awake ≥2 min → wifi kill 10s → reconnect/resume) is still outstanding — the executor has no phone or camera. Automated equivalents are green (mock-WS e2e covers pairing mount, wake fallback and reconnect/resume); run the hardware pass before `/gsd:verify-work`
+- Playwright e2e now proves the mock-WS flow for BOTH surfaces; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
 
 ## Deferred Items
 
@@ -110,6 +117,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-10T04:40:00.000Z
-Stopped at: Completed 01-03-PLAN.md (desktop surface: console hub + dual pane + six pages)
-Resume file: .planning/phases/01-foundation-simulation-mode/01-03-SUMMARY.md
+Last session: 2026-09-11T05:25:00.000Z
+Stopped at: Completed 01-04-PLAN.md (phone teleprompter: full H5 UI, hardened WS + wake lock, mock-WS e2e)
+Resume file: .planning/phases/01-foundation-simulation-mode/01-04-SUMMARY.md
