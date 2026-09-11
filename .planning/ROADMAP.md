@@ -13,7 +13,7 @@ NexTalk is a real-time CN→EN interview copilot: the user speaks Chinese, hears
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation + Simulation Mode** - Design system, desktop dual-pane UI, phone H5 teleprompter, LAN QR sync — full event flow demoable on simulated audio
+- [x] **Phase 1: Foundation + Simulation Mode** - Design system, desktop dual-pane UI, phone H5 teleprompter, LAN QR sync — full event flow demoable on simulated audio (completed 2026-09-11)
 - [ ] **Phase 2: Real Cloud Pipeline + Audio Core** - Cascaded streaming STT→translate→TTS with cloned voice, ≤2s e2e, latency rig as gate
 - [ ] **Phase 3: Virtual Audio Device Integration** - BlackHole install wizard, aggregate multi-output device, meeting-app audio loop
 - [ ] **Phase 4: Stealth + Desktop Completion** - Cmd+Shift+H real orderOut hiding verified against real meeting apps, glossary term protection
@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Phone screen stays awake during a session on plain `http://192.168.x.x` (wake-lock fallback engages automatically when the API is unavailable)
   5. On simulated audio, the full event flow (subtitles → strategy → cross-device sync) plays end-to-end and is demoable to a third party; all reference-HTML screens plus missing pages (setup wizard, voice enrollment, glossary, resume import, recording assets, review report) are implemented
 
-**Plans**: 5 plans
+**Plans**: 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -55,7 +55,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 01-05: Full 4-round SimSource engine + live demo wiring across all surfaces (打断/重听 per D-03) + vendor experiment framework (D-04)
+- [x] 01-05: Full 4-round SimSource engine + live demo wiring across all surfaces (打断/重听 per D-03) + vendor experiment framework (D-04) — complete 2026-09-11
 
 **Research notes**: Run the decisive vendor experiments here (STT A/B Gemini Live vs Deepgram Nova-3 on real interview Chinese, blinded clone listening test MiniMax vs Cartesia vs Fish vs ElevenLabs, network RTT per vendor from user's region, Gemini Live text-modality probe). Results decide the Phase 2 stack wiring. Per CONTEXT.md D-04 the experiment FRAMEWORK ships in Phase 1 (01-05 Task 3, zero API keys); the experiments themselves run between Phase 1 and Phase 2 planning.
 **UI hint**: yes
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Simulation Mode | 4/5 | In progress | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10), 01-04 (2026-09-11) |
+| 1. Foundation + Simulation Mode | 5/5 | Complete | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10), 01-04 (2026-09-11), 01-05 (2026-09-11) |
 | 2. Real Cloud Pipeline + Audio Core | 0/5 | Not started | - |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |

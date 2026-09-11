@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Plan 4 of Phase 1 complete
-last_updated: "2026-09-11T05:25:00.000Z"
-last_activity: 2026-09-11 -- 01-04 phone teleprompter complete
+stopped_at: Plan 5 of Phase 1 complete — all 5 plans done, awaiting /gsd:verify-work
+last_updated: "2026-09-11T06:15:49.000Z"
+last_activity: 2026-09-11 -- 01-05 simulation session + vendor experiment framework complete
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -26,28 +26,29 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 1 of 7 (Foundation + Simulation Mode)
-Plan: 4 of 5 in current phase (01-01, 01-02, 01-03, 01-04 complete)
-Status: Ready to execute next plan (01-05)
-Last activity: 2026-09-11 -- 01-04 phone teleprompter complete
+Plan: 5 of 5 in current phase (01-01, 01-02, 01-03, 01-04, 01-05 complete)
+Status: Phase code-complete — awaiting /gsd:verify-work (automated gates green at HEAD)
+Last activity: 2026-09-11 -- 01-05 simulation session + vendor experiment framework complete
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 4
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h active
+- Total plans completed: 5
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Foundation + Simulation Mode | 4 | 5 | ~1d wall avg (incl. idle gaps) |
+| 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
 
 **Recent Trend:**
 
+- 01-05 simulation session + vendor framework (2026-09-11): 4 commits (1 RED + 1 GREEN), 29 cargo tests (27 lib + 2 integration) + 29 playwright specs + 71 vitest green, build 129.39 kB gz JS / 5.37 kB gz CSS, 6 auto-fixed deviations, 1 decision forced by Tauri 2.11 (no app-command ACL namespace)
 - 01-04 phone teleprompter (2026-09-11): 4 commits (1 RED + 1 GREEN), 27 vitest + 5 new playwright specs (10/10 with --repeat-each=2, 26/26 full suite) green, build 93.30 kB gz JS / 4.48 kB gz CSS, 8 auto-fixed deviations
 - 01-03 desktop surface (2026-09-10): 5 commits (1 RED + 1 GREEN), 11 vitest + 19 desktop e2e (21 total across projects) green, build 128.70 kB gz JS / 5.37 kB gz CSS, 7 auto-fixed deviations
 - 01-02 walking skeleton (2026-09-09): 5 commits, 17 cargo + 3 vitest + 2 e2e tests green, 7 auto-fixed deviations
@@ -61,6 +62,13 @@ Progress: [████████░░] 80%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [01-05]: Tauri 2.11 has NO ACL namespace for app-defined commands (`gen/schemas/acl-manifests.json` lists only `core*`), so T-01-06 is enforced in the commands themselves — `interrupt`/`repeat` return Err unless the session is `generating`, `start_session` returns Err while one is live; `capabilities/default.json` was deliberately left untouched
+- [01-05]: One event model, two transports holds end-to-end — the SimSource only appends to `SessionState.timeline`; the Tauri `session` emit and the WS broadcast are two projections of the same list, so console/dual/phone cannot drift
+- [01-05]: `phone_count` is desktop-only telemetry on a Tauri event, never a WS ServerEvent — the locked 01-01 protocol union gained nothing for the client counter
+- [01-05]: ChatBubble language resolution is `localPref ?? session mode ?? speaker default` — the phone's mode seeds every bubble the user has not personally toggled, keeping 01-03's per-bubble independence intact
+- [01-05]: `repeat` (重听) re-emits a round under `-r{n}` ids with fresh seq (the phone's resume dedupe can never swallow a replay); `interrupt` (打断) cuts immediately and opens the next round at `+1000 ms` (`INTERRUPT_LEAD_MS`)
+- [01-05]: SimSource determinism contract — `script_state(elapsed_ms)` is pure/IO-free and the scheduler takes an injectable `TimeSource`, so engine tests never sleep; scheduler cancellation is a u64 epoch ticket, not JoinHandle bookkeeping
+- [01-05]: Vendor framework (D-04) ships zero dependencies and zero keys — Node built-ins only, TLS-only RTT tool that takes the credential's environment variable NAME (`--auth-env`, with `--auth-header`/`--auth-scheme` for Bearer/Token/raw vendors), and the report records `hasKey` (presence) only
 - [01-04]: The phone owns ONE session-level language mode (中/EN/EN+中) pushed as {t:control,language} — per-bubble toggles stay desktop-only; the inbound `language` ServerEvent renders nothing on the phone (it is the desktop observation channel for 01-05)
 - [01-04]: The phone's wake-lock fallback is a bundled 977-byte H.264 loop fetched with Vite `?no-inline` (real cached asset, zero CDN, no runtime media synthesis); it needs the same 开始提词 gesture as `wakeLock.request`
 - [01-04]: Teleprompter tab is URL state (`?tab=ai`) written with history.replaceState so `?token=` survives; a phone waking from sleep returns to the tab it was reading
@@ -105,6 +113,8 @@ None yet.
 - 01-03 Task 4 `<human-check>` (`pnpm --filter @nextalk/desktop tauri dev` manual walkthrough) is still outstanding — the executor ran the full automated suite (21 e2e across both projects) but cannot drive a GUI session
 - Dev-machine port collision: an unrelated long-running tool (tools/jd-inbox-server.mjs) holds 127.0.0.1:8787 — the desktop LAN server binds 0.0.0.0:8787 and will EADDRINUSE while that tool runs (app degrades gracefully: bind failure logged, app continues); e2e previews already moved to 8791. Stop the tool before real-device pairing tests
 - 01-04 Task 3 `<human-check>` (real-device pass: QR scan → 开始提词 → screen awake ≥2 min → wifi kill 10s → reconnect/resume) is still outstanding — the executor has no phone or camera. Automated equivalents are green (mock-WS e2e covers pairing mount, wake fallback and reconnect/resume); run the hardware pass before `/gsd:verify-work`
+- 01-05 Task 2 `<human-check>` (interactive `pnpm --filter @nextalk/desktop tauri dev` demo pass: QR scan → 开始模拟会话 → r1 flows to console + dual + phone in sync → phone count flips to 已连接 1 台设备 → phone mode switch → 打断/重听 → ended) is outstanding — needs a GUI session + phone + camera. Every leg has a green automated equivalent (29 cargo tests incl. the real-WS integration test; 29 playwright specs incl. demo.spec.ts); run it before `/gsd:verify-work`
+- Phase 1 is code-complete (5/5 plans, all automated gates green at HEAD) but its three human passes (01-03 desktop walkthrough, 01-04 real-device phone, 01-05 full demo) are the remaining end-of-phase manual checks
 - Playwright e2e now proves the mock-WS flow for BOTH surfaces; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
 
 ## Deferred Items
@@ -117,6 +127,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-11T05:25:00.000Z
-Stopped at: Completed 01-04-PLAN.md (phone teleprompter: full H5 UI, hardened WS + wake lock, mock-WS e2e)
-Resume file: .planning/phases/01-foundation-simulation-mode/01-04-SUMMARY.md
+Last session: 2026-09-11T06:15:49.000Z
+Stopped at: Completed 01-05-PLAN.md (4-round SimSource engine, live demo wiring across all surfaces, vendor experiment framework) — Phase 1 has no plans left to execute
+Resume file: .planning/phases/01-foundation-simulation-mode/01-05-SUMMARY.md
