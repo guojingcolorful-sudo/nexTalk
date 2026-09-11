@@ -10,11 +10,12 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-mod lan;
-mod sim;
-mod state;
+// Public so `tests/session_integration.rs` (a separate crate) can drive the
+// real state + LAN server the way the demo does.
+pub mod lan;
+pub mod sim;
+pub mod state;
 
-use lan::server::SessionStatus;
 use state::SessionState;
 
 /// LAN port the phone H5 teleprompter connects to (fixed for the skeleton).
@@ -39,36 +40,21 @@ fn get_pairing_info(state: tauri::State<'_, SessionState>) -> PairingInfo {
 }
 
 /// `start_session` — resets the timeline, marks the session listening and
-/// spawns the SimSource scheduler. Re-entrant calls while a script is playing
-/// are rejected.
+/// spawns the SimSource scheduler against the real clock. Re-entrant calls
+/// while a script is playing are rejected; the returned epoch is the
+/// scheduler's cancellation ticket (stop/restart bumps it).
 #[tauri::command]
-fn start_session(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SessionState>,
-) -> Result<(), String> {
-    let current = state.session_status();
-    if current == SessionStatus::Listening || current == SessionStatus::Generating {
-        return Err("a simulated session is already running".into());
-    }
-    state.reset_timeline();
-    let _ = state.set_session_status(SessionStatus::Listening);
-    let _ = app.emit(
-        "session_status",
-        serde_json::json!({ "session": "listening" }),
-    );
-    sim::source::spawn_scheduler(state.inner().clone(), app);
+fn start_session(state: tauri::State<'_, SessionState>) -> Result<(), String> {
+    let epoch = state.start_session()?;
+    sim::source::spawn_scheduler(state.inner().clone(), epoch, sim::source::RealClock::new());
     Ok(())
 }
 
-/// `stop_session` — ends the session (status -> ended) while keeping the
-/// timeline for review.
+/// `stop_session` — ends the session (status -> ended, scheduler cancelled)
+/// while keeping the timeline for review.
 #[tauri::command]
-fn stop_session(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SessionState>,
-) -> Result<(), String> {
-    let _ = state.set_session_status(SessionStatus::Ended);
-    let _ = app.emit("session_status", serde_json::json!({ "session": "ended" }));
+fn stop_session(state: tauri::State<'_, SessionState>) -> Result<(), String> {
+    state.stop_session();
     Ok(())
 }
 
@@ -81,6 +67,10 @@ pub fn run() {
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);
+            // The state carries the handle the event mirror needs (phone_count
+            // and session emits); cargo tests never call this, which is why
+            // every emit path is a no-op without it.
+            state.set_app_handle(app.handle().clone());
             app.manage(state.clone());
 
             // LAN server (pairing WS + static H5, no-store). A bind failure

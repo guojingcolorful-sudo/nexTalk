@@ -91,7 +91,17 @@ fn subtitle_id(event: &ServerEvent) -> &str {
 
 #[test]
 fn script_state_is_deterministic_for_a_given_clock() {
-    for elapsed in [0u64, 1_000, 2_500, 6_000, 6_500, 8_500, 15_000, 31_900, u64::MAX] {
+    for elapsed in [
+        0u64,
+        1_000,
+        2_500,
+        6_000,
+        6_500,
+        8_500,
+        15_000,
+        31_900,
+        u64::MAX,
+    ] {
         assert_eq!(
             script_state(elapsed),
             script_state(elapsed),
@@ -110,7 +120,10 @@ fn script_state_is_deterministic_for_a_given_clock() {
         fine_events.extend(fine.poll(step * 1_000));
     }
 
-    assert_eq!(coarse_events, fine_events, "poll granularity must not matter");
+    assert_eq!(
+        coarse_events, fine_events,
+        "poll granularity must not matter"
+    );
     assert_eq!(
         coarse_events,
         script_state(u64::MAX),
@@ -193,7 +206,10 @@ fn round_one_content_is_byte_exact() {
         r1.interviewer_en,
         "Could you walk me through the specific steps you took to optimize the database?"
     );
-    assert_eq!(r1.interviewer_zh, "你能详细说一下你优化数据库的具体步骤吗？");
+    assert_eq!(
+        r1.interviewer_zh,
+        "你能详细说一下你优化数据库的具体步骤吗？"
+    );
     assert_eq!(
         r1.user_zh,
         "首先，我们分析了慢查询日志，发现主要瓶颈在商品详情页的连表查询上。"
@@ -206,14 +222,20 @@ fn round_one_content_is_byte_exact() {
 
     // The same content reaches the wire on the round-1 events.
     let events = script_state(script::ROUNDS[0].timing.end_at_ms);
-    let ServerEvent::Subtitle { zh, en, final_flag, .. } = subtitle_at(&events, 0) else {
+    let ServerEvent::Subtitle {
+        zh, en, final_flag, ..
+    } = subtitle_at(&events, 0)
+    else {
         panic!("expected the r1 question subtitle");
     };
     assert_eq!(en.as_deref(), Some(r1.interviewer_en));
     assert_eq!(zh.as_deref(), Some(r1.interviewer_zh));
     assert!(*final_flag, "scripted subtitles are already final");
 
-    let ServerEvent::Subtitle { zh, en, speaker, .. } = subtitle_at(&events, 1) else {
+    let ServerEvent::Subtitle {
+        zh, en, speaker, ..
+    } = subtitle_at(&events, 1)
+    else {
         panic!("expected the r1 answer subtitle");
     };
     assert_eq!(zh.as_deref(), Some(r1.user_zh));
@@ -224,7 +246,13 @@ fn round_one_content_is_byte_exact() {
     );
     assert!(matches!(speaker, Speaker::User));
 
-    let ServerEvent::Strategy { id, round_id, title, bullets } = strategies(&events)[0] else {
+    let ServerEvent::Strategy {
+        id,
+        round_id,
+        title,
+        bullets,
+    } = strategies(&events)[0]
+    else {
         panic!("expected the r1 strategy card");
     };
     assert_eq!(id.as_str(), "s-r1");
@@ -237,7 +265,11 @@ fn round_one_content_is_byte_exact() {
 #[test]
 fn every_round_carries_the_mock_badge_and_a_well_formed_strategy() {
     for round in &script::ROUNDS {
-        assert_eq!(round.tag, script::TAG_MOCK, "D-03: the demo is always labelled");
+        assert_eq!(
+            round.tag,
+            script::TAG_MOCK,
+            "D-03: the demo is always labelled"
+        );
         assert_eq!(round.strategy.tone, script::Tone::AiStrategy);
         assert!(
             !round.strategy.bullets.is_empty(),
@@ -277,7 +309,8 @@ fn interrupt_cuts_the_answer_and_opens_the_next_round_one_second_later() {
     );
     assert_eq!(sim.round_index(), 1, "the cut advances the round");
     assert!(
-        sim.poll(r1.generating_at_ms + INTERRUPT_LEAD_MS - 1).is_empty(),
+        sim.poll(r1.generating_at_ms + INTERRUPT_LEAD_MS - 1)
+            .is_empty(),
         "no round-2 content may leak in before t + 1s"
     );
 
@@ -312,7 +345,10 @@ fn interrupt_on_the_final_round_ends_the_session() {
     let cut = sim.interrupt();
     assert_eq!(statuses(&cut), vec![SessionStatus::Ended]);
     assert!(sim.ended());
-    assert!(sim.repeat().is_empty(), "an ended session cannot be replayed");
+    assert!(
+        sim.repeat().is_empty(),
+        "an ended session cannot be replayed"
+    );
 
     // The pure evaluator agrees the session is over at that point.
     let tail = script_state(before_last + last.timing.end_at_ms);
@@ -366,7 +402,11 @@ fn repeat_replays_the_current_round_with_fresh_seq_and_ids() {
     let ServerEvent::Strategy { id, .. } = strategies(&replay)[0] else {
         panic!("expected a replayed strategy card");
     };
-    assert_ne!(id.as_str(), "s-r1", "a replayed strategy card needs a fresh id");
+    assert_ne!(
+        id.as_str(),
+        "s-r1",
+        "a replayed strategy card needs a fresh id"
+    );
 
     // Numbering keeps climbing: the next round's subtitle follows the replay.
     let resumed = sim.poll(r1.end_at_ms);
