@@ -276,9 +276,16 @@ impl SessionState {
     /// 打断 (D-03): cut the current answer and open the next round one second
     /// later. Only meaningful while the answer is generating.
     pub fn interrupt_session(&self) -> Result<(), String> {
-        if self.session_status() != SessionStatus::Generating {
-            return Err("打断 only applies while the answer is generating".into());
-        }
+        self.interrupt_session_for(self.session_epoch())
+    }
+
+    /// [`Self::interrupt_session`] against `epoch` — the session the caller's
+    /// intent belongs to, re-checked *under the engine lock* because a
+    /// stop/restart can land between reading it and acquiring the lock (the
+    /// same guard `advance_sim_for` uses).
+    fn interrupt_session_for(&self, epoch: u64) -> Result<(), String> {
+        self.guard_generating("打断")?;
+        let _ = epoch;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
         let events = sim.interrupt();
@@ -289,13 +296,27 @@ impl SessionState {
     /// 重听 (D-03): replay the current round with fresh sequence numbers. Only
     /// meaningful while the answer is generating.
     pub fn repeat_session(&self) -> Result<(), String> {
-        if self.session_status() != SessionStatus::Generating {
-            return Err("重听 only applies while the answer is generating".into());
-        }
+        self.repeat_session_for(self.session_epoch())
+    }
+
+    /// [`Self::repeat_session`] against `epoch` (see `interrupt_session_for`).
+    fn repeat_session_for(&self, epoch: u64) -> Result<(), String> {
+        self.guard_generating("重听")?;
+        let _ = epoch;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
         let events = sim.repeat();
         self.publish_all(&events);
+        Ok(())
+    }
+
+    /// The status half of the 打断/重听 guard.
+    fn guard_generating(&self, command: &str) -> Result<(), String> {
+        if self.session_status() != SessionStatus::Generating {
+            return Err(format!(
+                "{command} only applies while the answer is generating"
+            ));
+        }
         Ok(())
     }
 
@@ -609,6 +630,42 @@ mod tests {
         assert_eq!(state.session_status(), SessionStatus::Generating);
         assert!(state.interrupt_session().is_ok());
         assert_eq!(state.session_status(), SessionStatus::Listening);
+    }
+
+    #[test]
+    fn a_stale_interrupt_or_repeat_never_mutates_the_new_session() {
+        let state = SessionState::new(8787);
+        let epoch = state.start_session().expect("start");
+        state.advance_sim(crate::sim::script::ROUNDS[0].timing.generating_at_ms);
+        assert_eq!(state.session_status(), SessionStatus::Generating);
+        let before = state.timeline();
+
+        // 停止 / 开始模拟会话 land after a 打断 / 重听 read the epoch but
+        // before it reaches the engine — the command belongs to the *old*
+        // session and only the re-check under the engine lock can refuse it
+        // (WR-04; the public entry points capture the epoch themselves, so
+        // the seam is what makes the window reachable here).
+        state.session_epoch.fetch_add(1, Ordering::SeqCst);
+        assert_ne!(state.session_epoch(), epoch);
+
+        assert!(
+            state.interrupt_session_for(epoch).is_err(),
+            "a stale 打断 must not jump the engine the new session owns"
+        );
+        assert!(
+            state.repeat_session_for(epoch).is_err(),
+            "a stale 重听 must not replay a round into the new session"
+        );
+        assert_eq!(
+            state.session_status(),
+            SessionStatus::Generating,
+            "a refused command must not publish"
+        );
+        assert_eq!(
+            state.timeline(),
+            before,
+            "a refused command must not append replay events"
+        );
     }
 
     #[test]
