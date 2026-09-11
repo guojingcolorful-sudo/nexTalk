@@ -285,9 +285,14 @@ impl SessionState {
     /// same guard `advance_sim_for` uses).
     fn interrupt_session_for(&self, epoch: u64) -> Result<(), String> {
         self.guard_generating("打断")?;
-        let _ = epoch;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
+        // Re-check under the engine lock: 停止 / 开始模拟会话 between reading
+        // the epoch and getting here must not land a mutation on the engine
+        // the new session just swapped in.
+        if self.session_epoch() != epoch {
+            return Err("the session ended before the command landed".into());
+        }
         let events = sim.interrupt();
         self.publish_all(&events);
         Ok(())
@@ -302,9 +307,11 @@ impl SessionState {
     /// [`Self::repeat_session`] against `epoch` (see `interrupt_session_for`).
     fn repeat_session_for(&self, epoch: u64) -> Result<(), String> {
         self.guard_generating("重听")?;
-        let _ = epoch;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
+        if self.session_epoch() != epoch {
+            return Err("the session ended before the command landed".into());
+        }
         let events = sim.repeat();
         self.publish_all(&events);
         Ok(())
