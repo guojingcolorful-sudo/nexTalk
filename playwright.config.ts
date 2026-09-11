@@ -13,9 +13,9 @@ export default defineConfig({
     {
       name: 'desktop',
       use: { baseURL: 'http://localhost:1420' },
-      // skeleton.spec.ts exercises the phone H5 over a mock WS — desktop app
-      // specs (desktop.spec.ts) run under this project.
-      testIgnore: '**/skeleton.spec.ts',
+      // skeleton.spec.ts and teleprompter.spec.ts exercise the phone H5 over a
+      // mock WS — desktop app specs (desktop.spec.ts) run under this project.
+      testIgnore: ['**/skeleton.spec.ts', '**/teleprompter.spec.ts'],
     },
     {
       name: 'teleprompter',
