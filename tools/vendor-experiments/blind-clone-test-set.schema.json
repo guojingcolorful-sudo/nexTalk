@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nextalk.local/schemas/blind-clone-test-set.schema.json",
+  "title": "NexTalk blind voice-clone test set",
+  "description": "A blind listening test for cross-lingual (C->EN) voice cloning. Samples are renamed to opaque blind ids before grading so a grader never knows which vendor produced a clip; the vendor labels live only in voice_candidates and are joined back after the scores are recorded. No secret fields: credentials never appear in this file (T-01-15).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "test_set_id",
+    "created_at",
+    "utterances",
+    "voice_candidates",
+    "graders",
+    "grading_sheet"
+  ],
+  "properties": {
+    "test_set_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable id for this test set, e.g. clone-2026-09."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the sample set was frozen (ISO 8601)."
+    },
+    "environment": {
+      "type": "string",
+      "description": "Where the samples were rendered and auditioned: machine, output device, connection. A clone score without its environment is not evidence."
+    },
+    "utterances": {
+      "type": "array",
+      "minItems": 3,
+      "description": "The fixed text every candidate voice must speak. Identical text across candidates is what makes the comparison blind and fair.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text_zh", "text_en", "duration_hint"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^u-[0-9]{2}$",
+            "description": "Utterance id, e.g. u-01."
+          },
+          "text_zh": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The Chinese source line the user says (the clone input's meaning)."
+          },
+          "text_en": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The English line the cloned voice must speak. Cross-lingual cloning quality is the product's core value, so the pair must not be a literal word-for-word gloss."
+          },
+          "duration_hint": {
+            "enum": ["5s", "15s", "60s"],
+            "description": "Target spoken duration; keeps the set aligned with the STT protocol's clip lengths."
+          },
+          "register": {
+            "enum": ["technical", "conversational", "code_switched"],
+            "description": "Optional label used when reporting which register a vendor wins."
+          }
+        }
+      }
+    },
+    "voice_candidates": {
+      "type": "array",
+      "minItems": 2,
+      "description": "One entry per cloned voice under test. THIS IS THE ONLY PLACE VENDOR LABELS APPEAR - it must never be handed to a grader.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["vendor", "voice_id", "sample_path"],
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Vendor name from the STACK.md TTS shortlist, e.g. minimax | cartesia | fish | elevenlabs."
+          },
+          "voice_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The vendor-side clone / voice identifier the sample was rendered with."
+          },
+          "sample_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the rendered sample for this utterance, relative to the test-set root. Never a URL with an embedded key."
+          },
+          "utterance_id": {
+            "type": "string",
+            "pattern": "^u-[0-9]{2}$",
+            "description": "The utterance this sample renders; pair it with sample_path when one file holds a single utterance."
+          }
+        }
+      }
+    },
+    "graders": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Who listens and scores. Each grader sees only blind ids.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grader_id", "blind_ids"],
+        "properties": {
+          "grader_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque grader id - no names, so a score cannot be attributed to a person in the committed file."
+          },
+          "blind_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "The opaque ids this grader will score. A blind id maps to exactly one (voice_candidate, utterance) pair."
+          }
+        }
+      }
+    },
+    "grading_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blind_map", "scale"],
+      "description": "What actually reaches the grader. It carries blind ids only - no vendor labels anywhere in this object.",
+      "properties": {
+        "blind_map": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "blind id -> {voice_index, utterance_id}. The join key back to voice_candidates lives here, in the file the grader does NOT hold.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["voice_index", "utterance_id"],
+            "properties": {
+              "voice_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Index into voice_candidates."
+              },
+              "utterance_id": {
+                "type": "string",
+                "pattern": "^u-[0-9]{2}$"
+              }
+            }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The rubric a grader scores each blind sample on. Keep the integers small enough to use without a legend.",
+          "required": ["similarity", "naturalness", "accent"],
+          "properties": {
+            "similarity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "label"],
+              "properties": {
+                "min": { "type": "integer" },
+                "max": { "type": "integer" },
+                "label": { "type": "string", "minLength": 1 }
+              }
+            },
+            "naturalness": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "label"],
+              "properties": {
+                "min": { "type": "integer" },
+                "max": { "type": "integer" },
+                "label": { "type": "string", "minLength": 1 }
+              }
+            },
+            "accent": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "label"],
+              "properties": {
+                "min": { "type": "integer" },
+                "max": { "type": "integer" },
+                "label": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "scores": {
+          "type": "array",
+          "description": "Filled in during grading: one row per (grader, blind id). Vendor labels are joined back afterwards.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["grader_id", "blind_id"],
+            "properties": {
+              "grader_id": { "type": "string", "minLength": 1 },
+              "blind_id": { "type": "string", "minLength": 1 },
+              "similarity": { "type": "integer" },
+              "naturalness": { "type": "integer" },
+              "accent": { "type": "integer" },
+              "notes": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
