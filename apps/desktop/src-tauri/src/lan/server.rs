@@ -229,16 +229,33 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
 
 /// Forwards broadcast events onto one client's outbound queue until the
 /// channel closes or the client's sink is gone.
+///
+/// `Lagged` is a slow *receiver*, not a dead one — the phone fell past the
+/// 64-slot ring buffer (backgrounded tab, GC pause, congested Wi-Fi). The
+/// missed frames are dropped and delivery resumes at the next one: treating
+/// it as terminal would leave the socket open and healthy-looking while the
+/// teleprompter freezes forever, and the phone never reconnects because the
+/// transport itself is fine (WR-01).
 async fn forward_events(
     mut rx: broadcast::Receiver<ServerEvent>,
     tx: mpsc::Sender<Message>,
 ) {
-    while let Ok(event) = rx.recv().await {
-        let Ok(text) = serde_json::to_string(&event) else {
-            continue;
-        };
-        if tx.send(Message::Text(text.into())).await.is_err() {
-            break; // client gone
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let Ok(text) = serde_json::to_string(&event) else {
+                    continue;
+                };
+                if tx.send(Message::Text(text.into())).await.is_err() {
+                    break; // client gone
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                // This crate has no tracing setup; lib.rs logs with eprintln!.
+                eprintln!("lan ws: phone lagged, dropped {skipped} event(s); resuming");
+                continue;
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
         }
     }
 }
