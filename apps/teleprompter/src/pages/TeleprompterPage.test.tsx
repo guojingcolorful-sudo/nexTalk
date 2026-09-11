@@ -185,9 +185,33 @@ describe('TeleprompterPage', () => {
     });
 
     const frames = socket.frames();
-    expect(frames[0]).toEqual({ t: 'resume', sinceSeq: 0 });
+    expect(frames[0]).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+    expect(frames[1]).toEqual({ t: 'control', language: 'bilingual' }); // WR-03 re-assert
     expect(frames.at(-1)).toEqual({ t: 'control', language: 'all-zh' });
     expect(socket.sent.join('')).not.toContain('language_pref');
+  });
+
+  test('adopts the echoed language event as the source of truth (WR-03)', () => {
+    render(<App />);
+    const socket = currentSocket();
+    act(() => {
+      socket.accept();
+    });
+
+    // The desktop echoes the mode the SESSION is in (a second phone or a
+    // reloaded page would otherwise render its own stale default).
+    act(() => {
+      socket.emit({ t: 'language', language: 'all-en' });
+    });
+
+    expect(screen.getByRole('button', { name: /语言模式 EN，/ })).toBeTruthy();
+
+    // The next tap cycles from the echoed value, not from the local default.
+    act(() => {
+      screen.getByRole('button', { name: /语言模式 EN，/ }).click();
+    });
+    const frames = socket.frames();
+    expect(frames.at(-1)).toEqual({ t: 'control', language: 'bilingual' });
   });
 
   test('without a token the page shows the pairing error instead of the teleprompter', () => {

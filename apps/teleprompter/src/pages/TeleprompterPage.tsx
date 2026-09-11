@@ -93,6 +93,22 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   );
   const generating = useMemo(() => isGenerating(events), [events]);
 
+  // WR-03: the desktop echoes the applied mode back on the same stream, so
+  // that echo — not the local optimistic guess — is the source of truth. A
+  // reload, a wake-from-sleep or a second phone otherwise renders a mode the
+  // session is not in, and the next tap sends a value derived from that base.
+  const echoedLanguage = useMemo<LanguagePref | null>(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      if (event.t === 'language') return event.language;
+    }
+    return null;
+  }, [events]);
+
+  useEffect(() => {
+    if (echoedLanguage !== null) setLanguagePref(echoedLanguage);
+  }, [echoedLanguage]);
+
   const changeTab = useCallback((next: PhoneTab) => {
     setTab(next);
     writeTabToUrl(next);

@@ -230,13 +230,15 @@ test.describe('phone teleprompter H5', () => {
       await page.goto(`/?token=${TOKEN}&ws=${mock.url}`);
       const socket = await mock.nextSocket();
 
-      // Every (re)open opens with the resume cursor.
-      await expect.poll(() => mock.framesOf(socket).length).toBe(1);
-      expect(mock.framesOf(socket)[0]).toEqual({ t: 'resume', sinceSeq: 0 });
+      // Every (re)open opens with the resume cursor, then re-asserts the mode
+      // the phone last chose (WR-03) so a tap during a drop is never lost.
+      await expect.poll(() => mock.framesOf(socket).length).toBe(2);
+      expect(mock.framesOf(socket)[0]).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+      expect(mock.framesOf(socket)[1]).toEqual({ t: 'control', language: 'bilingual' });
 
       await page.getByRole('tab', { name: 'AI 辅助' }).click();
       await expect(page.getByText('AI 策略将自动生成')).toBeVisible();
-      expect(mock.framesOf(socket)).toHaveLength(1); // reading a tab never talks
+      expect(mock.framesOf(socket)).toHaveLength(2); // reading a tab never talks
 
       // The phone's session default is EN+中 (bilingual): two taps cycle
       // EN+中 → 中 → EN. Each tap waits for the committed label, so the cycle
@@ -245,7 +247,7 @@ test.describe('phone teleprompter H5', () => {
       await page.getByRole('button', { name: /语言模式 中，/ }).click();
       await expect(page.getByRole('button', { name: /语言模式 EN，/ })).toBeVisible();
 
-      await expect.poll(() => mock.framesOf(socket).length).toBe(3);
+      await expect.poll(() => mock.framesOf(socket).length).toBe(4);
       const control = mock.framesOf(socket).at(-1);
       expect(control).toEqual({ t: 'control', language: 'all-en' });
       expect(Object.keys(control ?? {})).toEqual(['t', 'language']);
@@ -261,8 +263,9 @@ test.describe('phone teleprompter H5', () => {
       await page.goto(`/?token=${TOKEN}&ws=${mock.url}`);
       const first = await mock.nextSocket();
 
-      await expect.poll(() => mock.framesOf(first).length).toBe(1);
-      expect(mock.framesOf(first)[0]).toEqual({ t: 'resume', sinceSeq: 0 });
+      await expect.poll(() => mock.framesOf(first).length).toBe(2);
+      expect(mock.framesOf(first)[0]).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+      expect(mock.framesOf(first)[1]).toEqual({ t: 'control', language: 'bilingual' });
 
       first.send(JSON.stringify(SUBTITLE_5));
       await expect(page.locator('article[aria-label="我"] p').first()).toHaveText(LINE_5_ZH);
@@ -272,11 +275,13 @@ test.describe('phone teleprompter H5', () => {
 
       await expect(page.getByText('正在自动重连')).toBeVisible();
 
-      // The 1s ladder reconnects and asks for everything after seq 5.
+      // The 1s ladder reconnects and asks for everything after seq 5 — with
+      // the session epoch and the re-asserted mode (WR-03) behind it.
       const second = await mock.nextSocket();
       await expect(page.getByText('实时同步中')).toBeVisible();
-      await expect.poll(() => mock.framesOf(second).length).toBe(1);
-      expect(mock.framesOf(second)[0]).toEqual({ t: 'resume', sinceSeq: 5 });
+      await expect.poll(() => mock.framesOf(second).length).toBe(2);
+      expect(mock.framesOf(second)[0]).toEqual({ t: 'resume', sinceSeq: 5, sinceEpoch: 0 });
+      expect(mock.framesOf(second)[1]).toEqual({ t: 'control', language: 'bilingual' });
 
       // The replay tail repeats the already-seen seq 5: the phone must add the
       // new line and never duplicate the bubble it already rendered.

@@ -167,7 +167,7 @@ describe('useWs resume', () => {
     renderHook(() => useWs(TICKET));
 
     act(() => latest().accept());
-    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0 });
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
 
     act(() => {
       latest().push(subtitle(4));
@@ -178,7 +178,7 @@ describe('useWs resume', () => {
     act(() => vi.advanceTimersByTime(1000));
     act(() => latest().accept());
 
-    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 5 });
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 5, sinceEpoch: 0 });
   });
 
   test('replay tail re-renders without duplicating already-seen seqs', () => {
@@ -258,7 +258,11 @@ describe('useWs session restart (CR-01)', () => {
     act(() => vi.advanceTimersByTime(1000));
     act(() => latest().accept());
 
-    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0 });
+    // Both halves of the recovery travel: the cursor is reset AND the epoch
+    // says which session the phone is actually in — the server replays the
+    // whole timeline when the epoch no longer matches, even if the seq alone
+    // would look fresh (2 is the high-water mark of both sessions).
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 2 });
   });
 });
 
@@ -269,20 +273,41 @@ describe('useWs control', () => {
 
     act(() => result.current.sendLanguagePref('all-en'));
 
-    const frame = parsed(latest(), 1); // 0 = the resume frame
+    const frame = parsed(latest(), 2); // 0 = resume, 1 = the onopen re-assert
     expect(frame).toEqual({ t: 'control', language: 'all-en' });
     expect(Object.keys(frame)).toEqual(['t', 'language']);
     expect(latest().sent.join('')).not.toContain('language_pref');
   });
 
-  test('drops the control frame instead of throwing when the socket is down', () => {
+  test('a tap while the socket is down is queued and re-sent on the next open (WR-03)', () => {
     const { result } = renderHook(() => useWs(TICKET));
     const socket = latest();
 
     expect(() => {
-      act(() => result.current.sendLanguagePref('bilingual'));
+      act(() => result.current.sendLanguagePref('all-en'));
     }).not.toThrow();
-    expect(socket.sent).toHaveLength(0);
+    expect(socket.sent).toHaveLength(0); // nothing to send on yet
+
+    // The reconnect backoff window elapses and the mode is not lost: onopen
+    // re-asserts the user's last choice instead of the default.
+    act(() => latest().accept());
+    expect(parsed(latest(), 1)).toEqual({ t: 'control', language: 'all-en' });
+  });
+
+  test('re-asserts the last chosen mode on every reopen (WR-03)', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+    expect(parsed(latest(), 1)).toEqual({ t: 'control', language: 'bilingual' });
+
+    act(() => result.current.sendLanguagePref('all-zh'));
+    expect(parsed(latest(), 2)).toEqual({ t: 'control', language: 'all-zh' });
+
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => latest().accept());
+
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+    expect(parsed(latest(), 1)).toEqual({ t: 'control', language: 'all-zh' });
   });
 });
 
