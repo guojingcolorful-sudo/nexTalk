@@ -419,6 +419,14 @@ fn repeat_replays_the_current_round_with_fresh_seq_and_ids() {
 
 // ------------------------------------------------------- scheduler wiring ---
 
+/// The state's timeline for a started session: the identity marker opens it
+/// (CR-01), then the engine's canonical sequence follows.
+fn started_script_state(epoch: u64) -> Vec<ServerEvent> {
+    let mut events = vec![ServerEvent::SessionStarted { epoch }];
+    events.extend(script_state(script::total_duration_ms()));
+    events
+}
+
 #[tokio::test]
 async fn scheduler_plays_the_script_through_a_scripted_clock() {
     let state = SessionState::new(8787);
@@ -440,7 +448,7 @@ async fn scheduler_plays_the_script_through_a_scripted_clock() {
     let timeline = state.timeline();
     assert_eq!(
         timeline,
-        script_state(script::total_duration_ms()),
+        started_script_state(epoch),
         "the engine appends the canonical sequence to the timeline"
     );
     assert!(matches!(
@@ -471,9 +479,12 @@ async fn scheduler_stops_when_its_epoch_is_superseded() {
     assert_eq!(state.session_status(), SessionStatus::Ended);
     assert_eq!(
         state.timeline(),
-        vec![ServerEvent::Status {
-            session: SessionStatus::Ended
-        }],
+        vec![
+            ServerEvent::SessionStarted { epoch },
+            ServerEvent::Status {
+                session: SessionStatus::Ended
+            }
+        ],
         "a superseded scheduler must not append script events"
     );
 }

@@ -81,6 +81,16 @@ export function useTauriEvents(): TauriEventsState {
 
     track(
       listen<unknown>('session', (event) => {
+        // WR-02/CR-01: the session restarted — the locked 停止 copy promises
+        // 当前字幕与策略将清空, and the new session must not stack under the
+        // previous one. Checked before narrowSession: a marker that narrows to
+        // an empty batch is dropped by the early return below.
+        const payload = event.payload as { t?: unknown } | null;
+        if (payload?.t === 'session_started') {
+          setEvents([]);
+          setLanguageMode(null); // the new session runs on per-speaker defaults
+          return;
+        }
         const batch = narrowSession(event.payload);
         if (batch.length === 0) return;
         setEvents((previous) => [...previous, ...batch]);

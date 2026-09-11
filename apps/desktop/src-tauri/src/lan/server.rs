@@ -67,6 +67,13 @@ pub enum SessionStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServerEvent {
+    /// Session identity: the first event of every started session (and the
+    /// first of a resume reply that crosses a restart). Clients reset their
+    /// dedupe cursors and rendered events on it — without it a phone that
+    /// stayed up across 停止 / 开始模拟会话 discards the whole new session,
+    /// because its subtitles renumber from 1 and its strategy ids repeat.
+    #[serde(rename_all = "camelCase")]
+    SessionStarted { epoch: u64 },
     #[serde(rename_all = "camelCase")]
     Subtitle {
         id: String,
@@ -102,7 +109,13 @@ pub enum ClientMessage {
     #[serde(rename_all = "camelCase")]
     Control { language: LanguagePref },
     #[serde(rename_all = "camelCase")]
-    Resume { since_seq: u64 },
+    Resume {
+        since_seq: u64,
+        /// Session epoch the client believes it is in. Absent from clients that
+        /// do not track it (`default`), which fall back to the seq cursor.
+        #[serde(default)]
+        since_epoch: Option<u64>,
+    },
 }
 
 /// Query parameters on the `/ws` upgrade request.
@@ -182,8 +195,11 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
                     break; // oversize frame -> drop
                 }
                 match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(ClientMessage::Resume { since_seq }) => {
-                        let events = state.replay_after_subtitle_seq(since_seq);
+                    Ok(ClientMessage::Resume {
+                        since_seq,
+                        since_epoch,
+                    }) => {
+                        let events = state.resume_events(since_seq, since_epoch);
                         let Some(payload) =
                             serde_json::to_string(&ServerEvent::Timeline { events }).ok()
                         else {

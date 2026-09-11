@@ -19,6 +19,17 @@ export type Speaker = 'interviewer' | 'user';
 
 export type ServerEvent =
   | {
+      /**
+       * Session identity (01-05 restart fix): published as the FIRST event of
+       * every started session and carried in resume replies. Clients drop their
+       * dedupe cursors and rendered events when the epoch changes — a restarted
+       * session renumbers its subtitles from 1 and reuses strategy ids, so a
+       * stale cursor would otherwise swallow it whole.
+       */
+      t: 'session_started';
+      epoch: number;
+    }
+  | {
       t: 'subtitle';
       id: string;
       speaker: Speaker;
@@ -55,6 +66,14 @@ export type ClientMessage =
   | {
       t: 'resume';
       sinceSeq: number;
+      /**
+       * Session epoch the phone believes it is in (0 before it has seen a
+       * marker). The server replays the whole timeline when it no longer
+       * matches, so a phone that was offline across a restart recovers even
+       * when its subtitle cursor cannot be told apart from the new session's.
+       * Optional: a client that omits it falls back to the seq cursor alone.
+       */
+      sinceEpoch?: number;
     };
 
 const LANGUAGE_PREFS: readonly string[] = ['all-zh', 'all-en', 'bilingual'];
@@ -78,6 +97,8 @@ export function isServerEvent(x: unknown): x is ServerEvent {
   if (!isRecord(x) || !isString(x.t)) return false;
 
   switch (x.t) {
+    case 'session_started':
+      return typeof x.epoch === 'number' && Number.isFinite(x.epoch);
     case 'subtitle':
       return (
         isString(x.id) &&

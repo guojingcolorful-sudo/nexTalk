@@ -234,6 +234,11 @@ impl SessionState {
         let epoch = self.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         self.replace_sim();
         self.reset_timeline();
+        // Session identity goes on the wire before any content: both desktop
+        // webviews and every paired phone drop their cursors and rendered
+        // events on it, so the restarted session can never be mistaken for a
+        // replay of the previous one (CR-01 / WR-02).
+        self.publish(ServerEvent::SessionStarted { epoch });
         self.announce_status(SessionStatus::Listening);
         Ok(epoch)
     }
@@ -326,20 +331,45 @@ impl SessionState {
 
     /// Events after the last subtitle with `seq <= since_seq`; `since_seq == 0`
     /// replays the whole timeline (fresh-client resume).
+    ///
+    /// A cursor above every subtitle this timeline holds can only come from a
+    /// previous session (subtitle `seq` restarts at 1), so it replays the whole
+    /// timeline — marker included — instead of slicing the new session away.
     pub fn replay_after_subtitle_seq(&self, since_seq: u64) -> Vec<ServerEvent> {
         let timeline = self.timeline();
         if since_seq == 0 {
             return timeline;
         }
         let mut start = 0usize;
+        let mut highest_seq = 0u64;
         for (i, event) in timeline.iter().enumerate() {
             if let ServerEvent::Subtitle { seq, .. } = event {
+                highest_seq = highest_seq.max(*seq);
                 if *seq <= since_seq {
                     start = i + 1;
                 }
             }
         }
+        if since_seq > highest_seq {
+            return timeline;
+        }
         timeline[start..].to_vec()
+    }
+
+    /// The resume reply for a reconnecting client.
+    ///
+    /// `since_epoch` is the session the client believes it is in (`None` for a
+    /// client that does not track one). When it no longer matches, the whole
+    /// timeline is replayed: the session restarted, its subtitle numbering
+    /// restarted with it, and no `seq` cursor can express that. Otherwise the
+    /// ordinary seq tail is returned.
+    pub fn resume_events(&self, since_seq: u64, since_epoch: Option<u64>) -> Vec<ServerEvent> {
+        if let Some(epoch) = since_epoch {
+            if epoch != self.session_epoch() {
+                return self.timeline();
+            }
+        }
+        self.replay_after_subtitle_seq(since_seq)
     }
 
     /// The engine handle (cloned out of the lock, then locked by the caller).
@@ -491,6 +521,42 @@ mod tests {
     }
 
     #[test]
+    fn resume_replays_the_whole_new_session_when_the_epoch_moved() {
+        let state = SessionState::new(8787);
+        let first = state.start_session().expect("start");
+        play_first_round(&state);
+        state.stop_session();
+        let second = state.start_session().expect("restart");
+        play_first_round(&state);
+
+        // The cursor (2) is indistinguishable from a fresh one — the epoch is
+        // what tells the server this client sat out the restart entirely.
+        let replay = state.resume_events(2, Some(first));
+        assert_eq!(
+            replay.first(),
+            Some(&session_started(second)),
+            "the replay crosses the restart: marker first"
+        );
+        assert_eq!(subtitle_seqs(&replay), vec![1, 2]);
+    }
+
+    #[test]
+    fn resume_inside_one_session_still_replays_only_the_tail() {
+        let state = SessionState::new(8787);
+        let epoch = state.start_session().expect("start");
+        play_first_round(&state);
+
+        let replay = state.resume_events(1, Some(epoch));
+        assert_eq!(
+            subtitle_seqs(&replay),
+            vec![2],
+            "a current-epoch cursor keeps the ordinary tail semantics"
+        );
+        // Epoch-less clients (older H5) fall back to the seq cursor.
+        assert_eq!(subtitle_seqs(&state.resume_events(2, None)), Vec::<u64>::new());
+    }
+
+    #[test]
     fn reset_timeline_clears_history_for_new_session() {
         let state = SessionState::new(8787);
         state.append_event(subtitle_question());
@@ -515,16 +581,20 @@ mod tests {
         assert!(state.session_epoch() > first, "stop cancels the scheduler");
         assert_eq!(
             state.timeline(),
-            vec![ServerEvent::Status {
-                session: SessionStatus::Ended
-            }],
+            vec![
+                session_started(first),
+                ServerEvent::Status {
+                    session: SessionStatus::Ended
+                }
+            ],
             "stop records the terminal status for a late phone resume"
         );
 
-        // Restarting after stop is allowed and clears the previous timeline.
+        // Restarting after stop is allowed and clears the previous timeline,
+        // which the new session's marker immediately opens (CR-01).
         let third = state.start_session().expect("restart after stop");
         assert!(third > first);
-        assert!(state.timeline().is_empty());
+        assert_eq!(state.timeline(), vec![session_started(third)]);
     }
 
     #[test]

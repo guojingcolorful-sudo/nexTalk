@@ -69,6 +69,10 @@ export function useWs(ticket: WsTicket | null): WsResult {
   const seenSeqRef = useRef(0);
   /** Strategy ids already rendered; replay must not duplicate a card. */
   const seenStrategyIdsRef = useRef<Set<string>>(new Set());
+  /** Session identity the renderer is showing (0 = none seen yet, CR-01). */
+  const epochRef = useRef(0);
+  /** Last mode the user picked; re-asserted on every (re)open (WR-03). */
+  const languageRef = useRef<LanguagePref>('bilingual');
 
   useEffect(() => {
     if (!ticket || !ticket.token) {
@@ -83,7 +87,19 @@ export function useWs(ticket: WsTicket | null): WsResult {
 
     const accept = (incoming: ServerEvent[]) => {
       const fresh: ServerEvent[] = [];
+      let restarted = false;
       for (const event of incoming) {
+        if (event.t === 'session_started') {
+          // CR-01: a new session renumbers its subtitles from 1 and reuses
+          // strategy ids, so both cursors are meaningless — drop them and
+          // everything rendered (WR-02's copy promises exactly this).
+          seenSeqRef.current = 0;
+          seenStrategyIdsRef.current.clear();
+          epochRef.current = event.epoch;
+          restarted = true;
+          fresh.length = 0;
+          continue;
+        }
         if (event.t === 'subtitle') {
           if (event.seq <= seenSeqRef.current) continue; // replay tail overlap
           seenSeqRef.current = event.seq;
@@ -96,7 +112,8 @@ export function useWs(ticket: WsTicket | null): WsResult {
           fresh.push(event);
         }
       }
-      if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh]);
+      if (restarted) setEvents(fresh); // replace, never stack sessions
+      else if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh]);
     };
 
     const connect = () => {
@@ -118,7 +135,17 @@ export function useWs(ticket: WsTicket | null): WsResult {
         if (disposed) return;
         attempt = 0; // a healthy connection resets the ladder
         setState('connected');
-        send(ws, { t: 'resume', sinceSeq: seenSeqRef.current });
+        // CR-01: the cursor alone cannot tell two sessions apart (both number
+        // their lines from 1), so the epoch travels with it — the server
+        // replays the whole timeline when it no longer matches.
+        send(ws, {
+          t: 'resume',
+          sinceSeq: seenSeqRef.current,
+          sinceEpoch: epochRef.current,
+        });
+        // WR-03: a tap that landed while the socket was down is otherwise
+        // lost for the rest of the session — re-assert the mode on every open.
+        send(ws, { t: 'control', language: languageRef.current });
       };
 
       ws.onmessage = (message) => {
@@ -155,8 +182,9 @@ export function useWs(ticket: WsTicket | null): WsResult {
   }, [ticket?.token, ticket?.url]);
 
   const sendLanguagePref = useCallback((pref: LanguagePref) => {
+    languageRef.current = pref;
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WS_OPEN) return;
+    if (!socket || socket.readyState !== WS_OPEN) return; // re-sent by onopen
     send(socket, { t: 'control', language: pref });
   }, []);
 

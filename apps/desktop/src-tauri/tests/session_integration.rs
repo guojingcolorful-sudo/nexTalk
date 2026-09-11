@@ -202,8 +202,13 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     assert_eq!(state.session_status(), SessionStatus::Generating);
     assert_eq!(
         state.timeline().len(),
-        played.len(),
-        "every published event lands in the timeline (resume replay)"
+        played.len() + 1,
+        "every published event lands in the timeline (resume replay), preceded by the session marker"
+    );
+    assert_eq!(
+        state.timeline().first(),
+        Some(&ServerEvent::SessionStarted { epoch }),
+        "the marker opens the timeline (CR-01)"
     );
 
     let r1_subtitles = subtitles_of(&played);
@@ -226,7 +231,9 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     );
 
     // The phone receives the identical sequence — one event model, two
-    // transports (SYNC-01).
+    // transports (SYNC-01) — opened by the session marker (CR-01).
+    let marker = read_session_marker(&mut phone, epoch).await;
+    assert_eq!(marker["epoch"], epoch);
     assert_eq!(
         read_event(&mut phone).await,
         ServerEvent::Status {
