@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { isServerEvent, type ServerEvent } from '@nextalk/protocol';
+import { isServerEvent, type LanguagePref, type ServerEvent } from '@nextalk/protocol';
 
 /** Session state machine mirrored from the Rust `session_status` event. */
 export type SessionStatus = 'idle' | 'listening' | 'generating' | 'ended';
@@ -16,6 +16,9 @@ export interface TauriEventsState {
    *  emission (the desktop telemetry lands in 01-05 — until then the QR card
    *  shows 等待扫码 rather than a fake zero). */
   phoneCount: number | null;
+  /** Session-level subtitle mode the phone has applied (`language` variant,
+   *  SYNC-03), or null while the session runs on per-speaker defaults. */
+  languageMode: LanguagePref | null;
 }
 
 /** Payload narrowing for the `session` event (threat T-01-02): anything that
@@ -59,6 +62,7 @@ export function useTauriEvents(): TauriEventsState {
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [phoneCount, setPhoneCount] = useState<number | null>(null);
+  const [languageMode, setLanguageMode] = useState<LanguagePref | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -82,6 +86,9 @@ export function useTauriEvents(): TauriEventsState {
         setEvents((previous) => [...previous, ...batch]);
         for (const item of batch) {
           if (item.t === 'status') setStatus(item.session);
+          // SYNC-03: the mode the phone applied arrives on the same stream, so
+          // the desktop renders the change without a second channel.
+          if (item.t === 'language') setLanguageMode(item.language);
         }
       }),
     );
@@ -106,5 +113,5 @@ export function useTauriEvents(): TauriEventsState {
     };
   }, []);
 
-  return { events, status, phoneCount };
+  return { events, status, phoneCount, languageMode };
 }

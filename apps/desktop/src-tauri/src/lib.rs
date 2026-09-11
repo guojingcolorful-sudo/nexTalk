@@ -58,12 +58,29 @@ fn stop_session(state: tauri::State<'_, SessionState>) -> Result<(), String> {
     Ok(())
 }
 
+/// `interrupt` — D-03 打断: cut the current answer, next round in one second.
+/// Rejected unless the session is generating (T-01-06: the commands only touch
+/// local session state, and only in the phase where the UI offers them).
+#[tauri::command]
+fn interrupt(state: tauri::State<'_, SessionState>) -> Result<(), String> {
+    state.interrupt_session()
+}
+
+/// `repeat` — D-03 重听: replay the current round with fresh seq/ids.
+/// Rejected unless the session is generating.
+#[tauri::command]
+fn repeat(state: tauri::State<'_, SessionState>) -> Result<(), String> {
+    state.repeat_session()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_pairing_info,
             start_session,
-            stop_session
+            stop_session,
+            interrupt,
+            repeat
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);

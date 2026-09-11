@@ -141,6 +141,11 @@ async fn ws_handler(
 /// Per-connection loop: broadcast fan-out to the H5 + strict inbound parse
 /// (resume replay, language control, deny_unknown_fields drop).
 async fn client_loop(socket: WebSocket, state: SessionState) {
+    // Live phone count (desktop-only telemetry): the console QR card flips
+    // 等待扫码 → 已连接 N 台设备 off these emissions. It is NOT a ServerEvent,
+    // so it never travels over the WS broadcast.
+    state.client_connected();
+
     let (mut sender, mut receiver) = socket.split();
     let (tx_msgs, rx_msgs) = tokio::sync::mpsc::channel::<Message>(32);
 
@@ -189,7 +194,15 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
                         }
                     }
                     Ok(ClientMessage::Control { language }) => {
+                        // SYNC-03 round-trip: the phone's mode is applied to the
+                        // session AND published back through the same event model,
+                        // so the desktop webviews observe the change through the
+                        // `session` stream they already narrow (isServerEvent).
+                        // The field name is fixed by the 01-01 contract —
+                        // deny_unknown_fields rejects anything else, including
+                        // `language_pref`.
                         state.set_language_prefs(language);
+                        state.publish(ServerEvent::Language { language });
                     }
                     Err(_) => break, // unknown fields / malformed -> drop
                 }
@@ -203,6 +216,7 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
 
     send_task.abort();
     broadcast_task.abort();
+    state.client_disconnected();
 }
 
 /// Path to the teleprompter H5 build served over LAN (`apps/teleprompter/dist`).

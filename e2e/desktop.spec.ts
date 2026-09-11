@@ -197,20 +197,33 @@ test.describe('console hub', () => {
     }
   });
 
-  test('开始模拟会话 reaches start_session and locks the CTA', async ({ page }) => {
+  test('开始模拟会话 reaches start_session and hands the CTA to the session state', async ({
+    page,
+  }) => {
     await page.goto('/#/console');
+    await waitForListeners(page);
 
     await page.getByRole('button', { name: '开始模拟会话' }).click();
+    expect((await calls(page)).map((call) => call.cmd)).toContain('start_session');
 
+    // Rust publishes the session status; the CTA becomes the live run state.
+    await emit(page, 'session_status', { session: 'listening' });
     const running = page.getByRole('button', { name: '会话进行中' });
     await expect(running).toBeVisible();
     await expect(running).toBeDisabled();
-    expect((await calls(page)).map((call) => call.cmd)).toContain('start_session');
+    await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
   });
 
-  test('扩展视图 asks the hidden dual window to show', async ({ page }) => {
+  test('扩展视图 opens once a session is live and asks the dual window to show', async ({
+    page,
+  }) => {
     await page.goto('/#/console');
+    await waitForListeners(page);
 
+    // Idle: the extended view has nothing to show yet.
+    await expect(page.getByRole('button', { name: '扩展视图' })).toBeDisabled();
+
+    await emit(page, 'session_status', { session: 'listening' });
     await page.getByRole('button', { name: '扩展视图' }).click();
 
     await expect

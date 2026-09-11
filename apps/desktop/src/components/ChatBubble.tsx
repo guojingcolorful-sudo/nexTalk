@@ -20,6 +20,9 @@ interface ChatBubbleProps {
   speaker: Speaker;
   zh?: string;
   en?: string;
+  /** Session mode applied from the phone (SYNC-03), or null while the session
+   *  runs on the per-speaker defaults. */
+  mode?: LanguagePref | null;
 }
 
 function present(text?: string): string | undefined {
@@ -31,9 +34,15 @@ function present(text?: string): string | undefined {
  * the speaker actually uttered; the other language tucks under it as the
  * subline while the bubble is bilingual. A payload with no text at all
  * renders nothing rather than an empty bubble.
+ *
+ * Language resolution order: a toggle the user pressed on this bubble wins,
+ * then the session mode the phone applied, then the speaker default — so an
+ * untouched bubble follows the phone live while a deliberate local choice is
+ * never overridden.
  */
-export default function ChatBubble({ speaker, zh, en }: ChatBubbleProps) {
-  const [pref, setPref] = useState<LanguagePref>(SPEAKER_DEFAULT_PREF[speaker]);
+export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleProps) {
+  const [localPref, setLocalPref] = useState<LanguagePref | null>(null);
+  const pref = localPref ?? mode ?? SPEAKER_DEFAULT_PREF[speaker];
   const isUser = speaker === 'user';
 
   const zhText = present(zh);
@@ -67,7 +76,7 @@ export default function ChatBubble({ speaker, zh, en }: ChatBubbleProps) {
           <FontAwesomeIcon icon={isUser ? faMicrophone : faUserTie} aria-hidden="true" className="mr-1" />
           {isUser ? '用户' : '面试官'}
         </span>
-        <LanguageToggle speaker={speaker} value={pref} onChange={setPref} />
+        <LanguageToggle speaker={speaker} value={pref} onChange={setLocalPref} />
       </div>
 
       <p
