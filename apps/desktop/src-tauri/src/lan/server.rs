@@ -22,6 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{broadcast, mpsc};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -173,18 +174,9 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
     });
 
     // Broadcast fan-out: session events -> outbound queue.
-    let mut broadcast_rx = state.subscribe();
+    let broadcast_rx = state.subscribe();
     let tx_broadcast = tx_msgs.clone();
-    let broadcast_task = tokio::spawn(async move {
-        while let Ok(event) = broadcast_rx.recv().await {
-            let Ok(text) = serde_json::to_string(&event) else {
-                continue;
-            };
-            if tx_broadcast.send(Message::Text(text.into())).await.is_err() {
-                break;
-            }
-        }
-    });
+    let broadcast_task = tokio::spawn(forward_events(broadcast_rx, tx_broadcast));
 
     // Read half: strict protocol handling (T-01-02).
     while let Some(msg) = receiver.next().await {
@@ -233,6 +225,22 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
     send_task.abort();
     broadcast_task.abort();
     state.client_disconnected();
+}
+
+/// Forwards broadcast events onto one client's outbound queue until the
+/// channel closes or the client's sink is gone.
+async fn forward_events(
+    mut rx: broadcast::Receiver<ServerEvent>,
+    tx: mpsc::Sender<Message>,
+) {
+    while let Ok(event) = rx.recv().await {
+        let Ok(text) = serde_json::to_string(&event) else {
+            continue;
+        };
+        if tx.send(Message::Text(text.into())).await.is_err() {
+            break; // client gone
+        }
+    }
 }
 
 /// Path to the teleprompter H5 build served over LAN (`apps/teleprompter/dist`).
@@ -414,6 +422,54 @@ mod tests {
             None => {}
             other => panic!("expected connection drop on unknown fields, got {other:?}"),
         }
+    }
+
+    /// A phone that fell behind the 64-slot ring buffer (backgrounded tab, GC
+    /// pause, congested Wi-Fi) must not lose its fan-out: the forwarder drops
+    /// the frames it missed and keeps delivering (WR-01).
+    #[tokio::test]
+    async fn a_lagged_receiver_keeps_forwarding() {
+        let state = SessionState::new(8787);
+        let rx = state.subscribe();
+
+        // Overflow the ring buffer while nothing reads this receiver.
+        for seq in 1..=80u64 {
+            state.append_event(ServerEvent::Subtitle {
+                id: format!("stale-{seq}"),
+                speaker: Speaker::User,
+                seq,
+                zh: Some(format!("第 {seq} 行")),
+                en: None,
+                final_flag: true,
+            });
+        }
+
+        let (tx, mut forwarded) = mpsc::channel::<Message>(8);
+        let task = tokio::spawn(forward_events(rx, tx));
+
+        // Anything appended now is delivered only if the task survived the
+        // Lagged error the overflow produced.
+        let after = test_events::strategy_event();
+        state.append_event(after.clone());
+
+        let mut saw_after = false;
+        for _ in 0..128 {
+            let frame = tokio::time::timeout(Duration::from_secs(5), forwarded.recv())
+                .await
+                .expect("a lagged receiver must be resumed, not dropped")
+                .expect("the forwarder keeps the channel open");
+            if let Message::Text(text) = frame {
+                let event: ServerEvent =
+                    serde_json::from_str(&text).expect("a well-formed ServerEvent");
+                if event == after {
+                    saw_after = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_after, "delivery resumes after the dropped frames");
+
+        task.abort();
     }
 
     #[test]
