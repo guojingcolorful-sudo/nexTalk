@@ -13,6 +13,8 @@ import { nextLanguagePref } from './TeleprompterPage';
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
 
+  readyState = 0;
+  sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -22,12 +24,25 @@ class FakeWebSocket {
     FakeWebSocket.instances.push(this);
   }
 
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
   close(): void {
-    // no-op: the hook only needs the handle
+    this.readyState = 3;
+  }
+
+  accept(): void {
+    this.readyState = 1;
+    this.onopen?.();
   }
 
   emit(payload: unknown): void {
     this.onmessage?.({ data: JSON.stringify(payload) });
+  }
+
+  frames(): Array<Record<string, unknown>> {
+    return this.sent.map((frame) => JSON.parse(frame) as Record<string, unknown>);
   }
 }
 
@@ -65,11 +80,25 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket);
   stubReducedMotion();
   Element.prototype.scrollIntoView = vi.fn();
+  // jsdom has no media pipeline; the wake-lock fallback only needs play() to
+  // resolve (the hook ignores the returned promise either way).
+  Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+    value: vi.fn().mockResolvedValue(undefined),
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'pause', {
+    value: vi.fn(),
+    configurable: true,
+    writable: true,
+  });
   window.history.replaceState(null, '', '/?token=e2e-token&ws=ws://127.0.0.1:8788');
 });
 
 afterEach(() => {
   cleanup();
+  // The fallback video is appended to <body>, outside the React root.
+  document.body.querySelectorAll('video').forEach((video) => video.remove());
   vi.unstubAllGlobals();
 });
 
@@ -126,6 +155,39 @@ describe('TeleprompterPage', () => {
     expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
     expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
     expect(screen.queryByText('不应渲染')).toBeNull();
+  });
+
+  test('开始提词 engages the stay-awake fallback on a plain http LAN origin', () => {
+    render(<App />);
+
+    act(() => {
+      screen.getByRole('button', { name: '开始提词' }).click();
+    });
+
+    // jsdom has no navigator.wakeLock — the same situation as http://192.168.x.x.
+    const video = document.body.querySelector('video');
+    expect(video).not.toBeNull();
+    expect(video?.muted).toBe(true);
+    expect(video?.loop).toBe(true);
+    expect(screen.getByText('已启用防休眠回退模式')).toBeTruthy();
+    expect(screen.getByText('屏幕常亮已开启')).toBeTruthy();
+  });
+
+  test('the mode control pushes the exact protocol control frame to the desktop', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+    });
+    act(() => {
+      screen.getByRole('button', { name: /语言模式/ }).click();
+    });
+
+    const frames = socket.frames();
+    expect(frames[0]).toEqual({ t: 'resume', sinceSeq: 0 });
+    expect(frames.at(-1)).toEqual({ t: 'control', language: 'all-zh' });
+    expect(socket.sent.join('')).not.toContain('language_pref');
   });
 
   test('without a token the page shows the pairing error instead of the teleprompter', () => {

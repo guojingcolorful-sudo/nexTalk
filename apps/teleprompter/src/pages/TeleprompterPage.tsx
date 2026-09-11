@@ -7,7 +7,9 @@ import GateScreen from '../components/GateScreen';
 import MobileTabs, { type PhoneTab } from '../components/MobileTabs';
 import StatusCapsule, { type CapsuleStatus } from '../components/StatusCapsule';
 import StrategyCard from '../components/StrategyCard';
+import Toast from '../components/Toast';
 import TypewriterDots from '../components/TypewriterDots';
+import { useWakeLock } from '../hooks/useWakeLock';
 import { useWs, type WsConnectionState, type WsTicket } from '../hooks/useWs';
 
 /**
@@ -36,18 +38,12 @@ function writeTabToUrl(tab: PhoneTab): void {
 }
 
 /** Capsule copy is keyed to the WS lifecycle; reconnecting is the backoff state. */
-function capsuleStatus(state: WsConnectionState): CapsuleStatus {
-  switch (state) {
-    case 'open':
-      return 'connected';
-    case 'connecting':
-      return 'connecting';
-    case 'closed':
-      return 'closed';
-    default:
-      return 'reconnecting';
-  }
-}
+const CAPSULE_STATUS: Record<WsConnectionState, CapsuleStatus> = {
+  connecting: 'connecting',
+  connected: 'connected',
+  reconnecting: 'reconnecting',
+  closed: 'closed',
+};
 
 /** True while the desktop is still producing the newest line (dots at stream end). */
 function isGenerating(events: ServerEvent[]): boolean {
@@ -75,11 +71,17 @@ interface TeleprompterPageProps {
 }
 
 export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
-  const { events, state } = useWs(ticket);
+  const { events, state, sendLanguagePref } = useWs(ticket);
   const [tab, setTab] = useState<PhoneTab>(readTabFromUrl);
   const [sessionActive, setSessionActive] = useState(false);
   const [languagePref, setLanguagePref] = useState<LanguagePref>('bilingual');
+  const [toast, setToast] = useState<string | null>(null);
   const streamEndRef = useRef<HTMLDivElement | null>(null);
+
+  // SYNC-04: the 开始提词 tap is the gesture the wake lock needs on a plain
+  // http:// LAN origin, so the hook is engaged from the same handler.
+  const { isWakeActive, activate: activateWakeLock, deactivate: deactivateWakeLock } =
+    useWakeLock({ onFallbackEngaged: () => setToast('已启用防休眠回退模式') });
 
   const subtitles = useMemo(
     () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
@@ -97,12 +99,21 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   }, []);
 
   const toggleSession = useCallback(() => {
-    setSessionActive((active) => !active);
-  }, []);
+    if (sessionActive) {
+      deactivateWakeLock();
+      setSessionActive(false);
+      return;
+    }
+    activateWakeLock();
+    setSessionActive(true);
+  }, [sessionActive, activateWakeLock, deactivateWakeLock]);
 
   const cycleLanguage = useCallback(() => {
-    setLanguagePref((pref) => nextLanguagePref(pref));
-  }, []);
+    const next = nextLanguagePref(languagePref);
+    setLanguagePref(next);
+    // SYNC-03: the phone owns the session mode; the desktop applies what we push.
+    sendLanguagePref(next);
+  }, [languagePref, sendLanguagePref]);
 
   // Auto-scroll on new content only — no scroll listeners, no hijacking
   // (UI-SPEC Motion Contract).
@@ -115,7 +126,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
       <div className="dot-matrix-root flex h-full w-full max-w-[390px] flex-col overflow-hidden">
         {/* Status bar: one capsule + the pairing stamp */}
         <header className="flex shrink-0 items-center justify-between gap-2 border-b-4 border-black bg-panel px-4 py-3">
-          <StatusCapsule status={capsuleStatus(state)} />
+          <StatusCapsule status={CAPSULE_STATUS[state]} />
           <span className="text-xs font-bold tracking-wider text-gray-400">已配对桌面端</span>
         </header>
 
@@ -183,11 +194,14 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
 
         <GateScreen
           sessionActive={sessionActive}
+          wakeActive={isWakeActive}
           languagePref={languagePref}
           onToggleSession={toggleSession}
           onCycleLanguage={cycleLanguage}
         />
       </div>
+
+      {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
     </div>
   );
 }

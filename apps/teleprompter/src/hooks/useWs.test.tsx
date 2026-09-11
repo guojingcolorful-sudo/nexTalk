@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { backoffDelay, useWs, type WsTicket } from './useWs';
 
@@ -79,6 +79,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Auto-cleanup is off (vitest globals are off) — without this an earlier
+  // hook keeps its reconnect timers and sockets alive into the next spec.
+  cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });

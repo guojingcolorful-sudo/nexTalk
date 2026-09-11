@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useWakeLock } from './useWakeLock';
 
@@ -43,6 +43,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Auto-cleanup is off (vitest globals are off) — an unmounted hook from a
+  // previous test would keep its visibilitychange listener attached.
+  cleanup();
   Reflect.deleteProperty(navigator, 'wakeLock');
   setVisibility('visible');
   document.body.innerHTML = '';
