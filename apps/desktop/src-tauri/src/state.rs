@@ -371,6 +371,12 @@ mod tests {
     use super::*;
     use crate::lan::server::test_events::{self, strategy_event, subtitle_question, user_answer};
 
+    /// The session-identity marker exactly as it lands on the wire.
+    fn session_started(epoch: u64) -> ServerEvent {
+        serde_json::from_str(&format!(r#"{{"t":"session_started","epoch":{epoch}}}"#))
+            .expect("session_started wire shape")
+    }
+
     #[test]
     fn pairing_token_is_32_hex_chars() {
         let state = SessionState::new(8787);
@@ -442,6 +448,46 @@ mod tests {
             vec![strat.clone(), answer.clone()]
         );
         assert_eq!(state.replay_after_subtitle_seq(2), vec![]);
+    }
+
+    #[test]
+    fn start_session_publishes_the_session_marker_first() {
+        let state = SessionState::new(8787);
+        let epoch = state.start_session().expect("start");
+        assert_eq!(
+            state.timeline().first(),
+            Some(&session_started(epoch)),
+            "the new session's identity opens the new timeline (CR-01)"
+        );
+    }
+
+    /// Subtitle sequence numbers in an event list (the phone's cursor unit).
+    fn subtitle_seqs(events: &[ServerEvent]) -> Vec<u64> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ServerEvent::Subtitle { seq, .. } => Some(*seq),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Drives one full round so the timeline carries subtitles 1..=2.
+    fn play_first_round(state: &SessionState) {
+        state.advance_sim(crate::sim::script::ROUNDS[0].timing.generating_at_ms);
+    }
+
+    #[test]
+    fn a_cursor_above_this_session_replays_it_from_the_start() {
+        let state = SessionState::new(8787);
+        state.start_session().expect("start");
+        play_first_round(&state); // the new session's highest seq is 2
+
+        // A client that does not track the epoch resumes with the previous
+        // session's high-water mark (8): the stale cursor must not slice the
+        // new session away.
+        let replay = state.replay_after_subtitle_seq(8);
+        assert_eq!(subtitle_seqs(&replay), vec![1, 2]);
     }
 
     #[test]

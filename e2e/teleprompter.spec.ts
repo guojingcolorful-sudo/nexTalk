@@ -50,6 +50,14 @@ const QUESTION_FRAME = {
   final: true,
 };
 
+const STRATEGY_FRAME = {
+  t: 'strategy',
+  id: 's-r1',
+  roundId: 'r1',
+  title: '数据库优化',
+  bullets: ['慢查询日志定位', '拆连表查询'],
+};
+
 const LINE_5_ZH = '第五行字幕内容';
 const LINE_6_ZH = '第六行字幕内容';
 
@@ -277,6 +285,41 @@ test.describe('phone teleprompter H5', () => {
       await expect(page.locator('article[aria-label="我"]')).toHaveCount(2);
       await expect(page.getByText(LINE_5_ZH)).toHaveCount(1);
       await expect(page.getByText(LINE_6_ZH)).toHaveCount(1);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test('a restarted session clears the phone and streams the new one (CR-01)', async ({ page }) => {
+    const mock = await startMockServer();
+    try {
+      await page.goto(`/?token=${TOKEN}&ws=${mock.url}`);
+      const socket = await mock.nextSocket();
+
+      // Session 1 ends with the phone holding a cursor at seq 8 and a strategy
+      // card already rendered.
+      socket.send(JSON.stringify(SUBTITLE_5));
+      socket.send(JSON.stringify(SUBTITLE_6));
+      socket.send(JSON.stringify({ ...STRATEGY_FRAME, title: '旧策略' }));
+      await expect(page.getByText(LINE_5_ZH)).toBeVisible();
+      await expect(page.getByText(LINE_6_ZH)).toBeVisible();
+
+      // 停止 → 开始模拟会话: the timeline restarts, so seq 1/2 and "s-r1" are
+      // both "already seen" to a phone that never drops its cursors.
+      socket.send(JSON.stringify({ t: 'session_started', epoch: 2 }));
+      socket.send(JSON.stringify(QUESTION_FRAME));
+      socket.send(JSON.stringify(ANSWER_FRAME));
+      socket.send(JSON.stringify(STRATEGY_FRAME));
+
+      // The previous session is gone, not stacked under the new one.
+      await expect(page.getByText(LINE_5_ZH)).toHaveCount(0);
+      await expect(page.getByText(LINE_6_ZH)).toHaveCount(0);
+      await expect(page.getByText(QUESTION_ZH)).toBeVisible();
+      await expect(page.getByText(ANSWER_ZH)).toBeVisible();
+
+      await page.getByRole('tab', { name: 'AI 辅助' }).click();
+      await expect(page.getByText('数据库优化')).toBeVisible();
+      await expect(page.getByText('旧策略')).toHaveCount(0);
     } finally {
       await mock.close();
     }

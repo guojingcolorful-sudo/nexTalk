@@ -87,6 +87,25 @@ describe('isServerEvent narrowing — invalid payloads rejected', () => {
   });
 });
 
+describe('session identity marker (restart signal)', () => {
+  it('accepts a session_started event carrying its epoch', () => {
+    expect(isServerEvent({ t: 'session_started', epoch: 1 })).toBe(true);
+    expect(isServerEvent({ t: 'session_started', epoch: 2 })).toBe(true);
+  });
+
+  it('rejects a session_started without a finite numeric epoch', () => {
+    expect(isServerEvent({ t: 'session_started' })).toBe(false);
+    expect(isServerEvent({ t: 'session_started', epoch: '1' })).toBe(false);
+    expect(isServerEvent({ t: 'session_started', epoch: NaN })).toBe(false);
+  });
+
+  it('accepts the marker inside a resume timeline', () => {
+    expect(
+      isServerEvent({ t: 'timeline', events: [{ t: 'session_started', epoch: 3 }] }),
+    ).toBe(true);
+  });
+});
+
 describe('language mode variant (SYNC-03 applied-mode observation)', () => {
   it('accepts every LanguagePref value', () => {
     for (const language of ['all-zh', 'all-en', 'bilingual'] as const) {

@@ -93,6 +93,31 @@ async fn read_until(
     panic!("no {what} on the WS stream within 16 frames");
 }
 
+/// Reads the next text frame as raw JSON — for assertions about the wire shape
+/// (the session marker) rather than a typed ServerEvent.
+async fn read_raw(ws: &mut Client) -> serde_json::Value {
+    let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("a WS frame within 5s")
+        .expect("the WS stream is still open")
+        .expect("no transport error");
+    match frame {
+        ClientFrame::Text(text) => serde_json::from_str(&text).expect("a valid JSON frame"),
+        other => panic!("expected a text frame, got {other:?}"),
+    }
+}
+
+/// Reads frames until the `session_started` marker for `epoch` arrives.
+async fn read_session_marker(ws: &mut Client, epoch: u64) -> serde_json::Value {
+    for _ in 0..16 {
+        let frame = read_raw(ws).await;
+        if frame["t"] == "session_started" && frame["epoch"] == epoch {
+            return frame;
+        }
+    }
+    panic!("no session_started marker for epoch {epoch} within 16 frames");
+}
+
 /// Reads the next subtitle frame off the stream (skipping statuses/strategies).
 async fn read_subtitle(ws: &mut Client, what: &str) -> ServerEvent {
     read_until(ws, what, |event| {
@@ -329,6 +354,65 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     assert_eq!(seqs, sorted, "subtitle seq must never go backwards");
 
     assert_eq!(state.connected_clients(), 1, "one phone, throughout");
+}
+
+#[tokio::test]
+async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
+    let (base, state) = spawn_server().await;
+    let token = state.pairing_token();
+
+    // Session 1 plays to the phone: it learns the epoch and renders 1..=2.
+    let mut phone = connect(&base, &token).await;
+    pair(&mut phone).await;
+    let first = state.start_session().expect("a fresh session starts");
+    let r1 = &ROUNDS[0].timing;
+    state
+        .advance_sim_for(first, r1.generating_at_ms)
+        .expect("the epoch is current");
+
+    let marker = read_session_marker(&mut phone, first).await;
+    assert_eq!(marker["epoch"], first, "the phone learns the session identity");
+    if let ServerEvent::Subtitle { seq, .. } = read_subtitle(&mut phone, "the r1 question").await {
+        assert_eq!(seq, 1);
+    }
+
+    // 停止 → 开始模拟会话 while the phone stays connected: the new session
+    // renumbers from 1 and announces itself before any content.
+    state.stop_session();
+    let second = state.start_session().expect("restart after stop");
+    assert!(second > first);
+    let marker = read_session_marker(&mut phone, second).await;
+    assert_eq!(marker["epoch"], second, "a restart is not silent");
+
+    // A phone that was offline across the restart reconnects with the OLD
+    // cursor and the OLD epoch. The cursor alone cannot tell the sessions
+    // apart (2 is the highest line of both), so the epoch is what recovers it.
+    state
+        .advance_sim_for(second, r1.generating_at_ms)
+        .expect("the epoch is current");
+    let mut late = connect(&base, &token).await;
+    late.send(ClientFrame::Text(
+        format!(r#"{{"t":"resume","sinceSeq":2,"sinceEpoch":{first}}}"#).into(),
+    ))
+    .await
+    .expect("send resume");
+    let reply = read_raw(&mut late).await;
+    assert_eq!(reply["t"], "timeline");
+    let events = reply["events"].as_array().expect("a timeline carries events");
+    assert_eq!(events[0]["t"], "session_started", "marker first: {reply:#}");
+    assert_eq!(events[0]["epoch"], second);
+    let seqs: Vec<u64> = events
+        .iter()
+        .filter(|event| event["t"] == "subtitle")
+        .map(|event| event["seq"].as_u64().expect("a subtitle carries seq"))
+        .collect();
+    assert_eq!(
+        seqs,
+        vec![1, 2],
+        "the whole new session must reach a phone whose cursor went stale"
+    );
+
+    assert_eq!(wait_for_clients(&state, 2).await, 2, "both phones stay paired");
 }
 
 #[tokio::test]

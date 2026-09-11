@@ -71,6 +71,35 @@ describe('useTauriEvents', () => {
     expect(result.current.status).toBe('generating');
   });
 
+  it('clears the stream and the applied mode when a new session announces itself', async () => {
+    const { result } = renderHook(() => useTauriEvents());
+    await waitForListeners('session');
+
+    act(() => {
+      emit('session', {
+        t: 'subtitle',
+        id: 'r1-q',
+        speaker: 'interviewer',
+        seq: 1,
+        zh: '上个会话的问题',
+        en: 'previous session',
+        final: true,
+      });
+      emit('session', { t: 'language', language: 'all-en' });
+    });
+    expect(result.current.events).toHaveLength(2);
+    expect(result.current.languageMode).toBe('all-en');
+
+    // 停止 → 开始模拟会话: the locked confirmation copy (当前字幕与策略将清空)
+    // must hold in both webviews, not only on the Rust side.
+    act(() => {
+      emit('session', { t: 'session_started', epoch: 2 });
+    });
+
+    expect(result.current.events).toHaveLength(0);
+    expect(result.current.languageMode).toBeNull();
+  });
+
   it('tracks session_status and phone_count with payload validation', async () => {
     const { result } = renderHook(() => useTauriEvents());
     await waitForListeners('session_status');

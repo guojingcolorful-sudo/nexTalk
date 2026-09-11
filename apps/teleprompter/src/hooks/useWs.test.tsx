@@ -197,6 +197,71 @@ describe('useWs resume', () => {
   });
 });
 
+describe('useWs session restart (CR-01)', () => {
+  const MARKER = { t: 'session_started', epoch: 2 };
+  const STRATEGY = { t: 'strategy', id: 's-r1', roundId: 'r1', title: '策略', bullets: ['一'] };
+
+  test('drops the cursors and the rendered stream when the session restarts', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+
+    act(() => {
+      latest().push(subtitle(1, '旧问题'));
+      latest().push(subtitle(2, '旧回答'));
+      latest().push(STRATEGY);
+    });
+    expect(result.current.events).toHaveLength(3);
+
+    // 停止 → 开始模拟会话: the new session renumbers from 1 and reuses "s-r1".
+    act(() => {
+      latest().push(MARKER);
+      latest().push(subtitle(1, '新问题'));
+      latest().push(STRATEGY);
+    });
+
+    const rendered = result.current.events;
+    expect(rendered).toHaveLength(2); // the marker itself is not rendered
+    expect(rendered.map((event) => (event.t === 'subtitle' ? event.seq : event.t))).toEqual([
+      1,
+      'strategy',
+    ]);
+  });
+
+  test('a resume tail carrying the marker re-renders the new session from scratch', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+
+    // The previous session's high-water mark, then the restart arrives as part
+    // of the resume reply (the phone was offline across 停止 / 开始).
+    act(() => latest().push(subtitle(8, '旧会话最后一行')));
+    act(() => {
+      latest().push({
+        t: 'timeline',
+        events: [MARKER, subtitle(1, '新问题'), subtitle(2, '新回答')],
+      });
+    });
+
+    const seqs = result.current.events
+      .filter((event) => event.t === 'subtitle')
+      .map((event) => (event.t === 'subtitle' ? event.seq : 0));
+    expect(seqs).toEqual([1, 2]);
+  });
+
+  test('resume asks from scratch after a restart so a reconnect cannot skip it', () => {
+    renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+
+    act(() => latest().push(subtitle(5, '旧会话')));
+    act(() => latest().push(MARKER));
+
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => latest().accept());
+
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0 });
+  });
+});
+
 describe('useWs control', () => {
   test('sendLanguagePref emits {t:control,language} — never language_pref', () => {
     const { result } = renderHook(() => useWs(TICKET));
