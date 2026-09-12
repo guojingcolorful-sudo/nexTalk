@@ -198,8 +198,7 @@ export default function ConsolePage() {
                 variant="paper"
                 size="sm"
                 className="flex-1"
-                disabled={!generating}
-                title={generating ? undefined : '回答生成中才可打断'}
+                title="跳到下一轮"
                 onClick={() => control('interrupt')}
               >
                 <FontAwesomeIcon icon={faForwardStep} aria-hidden="true" />
@@ -209,8 +208,7 @@ export default function ConsolePage() {
                 variant="paper"
                 size="sm"
                 className="flex-1"
-                disabled={!generating}
-                title={generating ? undefined : '回答生成中才可重听'}
+                title="重播当前轮"
                 onClick={() => control('repeat')}
               >
                 <FontAwesomeIcon icon={faRotateLeft} aria-hidden="true" />

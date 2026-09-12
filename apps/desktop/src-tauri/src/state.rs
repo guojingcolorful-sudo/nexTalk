@@ -273,8 +273,8 @@ impl SessionState {
         self.advance_sim_for(epoch, elapsed_ms).unwrap_or_default()
     }
 
-    /// 打断 (D-03): cut the current answer and open the next round one second
-    /// later. Only meaningful while the answer is generating.
+    /// 打断 (D-03): cut the current round and open the next one second
+    /// later. Live through the whole active session (UAT-7).
     pub fn interrupt_session(&self) -> Result<(), String> {
         self.interrupt_session_for(self.session_epoch())
     }
@@ -284,7 +284,7 @@ impl SessionState {
     /// stop/restart can land between reading it and acquiring the lock (the
     /// same guard `advance_sim_for` uses).
     fn interrupt_session_for(&self, epoch: u64) -> Result<(), String> {
-        self.guard_generating("打断")?;
+        self.guard_active("打断")?;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
         // Re-check under the engine lock: 停止 / 开始模拟会话 between reading
@@ -298,15 +298,15 @@ impl SessionState {
         Ok(())
     }
 
-    /// 重听 (D-03): replay the current round with fresh sequence numbers. Only
-    /// meaningful while the answer is generating.
+    /// 重听 (D-03): replay the current round with fresh sequence numbers. Live
+    /// through the whole active session (UAT-7).
     pub fn repeat_session(&self) -> Result<(), String> {
         self.repeat_session_for(self.session_epoch())
     }
 
     /// [`Self::repeat_session`] against `epoch` (see `interrupt_session_for`).
     fn repeat_session_for(&self, epoch: u64) -> Result<(), String> {
-        self.guard_generating("重听")?;
+        self.guard_active("重听")?;
         let engine = self.sim_handle();
         let mut sim = engine.lock().expect("sim lock poisoned");
         if self.session_epoch() != epoch {
@@ -318,11 +318,15 @@ impl SessionState {
     }
 
     /// The status half of the 打断/重听 guard.
-    fn guard_generating(&self, command: &str) -> Result<(), String> {
-        if self.session_status() != SessionStatus::Generating {
-            return Err(format!(
-                "{command} only applies while the answer is generating"
-            ));
+    ///
+    /// UAT-7: the controls stay live through the whole active session —
+    /// gating them to the brief generating window made them invisible in the
+    /// demo (disabled most of the time). 打断 also makes sense while the
+    /// question plays: cut straight to the next round.
+    fn guard_active(&self, command: &str) -> Result<(), String> {
+        let status = self.session_status();
+        if status != SessionStatus::Listening && status != SessionStatus::Generating {
+            return Err(format!("{command} only applies while a session is live"));
         }
         Ok(())
     }
@@ -581,7 +585,10 @@ mod tests {
             "a current-epoch cursor keeps the ordinary tail semantics"
         );
         // Epoch-less clients (older H5) fall back to the seq cursor.
-        assert_eq!(subtitle_seqs(&state.resume_events(2, None)), Vec::<u64>::new());
+        assert_eq!(
+            subtitle_seqs(&state.resume_events(2, None)),
+            Vec::<u64>::new()
+        );
     }
 
     #[test]
@@ -626,17 +633,28 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_and_repeat_require_a_generating_phase() {
+    fn interrupt_and_repeat_apply_through_the_active_session() {
         let state = SessionState::new(8787);
-        state.start_session().expect("start");
+        // No live session: nothing to interrupt or replay.
         assert!(state.interrupt_session().is_err());
         assert!(state.repeat_session().is_err());
 
-        // Drive the engine into the generating phase of round 1.
-        state.advance_sim(crate::sim::script::ROUNDS[0].timing.generating_at_ms);
-        assert_eq!(state.session_status(), SessionStatus::Generating);
+        state.start_session().expect("start");
+        assert_eq!(state.session_status(), SessionStatus::Listening);
+        // UAT-7: the controls are live from the question phase on, not only
+        // while the answer generates — 打断 cuts to the next round right away.
         assert!(state.interrupt_session().is_ok());
         assert_eq!(state.session_status(), SessionStatus::Listening);
+
+        // Drive the engine into the generating phase of round 2: both controls
+        // stay live there, and 重听 replays the current round with fresh ids.
+        state.advance_sim(
+            crate::sim::source::INTERRUPT_LEAD_MS
+                + crate::sim::script::ROUNDS[1].timing.generating_at_ms,
+        );
+        assert_eq!(state.session_status(), SessionStatus::Generating);
+        assert!(state.repeat_session().is_ok());
+        assert!(state.interrupt_session().is_ok());
     }
 
     #[test]

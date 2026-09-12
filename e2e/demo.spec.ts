@@ -199,8 +199,11 @@ test.describe('console demo run', () => {
     await emit(page, 'session_status', { session: 'listening' });
     await expect(page.getByRole('button', { name: '会话进行中' })).toBeDisabled();
     await expect(dualButton).toBeEnabled();
-    await expect(page.getByRole('button', { name: '打断' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: '重听' })).toBeDisabled();
+    // UAT-7: 打断/重听 are live through the whole active session, from the
+    // question phase on — gating them to the brief generating window made
+    // them invisible in the demo.
+    await expect(page.getByRole('button', { name: '打断' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '重听' })).toBeEnabled();
 
     await dualButton.click();
     await expect
