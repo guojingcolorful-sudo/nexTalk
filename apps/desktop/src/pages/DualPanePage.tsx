@@ -55,7 +55,9 @@ export default function DualPanePage() {
   };
 
   const streamEndRef = useRef<HTMLDivElement>(null);
-  const lastSubtitleId = subtitles.at(-1)?.id ?? null;
+  // `.at(-1)` is Safari 15.4+; macOS 12.0-12.2 ships 15.0-15.3 (WR-06).
+  const lastSubtitleId =
+    subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
   useEffect(() => {
     if (lastSubtitleId === null) return;
     // Motion contract: follow new lines only, block: 'nearest' + behavior
