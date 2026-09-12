@@ -44,6 +44,7 @@ export default function ConsolePage() {
   const navigate = useNavigate();
   const { status } = useTauriEvents();
   const [startFailed, setStartFailed] = useState(false);
+  const [dualFailed, setDualFailed] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
 
   const active = status === 'listening' || status === 'generating';
@@ -70,12 +71,37 @@ export default function ConsolePage() {
   };
 
   const openDualPane = async () => {
+    setDualFailed(false);
     try {
       // The dual window starts hidden (tauri.conf.json) and is revealed here.
-      const dual = await WebviewWindow.getByLabel('dual');
-      await dual?.show();
+      // Its own header exposes 关闭, which destroys it — getByLabel then
+      // returns null and showing is impossible, so recreate it instead of
+      // leaving 扩展视图 dead for the rest of the process (WR-08).
+      const existing = await WebviewWindow.getByLabel('dual');
+      if (existing) {
+        await existing.show();
+        return;
+      }
+      const dual = new WebviewWindow('dual', {
+        // Mirrors the `dual` entry in tauri.conf.json.
+        url: 'index.html#/dual',
+        width: 860,
+        height: 680,
+        resizable: false,
+        maximizable: false,
+        decorations: false,
+        transparent: true,
+        shadow: false,
+        visible: true,
+        center: true,
+      });
+      await new Promise<void>((resolve, reject) => {
+        dual.once('tauri://created', () => resolve());
+        dual.once('tauri://error', (event) => reject(new Error(String(event.payload))));
+      });
     } catch (err) {
-      console.error('showing the dual window failed', err);
+      console.error('opening the dual window failed', err);
+      setDualFailed(true);
     }
   };
 
@@ -130,6 +156,20 @@ export default function ConsolePage() {
             body="请重新开始模拟会话"
             action={
               <NeobrutalismButton variant="paper" size="sm" onClick={startSession}>
+                重试
+              </NeobrutalismButton>
+            }
+          />
+        </div>
+      ) : null}
+
+      {dualFailed ? (
+        <div className="px-4 pb-2">
+          <ErrorBanner
+            title="扩展视图打开失败"
+            body="请重试"
+            action={
+              <NeobrutalismButton variant="paper" size="sm" onClick={openDualPane}>
                 重试
               </NeobrutalismButton>
             }
