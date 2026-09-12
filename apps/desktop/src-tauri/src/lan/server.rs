@@ -26,7 +26,9 @@ use tokio::sync::{broadcast, mpsc};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+use crate::sim::source::{spawn_scheduler, RealClock};
 use crate::state::SessionState;
+use tauri::Manager;
 
 /// Max inbound WebSocket frame size (T-01-02): 64 KiB.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -108,7 +110,14 @@ pub enum ServerEvent {
 #[serde(tag = "t", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
     #[serde(rename_all = "camelCase")]
-    Control { language: LanguagePref },
+    Control {
+        /// Session language mode (SYNC-03). Omitted on action-only frames.
+        #[serde(default)]
+        language: Option<LanguagePref>,
+        /// Session lifecycle action the phone may trigger (SYNC-01 round-trip).
+        #[serde(default)]
+        action: Option<ControlAction>,
+    },
     #[serde(rename_all = "camelCase")]
     Resume {
         since_seq: u64,
@@ -119,14 +128,35 @@ pub enum ClientMessage {
     },
 }
 
+/// Session lifecycle actions the phone may request over `control`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlAction {
+    StartSession,
+    StopSession,
+}
+
 /// Query parameters on the `/ws` upgrade request.
 #[derive(Debug, Deserialize)]
 pub struct PairingParams {
     token: String,
 }
 
+/// Shared router state: the session plus an optional app handle. The handle
+/// lets a phone-initiated 开始模拟会话 reveal the dual window (SYNC-01
+/// round-trip); it is `None` in tests and standalone servers.
+#[derive(Clone)]
+pub struct LanContext {
+    pub state: SessionState,
+    pub app: Option<tauri::AppHandle>,
+}
+
 /// Full LAN router: pairing WS endpoint + static H5 bundle (no-store).
-pub fn router(state: SessionState, teleprompter_dist: PathBuf) -> Router {
+pub fn router(
+    state: SessionState,
+    teleprompter_dist: PathBuf,
+    app: Option<tauri::AppHandle>,
+) -> Router {
     Router::new()
         .route("/ws", axum::routing::get(ws_handler))
         .fallback_service(ServeDir::new(teleprompter_dist))
@@ -137,24 +167,26 @@ pub fn router(state: SessionState, teleprompter_dist: PathBuf) -> Router {
             CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ))
-        .with_state(state)
+        .with_state(LanContext { state, app })
 }
 
 /// Upgrade handler: 401 on token mismatch, else run the client loop.
 async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<PairingParams>,
-    State(state): State<SessionState>,
+    State(ctx): State<LanContext>,
 ) -> Response {
-    if params.token != state.pairing_token() {
+    if params.token != ctx.state.pairing_token() {
         return (StatusCode::UNAUTHORIZED, "invalid pairing token").into_response();
     }
-    ws.on_upgrade(move |socket| client_loop(socket, state))
+    ws.on_upgrade(move |socket| client_loop(socket, ctx))
 }
 
 /// Per-connection loop: broadcast fan-out to the H5 + strict inbound parse
-/// (resume replay, language control, deny_unknown_fields drop).
-async fn client_loop(socket: WebSocket, state: SessionState) {
+/// (resume replay, language control, session actions, deny_unknown_fields
+/// drop).
+async fn client_loop(socket: WebSocket, ctx: LanContext) {
+    let state = ctx.state.clone();
     // Live phone count (desktop-only telemetry): the console QR card flips
     // 等待扫码 → 已连接 N 台设备 off these emissions. It is NOT a ServerEvent,
     // so it never travels over the WS broadcast.
@@ -201,7 +233,7 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
                             break;
                         }
                     }
-                    Ok(ClientMessage::Control { language }) => {
+                    Ok(ClientMessage::Control { language, action }) => {
                         // SYNC-03 round-trip: the phone's mode is applied to the
                         // session AND published back through the same event model,
                         // so the desktop webviews observe the change through the
@@ -209,8 +241,30 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
                         // The field name is fixed by the 01-01 contract —
                         // deny_unknown_fields rejects anything else, including
                         // `language_pref`.
-                        state.set_language_prefs(language);
-                        state.publish(ServerEvent::Language { language });
+                        if let Some(language) = language {
+                            state.set_language_prefs(language);
+                            state.publish(ServerEvent::Language { language });
+                        }
+                        // SYNC-01 round-trip (UAT-5): 开始提词 on the phone is
+                        // the same function as 开始模拟会话 on the desktop —
+                        // start the session and reveal the dual window.
+                        match action {
+                            Some(ControlAction::StartSession) => match state.start_session() {
+                                Ok(epoch) => {
+                                    spawn_scheduler(state.clone(), epoch, RealClock::new());
+                                    if let Some(app) = &ctx.app {
+                                        if let Some(window) = app.get_webview_window("dual") {
+                                            let _ = window.show();
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    eprintln!("[lan] phone start_session rejected: {err}")
+                                }
+                            },
+                            Some(ControlAction::StopSession) => state.stop_session(),
+                            None => {}
+                        }
                     }
                     Err(_) => break, // unknown fields / malformed -> drop
                 }
@@ -236,10 +290,7 @@ async fn client_loop(socket: WebSocket, state: SessionState) {
 /// it as terminal would leave the socket open and healthy-looking while the
 /// teleprompter freezes forever, and the phone never reconnects because the
 /// transport itself is fine (WR-01).
-async fn forward_events(
-    mut rx: broadcast::Receiver<ServerEvent>,
-    tx: mpsc::Sender<Message>,
-) {
+async fn forward_events(mut rx: broadcast::Receiver<ServerEvent>, tx: mpsc::Sender<Message>) {
     loop {
         match rx.recv().await {
             Ok(event) => {
@@ -329,7 +380,7 @@ mod tests {
     /// Boots the real router on an ephemeral port; returns base ws:// URL.
     async fn spawn_server() -> (String, SessionState) {
         let state = SessionState::new(8787);
-        let app = router(state.clone(), teleprompter_dist_path());
+        let app = router(state.clone(), teleprompter_dist_path(), None);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind ephemeral port");
@@ -550,7 +601,20 @@ mod tests {
         assert_eq!(
             control,
             ClientMessage::Control {
-                language: LanguagePref::Bilingual
+                language: Some(LanguagePref::Bilingual),
+                action: None
+            }
+        );
+
+        // The UAT-5 action frame carries no language at all.
+        let action: ClientMessage =
+            serde_json::from_str(r#"{"t":"control","action":"start_session"}"#)
+                .expect("action wire shape");
+        assert_eq!(
+            action,
+            ClientMessage::Control {
+                language: None,
+                action: Some(ControlAction::StartSession)
             }
         );
     }

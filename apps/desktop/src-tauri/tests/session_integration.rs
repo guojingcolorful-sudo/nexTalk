@@ -32,7 +32,7 @@ type Client =
 /// Boots the real router on an ephemeral loopback port.
 async fn spawn_server() -> (String, SessionState) {
     let state = SessionState::new(8787);
-    let app = router(state.clone(), teleprompter_dist_path());
+    let app = router(state.clone(), teleprompter_dist_path(), None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind an ephemeral port");
@@ -363,6 +363,68 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     assert_eq!(state.connected_clients(), 1, "one phone, throughout");
 }
 
+/// UAT-5: 开始提词 on the phone is the same function as 开始模拟会话 on the
+/// desktop — the `control` action starts the session over the wire with no
+/// desktop involvement, and the real-clock scheduler the LAN handler spawns
+/// drives the same deterministic events.
+#[tokio::test]
+async fn phone_control_action_starts_the_session_over_the_wire() {
+    // The LAN handler spawns the production scheduler through
+    // tauri::async_runtime — install the test runtime so the spawn resolves.
+    tauri::async_runtime::set(tokio::runtime::Handle::current());
+    let (base, state) = spawn_server().await;
+    let token = state.pairing_token();
+
+    let mut phone = connect(&base, &token).await;
+    pair(&mut phone).await;
+    assert_eq!(state.session_status(), SessionStatus::Idle);
+
+    phone
+        .send(ClientFrame::Text(
+            r#"{"t":"control","action":"start_session"}"#.into(),
+        ))
+        .await
+        .expect("send the start action");
+
+    // The scheduler's first tick lands at 0ms: the listening status and the
+    // r1 question open the session without any desktop click.
+    assert_eq!(
+        read_until(&mut phone, "the session started from the phone", |event| {
+            matches!(
+                event,
+                ServerEvent::Status {
+                    session: SessionStatus::Listening
+                }
+            )
+        })
+        .await,
+        ServerEvent::Status {
+            session: SessionStatus::Listening
+        }
+    );
+    assert_eq!(state.session_status(), SessionStatus::Listening);
+    let question = read_subtitle(&mut phone, "the r1 question").await;
+    assert_eq!(sub(&question).id, "r1-q");
+
+    // A second start while live is rejected — the same guard the desktop
+    // command enforces.
+    phone
+        .send(ClientFrame::Text(
+            r#"{"t":"control","action":"start_session"}"#.into(),
+        ))
+        .await
+        .expect("send the duplicate start");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(
+        state.session_status(),
+        SessionStatus::Listening,
+        "a live session rejects a second start"
+    );
+
+    // Cleanup: stop the real-clock scheduler the action started.
+    state.stop_session();
+}
+
 #[tokio::test]
 async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
     let (base, state) = spawn_server().await;
@@ -378,7 +440,10 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
         .expect("the epoch is current");
 
     let marker = read_session_marker(&mut phone, first).await;
-    assert_eq!(marker["epoch"], first, "the phone learns the session identity");
+    assert_eq!(
+        marker["epoch"], first,
+        "the phone learns the session identity"
+    );
     if let ServerEvent::Subtitle { seq, .. } = read_subtitle(&mut phone, "the r1 question").await {
         assert_eq!(seq, 1);
     }
@@ -405,7 +470,9 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
     .expect("send resume");
     let reply = read_raw(&mut late).await;
     assert_eq!(reply["t"], "timeline");
-    let events = reply["events"].as_array().expect("a timeline carries events");
+    let events = reply["events"]
+        .as_array()
+        .expect("a timeline carries events");
     assert_eq!(events[0]["t"], "session_started", "marker first: {reply:#}");
     assert_eq!(events[0]["epoch"], second);
     let seqs: Vec<u64> = events
@@ -419,7 +486,11 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
         "the whole new session must reach a phone whose cursor went stale"
     );
 
-    assert_eq!(wait_for_clients(&state, 2).await, 2, "both phones stay paired");
+    assert_eq!(
+        wait_for_clients(&state, 2).await,
+        2,
+        "both phones stay paired"
+    );
 }
 
 #[tokio::test]

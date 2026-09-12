@@ -114,12 +114,18 @@ describe('TeleprompterPage', () => {
 
   test('starts the session on tap and flips the gate to 暂停提词', () => {
     render(<App />);
+    const socket = currentSocket();
 
     act(() => {
+      socket.accept();
       screen.getByRole('button', { name: '开始提词' }).click();
     });
 
     expect(screen.getByRole('button', { name: '暂停提词' })).toBeTruthy();
+    // UAT-5: 开始提词 is the same function as the desktop's 开始模拟会话 —
+    // the tap pushes the session action over the wire.
+    const actionFrames = socket.frames().filter((frame) => frame.action !== undefined);
+    expect(actionFrames).toEqual([{ t: 'control', action: 'start_session' }]);
   });
 
   test('switches to the AI 辅助 tab, persists it in the URL, and restores it on remount', () => {

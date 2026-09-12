@@ -52,6 +52,11 @@ export interface WsResult {
   state: WsConnectionState;
   /** Push the phone's session-level language mode to the desktop (SYNC-03). */
   sendLanguagePref: (pref: LanguagePref) => void;
+  /**
+   * Trigger a session lifecycle action on the desktop (SYNC-01 round-trip):
+   * 开始提词 is the same function as the desktop's 开始模拟会话.
+   */
+  sendSessionAction: (action: 'start_session' | 'stop_session') => void;
 }
 
 function send(socket: WebSocket, message: ClientMessage): void {
@@ -188,5 +193,14 @@ export function useWs(ticket: WsTicket | null): WsResult {
     send(socket, { t: 'control', language: pref });
   }, []);
 
-  return { events, state, sendLanguagePref };
+  const sendSessionAction = useCallback(
+    (action: 'start_session' | 'stop_session') => {
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WS_OPEN) return;
+      send(socket, { t: 'control', action });
+    },
+    [],
+  );
+
+  return { events, state, sendLanguagePref, sendSessionAction };
 }

@@ -61,7 +61,17 @@ export type ServerEvent =
 export type ClientMessage =
   | {
       t: 'control';
-      language: LanguagePref;
+      /**
+       * Session language mode the phone owns (SYNC-03). Omitted on
+       * action-only frames.
+       */
+      language?: LanguagePref;
+      /**
+       * Session lifecycle action the phone may trigger (SYNC-01 round-trip):
+       * 开始提词 starts the simulated session on the desktop, 暂停提词 stops
+       * it. Absent on mode-only frames.
+       */
+      action?: 'start_session' | 'stop_session';
     }
   | {
       t: 'resume';

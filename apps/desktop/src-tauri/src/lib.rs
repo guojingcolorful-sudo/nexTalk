@@ -91,13 +91,16 @@ pub fn run() {
             app.manage(state.clone());
 
             // LAN server (pairing WS + static H5, no-store). A bind failure
-            // must not take the desktop app down — log and continue.
+            // must not take the desktop app down — log and continue. The app
+            // handle lets a phone-initiated 开始模拟会话 reveal the dual window.
             let server_state = state.clone();
             let teleprompter_dist = lan::server::teleprompter_dist_path();
+            let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match tokio::net::TcpListener::bind(("0.0.0.0", LAN_PORT)).await {
                     Ok(listener) => {
-                        let router = lan::server::router(server_state, teleprompter_dist);
+                        let router =
+                            lan::server::router(server_state, teleprompter_dist, Some(app_handle));
                         if let Err(err) = axum::serve(listener, router).await {
                             eprintln!("[lan] server error: {err}");
                         }

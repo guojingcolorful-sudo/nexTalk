@@ -71,7 +71,7 @@ interface TeleprompterPageProps {
 }
 
 export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
-  const { events, state, sendLanguagePref } = useWs(ticket);
+  const { events, state, sendLanguagePref, sendSessionAction } = useWs(ticket);
   const [tab, setTab] = useState<PhoneTab>(readTabFromUrl);
   const [sessionActive, setSessionActive] = useState(false);
   const [languagePref, setLanguagePref] = useState<LanguagePref>('bilingual');
@@ -118,11 +118,16 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
     if (sessionActive) {
       deactivateWakeLock();
       setSessionActive(false);
+      // 暂停提词 pauses the phone's own display only — the desktop session
+      // keeps running (its lifecycle stays with the desktop 停止 control).
       return;
     }
     activateWakeLock();
     setSessionActive(true);
-  }, [sessionActive, activateWakeLock, deactivateWakeLock]);
+    // SYNC-01 round-trip (UAT-5): 开始提词 is the same function as the
+    // desktop's 开始模拟会话 — the desktop starts the sim and opens 扩展视图.
+    sendSessionAction('start_session');
+  }, [sessionActive, activateWakeLock, deactivateWakeLock, sendSessionAction]);
 
   const cycleLanguage = useCallback(() => {
     const next = nextLanguagePref(languagePref);
