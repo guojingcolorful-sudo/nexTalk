@@ -318,6 +318,26 @@ function formatLine(sample) {
   return `#${sample.index} ttfb=${sample.ttfb_ms}ms total=${sample.total_ms}ms status=${sample.status} bytes=${sample.bytes}`;
 }
 
+/**
+ * Origin + path with every query VALUE replaced by `<redacted>`. Several of
+ * the vendors this tool targets accept the key in the query string, and both
+ * sinks (stdout and OUTPUT.json) are routinely pasted into a transcript or
+ * committed as the experiment result — the module's "the value never appears
+ * in the output" promise has to hold for the URL too (WR-07).
+ */
+function redactUrl(href) {
+  let url;
+  try {
+    url = new URL(href);
+  } catch {
+    return '<unparseable url>';
+  }
+  const search = [...url.searchParams]
+    .map(([name]) => `${name}=<redacted>`)
+    .join('&');
+  return `${url.origin}${url.pathname}${search === '' ? '' : `?${search}`}`;
+}
+
 function formatStats(label, stats) {
   const value = (number) => (number === null ? 'n/a' : String(number));
   return `${label} min ${value(stats.min)}  p50 ${value(stats.p50)}  p95 ${value(stats.p95)}  max ${value(stats.max)}`;
@@ -349,7 +369,7 @@ async function main() {
     return;
   }
 
-  out(`endpoint: ${config.method} ${config.url}`);
+  out(`endpoint: ${config.method} ${redactUrl(config.url)}`);
   out(`runs:     ${config.runs}`);
   out(`auth:     ${config.hasKey ? `${config.authEnv} (set)` : 'none'}`);
   out(`body:     ${config.bodyLength} bytes`);
@@ -373,7 +393,7 @@ async function main() {
 
   const report = {
     config: {
-      url: config.url,
+      url: redactUrl(config.url),
       method: config.method,
       runs: config.runs,
       authEnv: config.hasKey ? config.authEnv : null,
