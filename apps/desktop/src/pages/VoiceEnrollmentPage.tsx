@@ -44,6 +44,20 @@ export default function VoiceEnrollmentPage() {
     setStep(2);
   }, [releaseMic]);
 
+  /** Leaves the recording step without finishing: release the device and stop
+   *  the countdown so it cannot advance a view the user has left (WR-05). */
+  const cancelRecording = useCallback(() => {
+    releaseMic();
+    setRecording(false);
+    remainingRef.current = MAX_SECONDS;
+    setRemaining(MAX_SECONDS);
+  }, [releaseMic]);
+
+  const handlePrev = useCallback(() => {
+    cancelRecording();
+    setStep((value) => Math.max(0, value - 1));
+  }, [cancelRecording]);
+
   useEffect(
     () => () => {
       releaseMic();
@@ -98,7 +112,7 @@ export default function VoiceEnrollmentPage() {
       steps={STEPS}
       current={step}
       onBack={() => navigate('/console')}
-      onPrev={() => setStep((value) => Math.max(0, value - 1))}
+      onPrev={handlePrev}
       actions={
         <NeobrutalismButton onClick={forwardAction} className="w-full">
           {step === 0 ? '下一步' : step === 1 ? (recording ? '停止录音' : '开始录音') : '完成'}
