@@ -4,7 +4,14 @@ import type { ServerEvent } from '@nextalk/protocol';
 
 export type TimelineItem =
   | { kind: 'context'; id: string; en?: string; zh?: string }
-  | { kind: 'strategy'; id: string; title: string; bullets: readonly string[] };
+  | {
+      kind: 'strategy';
+      id: string;
+      title: string;
+      bullets: readonly string[];
+      answerZh?: string;
+      answerEn?: string;
+    };
 
 /**
  * Maps the narrowed server events onto right-pane timeline nodes: every
@@ -20,7 +27,14 @@ export function toTimelineItems(events: readonly ServerEvent[]): TimelineItem[] 
         items.push({ kind: 'context', id: event.id, en: event.en, zh: event.zh });
       }
     } else if (event.t === 'strategy') {
-      items.push({ kind: 'strategy', id: event.id, title: event.title, bullets: event.bullets });
+      items.push({
+        kind: 'strategy',
+        id: event.id,
+        title: event.title,
+        bullets: event.bullets,
+        answerZh: event.answerZh,
+        answerEn: event.answerEn,
+      });
     }
   }
   return items;
@@ -61,6 +75,32 @@ export default function AiTimeline({ items }: { items: readonly TimelineItem[] }
                       <li key={`${item.id}-${index}`}>{bullet}</li>
                     ))}
                   </ul>
+                ) : null}
+                {item.answerZh || item.answerEn ? (
+                  <section
+                    aria-label="AI 智能回答"
+                    className="mt-2 space-y-1.5 border-t-2 border-dashed border-gray-300 pt-2"
+                  >
+                    <p className="text-[10px] font-bold uppercase text-gray-500">AI 智能回答</p>
+                    {item.answerZh ? (
+                      <div className="rounded-md border-2 border-black bg-spaceDark p-2">
+                        <p className="mb-0.5 text-[9px] font-bold uppercase text-gray-400">中文回答</p>
+                        <p className="whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white">
+                          {item.answerZh}
+                        </p>
+                      </div>
+                    ) : null}
+                    {item.answerEn ? (
+                      <div className="rounded-md border-2 border-black bg-spaceDark p-2">
+                        <p className="mb-0.5 text-[9px] font-bold uppercase text-gray-400">
+                          English answer
+                        </p>
+                        <p className="whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white">
+                          {item.answerEn}
+                        </p>
+                      </div>
+                    ) : null}
+                  </section>
                 ) : null}
               </section>
             </div>

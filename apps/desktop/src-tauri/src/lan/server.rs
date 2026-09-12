@@ -96,6 +96,12 @@ pub enum ServerEvent {
         title: String,
         #[serde(default)]
         bullets: Vec<String>,
+        /// The AI's bilingual suggested answer (UAT-8): absent when the
+        /// copilot has not produced one yet.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        answer_zh: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        answer_en: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Language { language: LanguagePref },
@@ -362,6 +368,8 @@ pub(crate) mod test_events {
                 "拆连表查询".into(),
                 "Redis 缓存层".into(),
             ],
+            answer_zh: Some("第一步，通过慢查询日志定位瓶颈。".into()),
+            answer_en: Some("First, use the slow query log to locate the bottleneck.".into()),
         }
     }
 }

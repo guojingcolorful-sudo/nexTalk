@@ -94,6 +94,8 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
                 .iter()
                 .map(|bullet| bullet.to_string())
                 .collect(),
+            answer_zh: Some(round.strategy.answer_zh.to_string()),
+            answer_en: Some(round.strategy.answer_en.to_string()),
         });
     }
 

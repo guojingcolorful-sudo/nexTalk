@@ -251,6 +251,8 @@ fn round_one_content_is_byte_exact() {
         round_id,
         title,
         bullets,
+        answer_zh,
+        answer_en,
     } = strategies(&events)[0]
     else {
         panic!("expected the r1 strategy card");
@@ -260,6 +262,10 @@ fn round_one_content_is_byte_exact() {
     assert_eq!(title.as_str(), "数据库优化");
     let expected: Vec<String> = r1.strategy.bullets.iter().map(|b| b.to_string()).collect();
     assert_eq!(bullets, &expected);
+    // UAT-8: the strategy carries the complete bilingual answer, not just
+    // the prompt outline.
+    assert_eq!(answer_zh.as_deref(), Some(r1.strategy.answer_zh));
+    assert_eq!(answer_en.as_deref(), Some(r1.strategy.answer_en));
 }
 
 #[test]

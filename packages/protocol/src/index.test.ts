@@ -85,6 +85,46 @@ describe('isServerEvent narrowing — invalid payloads rejected', () => {
   it('rejects a strategy with non-string bullets elements', () => {
     expect(isServerEvent({ t: 'strategy', id: 'st1', roundId: 'r1', title: 'x', bullets: ['a', 1] })).toBe(false);
   });
+
+  it('accepts a strategy carrying the bilingual AI answer (UAT-8)', () => {
+    expect(
+      isServerEvent({
+        t: 'strategy',
+        id: 'st1',
+        roundId: 'r1',
+        title: '数据库优化',
+        bullets: ['慢查询日志定位'],
+        answerZh: '第一步，通过慢查询日志定位瓶颈。',
+        answerEn: 'First, use the slow query log to locate the bottleneck.',
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a strategy with a non-string answerZh', () => {
+    expect(
+      isServerEvent({
+        t: 'strategy',
+        id: 'st1',
+        roundId: 'r1',
+        title: 'x',
+        bullets: ['a'],
+        answerZh: 42,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects a strategy with a non-string answerEn', () => {
+    expect(
+      isServerEvent({
+        t: 'strategy',
+        id: 'st1',
+        roundId: 'r1',
+        title: 'x',
+        bullets: ['a'],
+        answerEn: true,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('session identity marker (restart signal)', () => {

@@ -44,6 +44,13 @@ export type ServerEvent =
       roundId: string;
       title: string;
       bullets: string[];
+      /**
+       * The AI's bilingual suggested answer (UAT-8): a complete 中/EN answer
+       * to the interviewer's question. Absent while the copilot has not
+       * produced one yet.
+       */
+      answerZh?: string;
+      answerEn?: string;
     }
   | {
       t: 'status';
@@ -126,7 +133,9 @@ export function isServerEvent(x: unknown): x is ServerEvent {
         isString(x.roundId) &&
         isString(x.title) &&
         Array.isArray(x.bullets) &&
-        x.bullets.every(isString)
+        x.bullets.every(isString) &&
+        (x.answerZh === undefined || isString(x.answerZh)) &&
+        (x.answerEn === undefined || isString(x.answerEn))
       );
     case 'status':
       return isString(x.session) && SESSION_STATES.includes(x.session);

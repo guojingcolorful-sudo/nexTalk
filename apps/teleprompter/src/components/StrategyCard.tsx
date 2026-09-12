@@ -1,11 +1,14 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLightbulb } from '@fortawesome/free-solid-svg-icons';
+import { faLightbulb, faRobot } from '@fortawesome/free-solid-svg-icons';
 
 interface StrategyCardProps {
   title: string;
   bullets: string[];
   /** Round the strategy answers, shown as the card's context stamp. */
   roundId?: string;
+  /** The AI's bilingual suggested answer (UAT-8); hidden while absent. */
+  answerZh?: string;
+  answerEn?: string;
 }
 
 /**
@@ -13,8 +16,18 @@ interface StrategyCardProps {
  * Inventory): paper-white card, 4px black border and the yellow 6px hard
  * shadow that marks every AI surface. Text is rendered as React text nodes
  * only — inbound WS payloads are never interpreted as markup (T-01-12).
+ *
+ * UAT-8: under the strategy bullets the card carries the AI 智能回答 — a
+ * complete answer to the interviewer's question in both languages, so the
+ * user can read it out verbatim or adapt it.
  */
-export default function StrategyCard({ title, bullets, roundId }: StrategyCardProps) {
+export default function StrategyCard({
+  title,
+  bullets,
+  roundId,
+  answerZh,
+  answerEn,
+}: StrategyCardProps) {
   return (
     <article className="w-full rounded-xl border-4 border-black bg-white p-4 text-black shadow-[6px_6px_0_0_#fbf061]">
       <div className="flex items-center justify-between gap-2">
@@ -40,6 +53,38 @@ export default function StrategyCard({ title, bullets, roundId }: StrategyCardPr
           </li>
         ))}
       </ul>
+
+      {answerZh || answerEn ? (
+        <section
+          aria-label="AI 智能回答"
+          className="mt-3 space-y-2 border-t-4 border-dashed border-gray-300 pt-3"
+        >
+          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+            <FontAwesomeIcon icon={faRobot} aria-hidden="true" />
+            AI 智能回答
+          </p>
+          {answerZh ? (
+            <div className="rounded-lg border-2 border-black bg-spaceDark p-2.5">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                中文回答
+              </p>
+              <p className="whitespace-pre-wrap break-words text-[14px] font-semibold leading-relaxed text-white">
+                {answerZh}
+              </p>
+            </div>
+          ) : null}
+          {answerEn ? (
+            <div className="rounded-lg border-2 border-black bg-spaceDark p-2.5">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                English answer
+              </p>
+              <p className="whitespace-pre-wrap break-words text-[14px] font-semibold leading-relaxed text-white">
+                {answerEn}
+              </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </article>
   );
 }

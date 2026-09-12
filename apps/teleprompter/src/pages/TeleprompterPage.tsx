@@ -206,6 +206,8 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                     title={strategy.title}
                     bullets={strategy.bullets}
                     roundId={strategy.roundId}
+                    answerZh={strategy.answerZh}
+                    answerEn={strategy.answerEn}
                   />
                 ))
               )}
