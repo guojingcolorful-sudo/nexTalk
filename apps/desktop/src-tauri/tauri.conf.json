@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.nextalk.desktop",
   "build": {
-    "beforeDevCommand": "concurrently \"pnpm --filter @nextalk/desktop dev\" \"pnpm --filter @nextalk/teleprompter build --watch\"",
+    "beforeDevCommand": "pnpm -w exec concurrently \"pnpm --filter @nextalk/desktop dev\" \"pnpm --filter @nextalk/teleprompter build --watch\"",
     "beforeBuildCommand": "pnpm --filter @nextalk/desktop build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
