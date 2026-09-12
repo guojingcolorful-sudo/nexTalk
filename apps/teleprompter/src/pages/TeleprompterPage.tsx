@@ -172,6 +172,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                     speaker={subtitle.speaker}
                     zh={subtitle.zh}
                     en={subtitle.en}
+                    language={languagePref}
                   />
                 ))
               )}
