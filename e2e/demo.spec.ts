@@ -233,6 +233,60 @@ test.describe('console demo run', () => {
     await expect(page.getByRole('button', { name: '开始模拟会话' })).toBeEnabled();
   });
 
+  test('recreates the extended view after its window was closed (WR-08)', async ({ page }) => {
+    await page.goto('/#/console');
+    await waitForListeners(page);
+
+    // The dual window's own close control destroys it: the label is gone from
+    // the live window list, which is what getByLabel consults.
+    await page.evaluate(() => {
+      const internals = window.__TAURI_INTERNALS__ as {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+      const original = internals.invoke.bind(internals);
+      internals.invoke = (cmd, args = {}) =>
+        cmd === 'plugin:window|get_all_windows'
+          ? Promise.resolve(['console'])
+          : original(cmd, args);
+    });
+
+    await emit(page, 'session_status', { session: 'listening' });
+    await page.getByRole('button', { name: '扩展视图' }).click();
+
+    // 扩展视图 must bring it back, not silently do nothing.
+    await expect
+      .poll(async () => (await calls(page)).filter((call) => call.cmd === 'plugin:webview|create_webview_window'))
+      .toHaveLength(1);
+    const commands = await emittedCommands(page);
+    expect(commands).not.toContain('plugin:window|show'); // nothing to show
+    await expect(page.getByText('扩展视图打开失败')).toHaveCount(0);
+  });
+
+  test('surfaces a failed extended-view open instead of swallowing it (WR-08)', async ({ page }) => {
+    await page.goto('/#/console');
+    await waitForListeners(page);
+
+    await page.evaluate(() => {
+      const internals = window.__TAURI_INTERNALS__ as {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+      const original = internals.invoke.bind(internals);
+      internals.invoke = (cmd, args = {}) => {
+        if (cmd === 'plugin:window|get_all_windows') return Promise.resolve(['console']);
+        if (cmd === 'plugin:webview|create_webview_window') {
+          return Promise.reject(new Error('window creation failed'));
+        }
+        return original(cmd, args);
+      };
+    });
+
+    await emit(page, 'session_status', { session: 'listening' });
+    await page.getByRole('button', { name: '扩展视图' }).click();
+
+    await expect(page.getByText('扩展视图打开失败')).toBeVisible();
+    await expect(page.getByRole('button', { name: '重试' })).toBeVisible();
+  });
+
   test('shows the live phone count the desktop publishes', async ({ page }) => {
     await page.goto('/#/console');
     await waitForListeners(page);
