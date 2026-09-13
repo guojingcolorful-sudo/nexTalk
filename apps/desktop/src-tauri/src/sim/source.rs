@@ -74,14 +74,19 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
     events.push(ServerEvent::Status {
         session: SessionStatus::Listening,
     });
-    events.push(ServerEvent::Subtitle {
-        id: script::question_id(round_index),
-        speaker: Speaker::Interviewer,
-        seq: 1,
-        zh: Some(round.interviewer_zh.to_string()),
-        en: Some(round.interviewer_en.to_string()),
-        final_flag: true,
-    });
+    // UAT-11: the question opens the round after the lead-in — the session
+    // never starts mid-sentence, and the strategy lands only after the
+    // question has been fully read aloud.
+    if local_ms >= round.timing.question_at_ms {
+        events.push(ServerEvent::Subtitle {
+            id: script::question_id(round_index),
+            speaker: Speaker::Interviewer,
+            seq: 1,
+            zh: Some(round.interviewer_zh.to_string()),
+            en: Some(round.interviewer_en.to_string()),
+            final_flag: true,
+        });
+    }
 
     if local_ms >= round.timing.strategy_at_ms {
         events.push(ServerEvent::Strategy {

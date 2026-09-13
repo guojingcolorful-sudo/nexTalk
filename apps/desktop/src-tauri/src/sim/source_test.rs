@@ -110,14 +110,16 @@ fn script_state_is_deterministic_for_a_given_clock() {
     }
 
     // The same elapsed values chunked differently must produce the same
-    // sequence: the output depends only on the clock, never on the poll cadence.
+    // sequence: the output depends only on the clock, never on the poll
+    // cadence. 500ms steps divide every timing offset (question lead-in
+    // included), so the fine-grained poll lands on each milestone exactly.
     let mut coarse = SimSource::new();
     let coarse_events = coarse.poll(u64::MAX);
 
     let mut fine = SimSource::new();
     let mut fine_events = Vec::new();
-    for step in 0..=40u64 {
-        fine_events.extend(fine.poll(step * 1_000));
+    for step in 0..=136u64 {
+        fine_events.extend(fine.poll(step * 500));
     }
 
     assert_eq!(
@@ -320,20 +322,27 @@ fn interrupt_cuts_the_answer_and_opens_the_next_round_one_second_later() {
         "no round-2 content may leak in before t + 1s"
     );
 
+    // The new round opens with its listening status; the question follows its
+    // own lead-in (UAT-11: hear the transition, then the question).
+    let r2 = script::ROUNDS[1].timing;
     let resumed = sim.poll(r1.generating_at_ms + INTERRUPT_LEAD_MS);
-    assert_eq!(
-        subtitle_id(subtitle_at(&resumed, 0)),
-        "r2-q",
-        "round 2 opens exactly one second after the cut"
-    );
+    assert_eq!(statuses(&resumed), vec![SessionStatus::Listening]);
     assert!(
-        resumed.len() < 3,
-        "the new round starts at its first milestone only"
+        subtitles(&resumed).is_empty(),
+        "no question before its lead-in elapses"
+    );
+
+    let opened = sim.poll(r1.generating_at_ms + INTERRUPT_LEAD_MS + r2.question_at_ms);
+    assert_eq!(
+        subtitle_id(subtitle_at(&opened, 0)),
+        "r2-q",
+        "round 2's question opens exactly after the lead-in"
     );
 
     // The cut skipped r1's tail rather than replaying it: numbering continues.
     let mut all = played;
     all.extend(resumed);
+    all.extend(opened);
     assert_eq!(seqs(&all), vec![1, 2, 3]);
 }
 
@@ -414,8 +423,10 @@ fn repeat_replays_the_current_round_with_fresh_seq_and_ids() {
         "a replayed strategy card needs a fresh id"
     );
 
-    // Numbering keeps climbing: the next round's subtitle follows the replay.
-    let resumed = sim.poll(r1.end_at_ms);
+    // Numbering keeps climbing: the next round's subtitle follows the replay
+    // (UAT-11: after r2's question lead-in, the question itself).
+    let r2 = script::ROUNDS[1].timing;
+    let resumed = sim.poll(r1.end_at_ms + r2.question_at_ms);
     let next_seq = seqs(&resumed)[0];
     assert!(
         replay_seqs.iter().all(|seq| *seq < next_seq),

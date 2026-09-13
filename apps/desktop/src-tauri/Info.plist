@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Tauri merges this file into the app bundle's Info.plist.
+	     Without the microphone usage description macOS kills the process
+	     the moment getUserMedia is called (TCC requires the string even
+	     for apps that only read the mic briefly). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NexTalk 需要使用麦克风进行音色注册与语音识别。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>NexTalk 需要使用相机扫描配对二维码。</string>
+</dict>
+</plist>

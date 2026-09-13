@@ -196,7 +196,11 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
     // Live phone count (desktop-only telemetry): the console QR card flips
     // 等待扫码 → 已连接 N 台设备 off these emissions. It is NOT a ServerEvent,
     // so it never travels over the WS broadcast.
-    state.client_connected();
+    let clients = state.client_connected();
+    // Operational log: the dev session runs with a rotating pairing token, so
+    // "the phone shows nothing" is usually a stale scan — this line proves
+    // whether a phone actually reached the current app instance.
+    eprintln!("[lan] phone connected ({clients} total)");
 
     let (mut sender, mut receiver) = socket.split();
     let (tx_msgs, rx_msgs) = tokio::sync::mpsc::channel::<Message>(32);
@@ -255,20 +259,26 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
                         // the same function as 开始模拟会话 on the desktop —
                         // start the session and reveal the dual window.
                         match action {
-                            Some(ControlAction::StartSession) => match state.start_session() {
-                                Ok(epoch) => {
-                                    spawn_scheduler(state.clone(), epoch, RealClock::new());
-                                    if let Some(app) = &ctx.app {
-                                        if let Some(window) = app.get_webview_window("dual") {
-                                            let _ = window.show();
+                            Some(ControlAction::StartSession) => {
+                                eprintln!("[lan] phone requested start_session");
+                                match state.start_session() {
+                                    Ok(epoch) => {
+                                        spawn_scheduler(state.clone(), epoch, RealClock::new());
+                                        if let Some(app) = &ctx.app {
+                                            if let Some(window) = app.get_webview_window("dual") {
+                                                let _ = window.show();
+                                            }
                                         }
                                     }
+                                    Err(err) => {
+                                        eprintln!("[lan] phone start_session rejected: {err}")
+                                    }
                                 }
-                                Err(err) => {
-                                    eprintln!("[lan] phone start_session rejected: {err}")
-                                }
-                            },
-                            Some(ControlAction::StopSession) => state.stop_session(),
+                            }
+                            Some(ControlAction::StopSession) => {
+                                eprintln!("[lan] phone requested stop_session");
+                                state.stop_session()
+                            }
                             None => {}
                         }
                     }

@@ -24,13 +24,17 @@ pub enum Tone {
 /// Per-round wall-clock offsets, in milliseconds relative to the round's start.
 ///
 /// Phase mapping: listening = `[0, generating_at_ms)`, generating =
-/// `[generating_at_ms, end_at_ms)`. Offsets are strictly ordered (strategy <
-/// answer < generating < end).
+/// `[generating_at_ms, end_at_ms)`. Offsets are strictly ordered (question <
+/// strategy < answer < generating < end).
 #[derive(Debug, Clone, Copy)]
 pub struct Timing {
-    /// The strategy card lands while the interviewer's question is read.
+    /// The interviewer's question opens the round after this lead-in
+    /// (UAT-11: the session never starts mid-sentence).
+    pub question_at_ms: u64,
+    /// The strategy card lands only after the question has been fully read
+    /// aloud (UAT-11: hear the question first, then the AI thinks).
     pub strategy_at_ms: u64,
-    /// The user's answer starts streaming.
+    /// The user's answer starts streaming — after a deliberate thinking gap.
     pub answer_at_ms: u64,
     /// The cloned-voice render indicator turns on.
     pub generating_at_ms: u64,
@@ -90,10 +94,11 @@ pub const ROUNDS: [Round; 4] = [
             tone: Tone::AiStrategy,
         },
         timing: Timing {
-            strategy_at_ms: 2_500,
-            answer_at_ms: 6_000,
-            generating_at_ms: 6_500,
-            end_at_ms: 8_500,
+            question_at_ms: 1_500,
+            strategy_at_ms: 7_000,
+            answer_at_ms: 14_000,
+            generating_at_ms: 14_500,
+            end_at_ms: 17_000,
         },
     },
     // ---------------------------------------------------------------- r2 ---
@@ -113,10 +118,11 @@ pub const ROUNDS: [Round; 4] = [
             tone: Tone::AiStrategy,
         },
         timing: Timing {
-            strategy_at_ms: 2_200,
-            answer_at_ms: 5_200,
-            generating_at_ms: 5_600,
-            end_at_ms: 7_000,
+            question_at_ms: 1_500,
+            strategy_at_ms: 7_000,
+            answer_at_ms: 14_000,
+            generating_at_ms: 14_500,
+            end_at_ms: 17_000,
         },
     },
     // ---------------------------------------------------------------- r3 ---
@@ -136,10 +142,11 @@ pub const ROUNDS: [Round; 4] = [
             tone: Tone::AiStrategy,
         },
         timing: Timing {
-            strategy_at_ms: 2_600,
-            answer_at_ms: 6_400,
-            generating_at_ms: 6_900,
-            end_at_ms: 8_600,
+            question_at_ms: 1_500,
+            strategy_at_ms: 7_000,
+            answer_at_ms: 14_000,
+            generating_at_ms: 14_500,
+            end_at_ms: 17_000,
         },
     },
     // ---------------------------------------------------------------- r4 ---
@@ -159,10 +166,11 @@ pub const ROUNDS: [Round; 4] = [
             tone: Tone::AiStrategy,
         },
         timing: Timing {
-            strategy_at_ms: 2_400,
-            answer_at_ms: 5_800,
-            generating_at_ms: 6_200,
-            end_at_ms: 7_800,
+            question_at_ms: 1_500,
+            strategy_at_ms: 7_000,
+            answer_at_ms: 14_000,
+            generating_at_ms: 14_500,
+            end_at_ms: 17_000,
         },
     },
 ];
@@ -194,7 +202,7 @@ mod tests {
 
     #[test]
     fn total_duration_is_the_sum_of_every_round() {
-        assert_eq!(total_duration_ms(), 8_500 + 7_000 + 8_600 + 7_800);
+        assert_eq!(total_duration_ms(), 17_000 * 4);
     }
 
     #[test]

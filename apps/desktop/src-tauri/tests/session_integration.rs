@@ -288,8 +288,10 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         "no next-round content may leak in before the lead-in elapses"
     );
 
+    // UAT-11: the question follows its own lead-in after the cut.
+    let r2_timing = ROUNDS[1].timing;
     let r2 = state
-        .advance_sim_for(epoch, cut_at + INTERRUPT_LEAD_MS)
+        .advance_sim_for(epoch, cut_at + INTERRUPT_LEAD_MS + r2_timing.question_at_ms)
         .expect("the epoch is current");
     let r2_subtitles = subtitles_of(&r2);
     assert_eq!(
