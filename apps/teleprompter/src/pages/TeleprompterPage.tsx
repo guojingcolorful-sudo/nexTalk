@@ -117,17 +117,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // awaits its strategy card.
   const aiThinking = useMemo(() => isAiThinking(events), [events]);
 
-  // UAT-13: the scroll anchor is the LATEST ANSWER (never the stream end) —
-  // the newest question's answer stays visible at all times; until an answer
-  // exists, the newest subtitle is the anchor.
+  // UAT-13: the scroll anchor is the NEWEST subtitle — the latest question
+  // and then its answer each take the center as they arrive, and older
+  // content moves up in real time. Until a subtitle exists nothing anchors.
   const anchorRef = useRef<HTMLDivElement | null>(null);
-  const lastAnswer = useMemo(() => {
-    for (let i = subtitles.length - 1; i >= 0; i -= 1) {
-      if (subtitles[i].speaker === 'user') return subtitles[i].id;
-    }
-    return null;
-  }, [subtitles]);
-  const anchorId = lastAnswer ?? (subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null);
+  const anchorId = subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
 
   // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
   // when the desktop starts 开始模拟会话 on its own, the phone flips to the
