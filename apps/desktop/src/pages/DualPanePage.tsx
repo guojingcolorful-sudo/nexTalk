@@ -43,22 +43,30 @@ export default function DualPanePage() {
   const generating = status === 'generating';
   const listening = status === 'listening' || generating;
 
-  // UAT-9: the newest content of BOTH panes must stay in the MIDDLE of the
+  // UAT-9/13: the newest content of BOTH panes must stay in the MIDDLE of the
   // viewport, not at the bottom edge — the reader's eye never chases content
-  // and nothing is ever occluded. Each pane centers its newest item.
-  const lastBubbleRef = useRef<HTMLDivElement | null>(null);
+  // and nothing is ever occluded. The subtitle anchor is the LATEST ANSWER
+  // (it stays visible through the whole next round); until one exists, the
+  // newest subtitle anchors.
+  const anchorRef = useRef<HTMLDivElement | null>(null);
   const lastTimelineRef = useRef<HTMLDivElement | null>(null);
   // `.at(-1)` is Safari 15.4+; macOS 12.0-12.2 ships 15.0-15.3 (WR-06).
-  const lastSubtitleId =
-    subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
+  const lastAnswerId = useMemo(() => {
+    for (let i = subtitles.length - 1; i >= 0; i -= 1) {
+      if (subtitles[i].speaker === 'user') return subtitles[i].id;
+    }
+    return null;
+  }, [subtitles]);
+  const anchorId =
+    lastAnswerId ?? (subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null);
   const lastTimelineId =
     timelineItems.length > 0 ? timelineItems[timelineItems.length - 1].id : null;
   useEffect(() => {
-    if (lastSubtitleId === null) return;
+    if (anchorId === null) return;
     // Motion contract: follow new lines only; behavior 'auto' keeps the jump
     // unanimated.
-    lastBubbleRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [lastSubtitleId]);
+    anchorRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+  }, [anchorId]);
   useEffect(() => {
     if (lastTimelineId === null) return;
     lastTimelineRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
@@ -92,7 +100,7 @@ export default function DualPanePage() {
             {subtitles.map((subtitle, index) => (
               <div
                 key={subtitle.id}
-                ref={index === subtitles.length - 1 ? lastBubbleRef : null}
+                ref={subtitle.id === anchorId ? anchorRef : null}
               >
                 <ChatBubble
                   speaker={subtitle.speaker}

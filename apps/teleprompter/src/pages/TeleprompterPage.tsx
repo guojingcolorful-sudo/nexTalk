@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBrain, faClosedCaptioning } from '@fortawesome/free-solid-svg-icons';
 import type { LanguagePref, ServerEvent } from '@nextalk/protocol';
 import ChatBubble from '../components/ChatBubble';
@@ -97,7 +98,6 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   const [sessionActive, setSessionActive] = useState(false);
   const [languagePref, setLanguagePref] = useState<LanguagePref>('bilingual');
   const [toast, setToast] = useState<string | null>(null);
-  const streamEndRef = useRef<HTMLDivElement | null>(null);
 
   // SYNC-04: the 开始提词 tap is the gesture the wake lock needs on a plain
   // http:// LAN origin, so the hook is engaged from the same handler.
@@ -116,6 +116,18 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // UAT-12: the AI tab shows the thinking state while the newest question
   // awaits its strategy card.
   const aiThinking = useMemo(() => isAiThinking(events), [events]);
+
+  // UAT-13: the scroll anchor is the LATEST ANSWER (never the stream end) —
+  // the newest question's answer stays visible at all times; until an answer
+  // exists, the newest subtitle is the anchor.
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const lastAnswer = useMemo(() => {
+    for (let i = subtitles.length - 1; i >= 0; i -= 1) {
+      if (subtitles[i].speaker === 'user') return subtitles[i].id;
+    }
+    return null;
+  }, [subtitles]);
+  const anchorId = lastAnswer ?? (subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null);
 
   // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
   // when the desktop starts 开始模拟会话 on its own, the phone flips to the
@@ -180,10 +192,12 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   }, [languagePref, sendLanguagePref]);
 
   // Auto-scroll on new content only — no scroll listeners, no hijacking
-  // (UI-SPEC Motion Contract).
+  // (UI-SPEC Motion Contract). UAT-13: the anchor centers in the viewport —
+  // the latest answer never leaves the middle of the screen.
   useEffect(() => {
-    streamEndRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [subtitles.length, strategies.length, tab]);
+    if (anchorId === null) return;
+    anchorRef.current?.scrollIntoView?.({ block: 'center' });
+  }, [anchorId, subtitles.length, strategies.length, tab]);
 
   return (
     <div className="flex h-full justify-center">
@@ -197,90 +211,93 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
         <MobileTabs value={tab} onChange={changeTab} />
 
         <main className="flex-1 overflow-y-auto px-4 pt-3 pb-4">
-          {tab === 'subs' ? (
-            <section
-              id="panel-subs"
-              role="tabpanel"
-              aria-labelledby="tab-subs"
-              aria-live="polite"
-              className="flex flex-col gap-4"
-            >
-              {subtitles.length === 0 ? (
-                <EmptyState
-                  icon={faClosedCaptioning}
-                  tone="green"
-                  title="等待语音输入"
-                  body="模拟会话开始后，双语字幕将显示在这里"
-                  className="mt-12"
-                />
-              ) : (
-                subtitles.map((subtitle, index) => (
+          {/* UAT-13: both panels stay MOUNTED across tab switches (the
+              inactive one is display:none via the `hidden` class) — content
+              that already revealed itself never re-runs its animation. */}
+          <section
+            id="panel-subs"
+            role="tabpanel"
+            aria-labelledby="tab-subs"
+            aria-live="polite"
+            className={`flex flex-col gap-4 ${tab !== 'subs' ? 'hidden' : ''}`}
+          >
+            {subtitles.length === 0 ? (
+              <EmptyState
+                icon={faClosedCaptioning}
+                tone="green"
+                title="等待语音输入"
+                body="模拟会话开始后，双语字幕将显示在这里"
+                className="mt-12"
+              />
+            ) : (
+              subtitles.map((subtitle, index) => (
+                <div
+                  key={`${subtitle.id}-${subtitle.seq}`}
+                  ref={subtitle.id === anchorId ? anchorRef : null}
+                >
                   <ChatBubble
-                    key={`${subtitle.id}-${subtitle.seq}`}
                     speaker={subtitle.speaker}
                     zh={subtitle.zh}
                     en={subtitle.en}
                     language={languagePref}
                     instant={index < subtitles.length - 1}
                   />
-                ))
-              )}
-              {generating ? <TypewriterDots /> : null}
-            </section>
-          ) : (
-            <section
-              id="panel-ai"
-              role="tabpanel"
-              aria-labelledby="tab-ai"
-              aria-live="polite"
-              className="flex flex-col gap-4"
-            >
-              {strategies.length === 0 ? (
-                <EmptyState
-                  icon={faBrain}
-                  tone="yellow"
-                  title="AI 策略将自动生成"
-                  body="提问结束后，策略卡片会出现在这里"
-                  className="mt-12"
-                />
-              ) : (
-                strategies.map((strategy) => (
-                  <StrategyCard
-                    key={strategy.id}
-                    title={strategy.title}
-                    bullets={strategy.bullets}
-                    roundId={strategy.roundId}
-                    answerZh={strategy.answerZh}
-                    answerEn={strategy.answerEn}
-                  />
-                ))
-              )}
-              {aiThinking ? (
-                <div
-                  role="status"
-                  aria-label="AI 思考中"
-                  className="flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-[4px_4px_0_0_#fbf061]"
-                >
-                  <FontAwesomeIcon
-                    icon={faBrain}
-                    aria-hidden="true"
-                    className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
-                  />
-                  <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
-                  <span aria-hidden="true" className="flex items-center gap-1">
-                    {[0, 1, 2].map((dot) => (
-                      <span
-                        key={dot}
-                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
-                        style={{ animationDelay: `${dot * 150}ms` }}
-                      />
-                    ))}
-                  </span>
                 </div>
-              ) : null}
-            </section>
-          )}
-          <div ref={streamEndRef} aria-hidden="true" />
+              ))
+            )}
+            {generating ? <TypewriterDots /> : null}
+          </section>
+          <section
+            id="panel-ai"
+            role="tabpanel"
+            aria-labelledby="tab-ai"
+            aria-live="polite"
+            className={`flex flex-col gap-4 ${tab !== 'ai' ? 'hidden' : ''}`}
+          >
+            {strategies.length === 0 ? (
+              <EmptyState
+                icon={faBrain}
+                tone="yellow"
+                title="AI 策略将自动生成"
+                body="提问结束后，策略卡片会出现在这里"
+                className="mt-12"
+              />
+            ) : (
+              strategies.map((strategy) => (
+                <StrategyCard
+                  key={strategy.id}
+                  title={strategy.title}
+                  bullets={strategy.bullets}
+                  roundId={strategy.roundId}
+                  answerZh={strategy.answerZh}
+                  answerEn={strategy.answerEn}
+                />
+              ))
+            )}
+            {aiThinking ? (
+              <div
+                role="status"
+                aria-label="AI 思考中"
+                className="flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-[4px_4px_0_0_#fbf061]"
+              >
+                <FontAwesomeIcon
+                  icon={faBrain}
+                  aria-hidden="true"
+                  className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
+                />
+                <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
+                <span aria-hidden="true" className="flex items-center gap-1">
+                  {[0, 1, 2].map((dot) => (
+                    <span
+                      key={dot}
+                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
+                      style={{ animationDelay: `${dot * 150}ms` }}
+                    />
+                  ))}
+                </span>
+              </div>
+            ) : null}
+          </section>
         </main>
 
         <GateScreen

@@ -181,6 +181,41 @@ describe('TeleprompterPage', () => {
     );
   });
 
+  test('keeps AI cards mounted across tab switches — revealed content never re-reveals (UAT-13)', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+      socket.emit({
+        t: 'strategy',
+        id: 's-r1',
+        roundId: 'r1',
+        title: '数据库优化',
+        bullets: ['慢查询日志定位'],
+      });
+    });
+
+    act(() => {
+      screen.getByRole('tab', { name: 'AI 辅助' }).click();
+    });
+
+    const card = screen.getByText('数据库优化').closest('article');
+    expect(card).not.toBeNull();
+
+    act(() => {
+      screen.getByRole('tab', { name: '字幕' }).click();
+    });
+    act(() => {
+      screen.getByRole('tab', { name: 'AI 辅助' }).click();
+    });
+
+    // The SAME DOM node is still mounted — the reveal animation never
+    // restarts on a tab round-trip.
+    expect(card?.isConnected).toBe(true);
+    expect(screen.getByText('数据库优化').closest('article')).toBe(card);
+  });
+
   test('renders a validated subtitle frame and drops malformed ones', () => {
     render(<App />);
     const socket = currentSocket();
