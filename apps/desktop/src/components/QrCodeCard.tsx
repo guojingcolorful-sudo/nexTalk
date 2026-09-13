@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faQrcode } from '@fortawesome/free-solid-svg-icons';
+import { faMobileScreen, faQrcode } from '@fortawesome/free-solid-svg-icons';
 import QRCode from 'qrcode';
 import ErrorBanner from './ErrorBanner';
 import NeobrutalismButton from './NeobrutalismButton';
@@ -60,15 +60,27 @@ export default function QrCodeCard() {
       aria-label="同步手机"
       className="flex flex-col items-center rounded-xl border-4 border-portalGreen bg-darkerSpace p-4"
     >
-      <div className="mb-3 h-[152px] w-[152px] overflow-hidden rounded-xl border-4 border-black bg-white">
-        {dataUrl ? (
-          <img src={dataUrl} width={144} height={144} alt="手机配对二维码" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <FontAwesomeIcon icon={faQrcode} className="text-6xl text-black" />
-          </div>
-        )}
-      </div>
+      {connected ? (
+        <div
+          aria-live="polite"
+          className="mb-3 flex h-[152px] w-[152px] flex-col items-center justify-center gap-2 rounded-xl border-4 border-black bg-spaceDark"
+        >
+          <FontAwesomeIcon icon={faMobileScreen} className="text-5xl text-portalGreen" aria-hidden="true" />
+          <p className="text-xs font-bold text-portalGreen">
+            已连接 {phoneCount} 台设备
+          </p>
+        </div>
+      ) : (
+        <div className="mb-3 h-[152px] w-[152px] overflow-hidden rounded-xl border-4 border-black bg-white">
+          {dataUrl ? (
+            <img src={dataUrl} width={144} height={144} alt="手机配对二维码" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <FontAwesomeIcon icon={faQrcode} className="text-6xl text-black" />
+            </div>
+          )}
+        </div>
+      )}
 
       {failed ? (
         <ErrorBanner
@@ -84,17 +96,18 @@ export default function QrCodeCard() {
         />
       ) : (
         <>
-          <p className="text-[10px] font-bold text-gray-400">扫码开启手机跨端辅助展示</p>
-          <p
-            aria-live="polite"
-            className="mt-2 inline-flex items-center gap-1 rounded-full border-2 border-black bg-spaceDark px-2 py-0.5 text-[10px] font-bold text-gray-400"
-          >
-            <span
-              aria-hidden="true"
-              className={`h-2 w-2 rounded-full ${connected ? 'bg-portalGreen' : 'bg-gray-500'}`}
-            />
-            {connected ? `已连接 ${phoneCount} 台设备` : '等待扫码'}
+          <p className="text-[10px] font-bold text-gray-400">
+            {connected ? '手机已接入，二维码已收起' : '扫码开启手机跨端辅助展示'}
           </p>
+          {!connected ? (
+            <p
+              aria-live="polite"
+              className="mt-2 inline-flex items-center gap-1 rounded-full border-2 border-black bg-spaceDark px-2 py-0.5 text-[10px] font-bold text-gray-400"
+            >
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-gray-500" />
+              等待扫码
+            </p>
+          ) : null}
         </>
       )}
     </section>

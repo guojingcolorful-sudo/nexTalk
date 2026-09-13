@@ -151,8 +151,19 @@ export default function VoiceEnrollmentPage() {
           >
             {formatCountdown(recording ? remaining : MAX_SECONDS)}
           </p>
+          <section
+            aria-label="示例句子"
+            className="rounded-xl border-4 border-black bg-spaceDark p-3"
+          >
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+              示例句子
+            </p>
+            <p className="text-[14px] font-semibold leading-relaxed text-white">
+              {MOCK_VOICE_READING_TEXT}
+            </p>
+          </section>
           <p className="text-[13px] leading-relaxed text-gray-400">
-            {recording ? '正在录音，朗读到 1 分钟以上再停止。' : '点击开始录音，授权麦克风后开始。'}
+            {recording ? '正在录音，按自然语速朗读示例句子，读满 1 分钟以上再停止。' : '点击开始录音，授权麦克风后开始。'}
           </p>
           {micError ? (
             <ErrorBanner

@@ -1,3 +1,4 @@
+import type { Ref } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRobot, faUserTie } from '@fortawesome/free-solid-svg-icons';
 import type { ServerEvent } from '@nextalk/protocol';
@@ -55,14 +56,22 @@ const NODE_CLASS = 'z-10 flex h-6 w-6 shrink-0 items-center justify-center round
  * timeline only, so the draft card renders once a draft event exists
  * (tracked in the plan summary, not fabricated here).
  */
-export default function AiTimeline({ items }: { items: readonly TimelineItem[] }) {
+export default function AiTimeline({
+  items,
+  lastItemRef,
+}: {
+  items: readonly TimelineItem[];
+  /** Attached to the newest item so the pane can center it (UAT-9). */
+  lastItemRef?: Ref<HTMLDivElement>;
+}) {
   return (
     <div className="relative flex flex-col gap-4">
       <div aria-hidden="true" className="absolute left-[11px] top-0 h-full w-1 bg-gray-700" />
-      {items.map((item) => {
+      {items.map((item, index) => {
+        const isLast = index === items.length - 1;
         if (item.kind === 'strategy') {
           return (
-            <div key={item.id} className="flex items-start gap-3">
+            <div key={item.id} ref={isLast ? lastItemRef : null} className="flex items-start gap-3">
               <div aria-hidden="true" className={`${NODE_CLASS} bg-portalGreen text-black`}>
                 <FontAwesomeIcon icon={faRobot} className="text-[10px]" />
               </div>
@@ -114,7 +123,7 @@ export default function AiTimeline({ items }: { items: readonly TimelineItem[] }
         if (primary === undefined) return null;
 
         return (
-          <div key={item.id} className="flex items-start gap-3">
+          <div key={item.id} ref={isLast ? lastItemRef : null} className="flex items-start gap-3">
             <div aria-hidden="true" className={`${NODE_CLASS} bg-slate-600 text-white`}>
               <FontAwesomeIcon icon={faUserTie} className="text-[10px]" />
             </div>

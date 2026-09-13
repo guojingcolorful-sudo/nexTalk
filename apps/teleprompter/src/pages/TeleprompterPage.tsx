@@ -93,6 +93,23 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   );
   const generating = useMemo(() => isGenerating(events), [events]);
 
+  // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
+  // when the desktop starts 开始模拟会话 on its own, the phone flips to the
+  // live state too (and an ended session flips it back).
+  const liveSession = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      if (event.t === 'status') {
+        return event.session === 'listening' || event.session === 'generating';
+      }
+    }
+    return false;
+  }, [events]);
+
+  useEffect(() => {
+    setSessionActive(liveSession);
+  }, [liveSession]);
+
   // WR-03: the desktop echoes the applied mode back on the same stream, so
   // that echo — not the local optimistic guess — is the source of truth. A
   // reload, a wake-from-sleep or a second phone otherwise renders a mode the
@@ -117,9 +134,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   const toggleSession = useCallback(() => {
     if (sessionActive) {
       deactivateWakeLock();
+      // UAT-5 bidirectional: 暂停提词 is the same function as the desktop's
+      // 停止 — the session ends everywhere (the desktop status event flips
+      // this gate back).
       setSessionActive(false);
-      // 暂停提词 pauses the phone's own display only — the desktop session
-      // keeps running (its lifecycle stays with the desktop 停止 control).
+      sendSessionAction('stop_session');
       return;
     }
     activateWakeLock();

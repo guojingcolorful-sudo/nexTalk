@@ -199,25 +199,23 @@ test.describe('console demo run', () => {
     await emit(page, 'session_status', { session: 'listening' });
     await expect(page.getByRole('button', { name: '会话进行中' })).toBeDisabled();
     await expect(dualButton).toBeEnabled();
-    // UAT-7: 打断/重听 are live through the whole active session, from the
-    // question phase on — gating them to the brief generating window made
-    // them invisible in the demo.
-    await expect(page.getByRole('button', { name: '打断' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: '重听' })).toBeEnabled();
+    // UAT-7 final: a live conversation has no 打断/重听 — the controls are
+    // gone from the product (the sim engine keeps its internal replay
+    // machinery for the 复盘 surface in a later phase).
+    await expect(page.getByRole('button', { name: '打断' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '重听' })).toHaveCount(0);
 
     await dualButton.click();
     await expect
       .poll(async () => (await calls(page)).filter((call) => call.cmd === 'plugin:window|show'))
       .toEqual([{ cmd: 'plugin:window|show', args: { label: 'dual' } }]);
 
-    // The answer is generating: the mic pill state moves and 打断/重听 unlock.
+    // The answer is generating: the mic pill state moves, no extra controls.
     await emit(page, 'session_status', { session: 'generating' });
     await expect(page.getByRole('button', { name: '回答生成中' })).toBeDisabled();
-    await page.getByRole('button', { name: '打断' }).click();
-    await page.getByRole('button', { name: '重听' }).click();
     const afterControls = await emittedCommands(page);
-    expect(afterControls).toContain('interrupt');
-    expect(afterControls).toContain('repeat');
+    expect(afterControls).not.toContain('interrupt');
+    expect(afterControls).not.toContain('repeat');
 
     // 停止 is destructive: it goes through the locked confirmation first.
     await page.getByRole('button', { name: '停止', exact: true }).click();
@@ -338,20 +336,19 @@ test.describe('dual pane demo run', () => {
     await expect(ai).toContainText('数据库优化');
     await expect(page.getByRole('status', { name: '正在生成' })).toBeVisible();
 
-    // 打断 cuts the answer and the next round opens.
-    const interrupt = page.getByRole('button', { name: '打断' });
-    const repeat = page.getByRole('button', { name: '重听' });
-    await expect(interrupt).toBeEnabled();
-    await interrupt.click();
+    // UAT-7 final: a live conversation has no 打断/重听 controls — the
+    // buttons are gone from the extended view too.
+    await expect(page.getByRole('button', { name: '打断' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '重听' })).toHaveCount(0);
+
+    // The next round opens on the same stream.
     await emit(page, 'session', R2_QUESTION_EVENT);
     await expect(subtitles).toContainText(R2_EN);
 
-    // 重听 replays the round under a fresh id — a new bubble, not a duplicate.
-    await repeat.click();
+    // A replayed round carries a fresh id (`-r{n}`) — a new bubble, never a
+    // duplicate; the renderer keys by id so both lines coexist.
     await emit(page, 'session', R2_REPLAY_EVENT);
     await expect(subtitles.getByText(R2_EN)).toHaveCount(2);
-    expect(await emittedCommands(page)).toContain('interrupt');
-    expect(await emittedCommands(page)).toContain('repeat');
 
     // SYNC-03: the phone applies all-en; the desktop follows on the same
     // stream and every untouched bubble drops its Chinese line — including the
@@ -367,6 +364,5 @@ test.describe('dual pane demo run', () => {
     await emit(page, 'session_status', { session: 'ended' });
     await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
     await expect(page.getByRole('status', { name: '正在生成' })).toHaveCount(0);
-    await expect(interrupt).toHaveCount(0);
   });
 });

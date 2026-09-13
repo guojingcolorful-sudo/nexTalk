@@ -128,6 +128,38 @@ describe('TeleprompterPage', () => {
     expect(actionFrames).toEqual([{ t: 'control', action: 'start_session' }]);
   });
 
+  test('a live status from the desktop flips the gate to 暂停提词 (UAT-5 bidirectional)', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    // The desktop starts the session on its own — the phone follows.
+    act(() => {
+      socket.accept();
+      socket.emit({ t: 'status', session: 'listening' });
+    });
+
+    expect(screen.getByRole('button', { name: '暂停提词' })).toBeTruthy();
+  });
+
+  test('暂停提词 pushes stop_session to the desktop (UAT-5 bidirectional)', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+      screen.getByRole('button', { name: '开始提词' }).click();
+    });
+    act(() => {
+      screen.getByRole('button', { name: '暂停提词' }).click();
+    });
+
+    const actionFrames = socket.frames().filter((frame) => frame.action !== undefined);
+    expect(actionFrames).toEqual([
+      { t: 'control', action: 'start_session' },
+      { t: 'control', action: 'stop_session' },
+    ]);
+  });
+
   test('switches to the AI 辅助 tab, persists it in the URL, and restores it on remount', () => {
     const first = render(<App />);
 

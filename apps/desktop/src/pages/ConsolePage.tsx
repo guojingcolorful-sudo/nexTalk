@@ -6,10 +6,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBook,
   faFilePdf,
-  faForwardStep,
   faMicrophone,
   faRotate,
-  faRotateLeft,
   faWaveSquare,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from '../components/ConfirmModal';
@@ -55,13 +53,6 @@ export default function ConsolePage() {
     invoke('start_session').catch((err) => {
       console.error('start_session failed', err);
       setStartFailed(true);
-    });
-  };
-
-  const control = (command: 'interrupt' | 'repeat') => {
-    invoke(command).catch((err) => {
-      // The phase moved on between the click and the command — nothing to do.
-      console.error(`${command} failed`, err);
     });
   };
 
@@ -179,43 +170,19 @@ export default function ConsolePage() {
 
       <footer className="shrink-0 space-y-2 border-t-4 border-black bg-spaceDark p-3">
         {active ? (
-          <>
-            <div className="flex gap-2">
-              <NeobrutalismButton
-                variant="green"
-                className="flex-1"
-                disabled
-                title="会话已开始，停止后可重新开始"
-              >
-                {generating ? '回答生成中' : '会话进行中'}
-              </NeobrutalismButton>
-              <NeobrutalismButton variant="red" onClick={() => setConfirmStop(true)}>
-                停止
-              </NeobrutalismButton>
-            </div>
-            <div className="flex gap-2">
-              <NeobrutalismButton
-                variant="paper"
-                size="sm"
-                className="flex-1"
-                title="跳到下一轮"
-                onClick={() => control('interrupt')}
-              >
-                <FontAwesomeIcon icon={faForwardStep} aria-hidden="true" />
-                打断
-              </NeobrutalismButton>
-              <NeobrutalismButton
-                variant="paper"
-                size="sm"
-                className="flex-1"
-                title="重播当前轮"
-                onClick={() => control('repeat')}
-              >
-                <FontAwesomeIcon icon={faRotateLeft} aria-hidden="true" />
-                重听
-              </NeobrutalismButton>
-            </div>
-          </>
+          <div className="flex gap-2">
+            <NeobrutalismButton
+              variant="green"
+              className="flex-1"
+              disabled
+              title="会话已开始，停止后可重新开始"
+            >
+              {generating ? '回答生成中' : '会话进行中'}
+            </NeobrutalismButton>
+            <NeobrutalismButton variant="red" onClick={() => setConfirmStop(true)}>
+              停止
+            </NeobrutalismButton>
+          </div>
         ) : (
           <NeobrutalismButton variant="green" className="w-full" onClick={startSession}>
             开始模拟会话

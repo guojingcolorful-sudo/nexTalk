@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBolt,
   faBrain,
   faClosedCaptioning,
-  faForwardStep,
   faLightbulb,
-  faRotateLeft,
 } from '@fortawesome/free-solid-svg-icons';
 import type { ServerEvent } from '@nextalk/protocol';
 import AiTimeline, { toTimelineItems } from '../components/AiTimeline';
@@ -15,7 +12,6 @@ import ChatBubble from '../components/ChatBubble';
 import EmptyState from '../components/EmptyState';
 import HeaderBar from '../components/HeaderBar';
 import MicStatusPill from '../components/MicStatusPill';
-import NeobrutalismButton from '../components/NeobrutalismButton';
 import PanelHeader from '../components/PanelHeader';
 import TypewriterDots from '../components/TypewriterDots';
 import { useTauriEvents } from '../hooks/useTauriEvents';
@@ -31,9 +27,6 @@ type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
  * reach React state), so a malformed payload renders nothing here. Per-bubble
  * language choice is local UI state; the session mode the phone applies
  * (SYNC-03) arrives on the same stream and seeds every untouched bubble.
- *
- * 打断 / 重听 (D-03) only exist while an answer is generating — outside that
- * phase the commands are rejected server-side, so the buttons do not offer it.
  */
 export default function DualPanePage() {
   const { events, status, languageMode } = useTauriEvents();
@@ -47,23 +40,26 @@ export default function DualPanePage() {
   const generating = status === 'generating';
   const listening = status === 'listening' || generating;
 
-  const control = (command: 'interrupt' | 'repeat') => {
-    invoke(command).catch((err) => {
-      // The phase moved on between the click and the command — nothing to do.
-      console.error(`${command} failed`, err);
-    });
-  };
-
-  const streamEndRef = useRef<HTMLDivElement>(null);
+  // UAT-9: the newest content of BOTH panes must stay in the MIDDLE of the
+  // viewport, not at the bottom edge — the reader's eye never chases content
+  // and nothing is ever occluded. Each pane centers its newest item.
+  const lastBubbleRef = useRef<HTMLDivElement | null>(null);
+  const lastTimelineRef = useRef<HTMLDivElement | null>(null);
   // `.at(-1)` is Safari 15.4+; macOS 12.0-12.2 ships 15.0-15.3 (WR-06).
   const lastSubtitleId =
     subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
+  const lastTimelineId =
+    timelineItems.length > 0 ? timelineItems[timelineItems.length - 1].id : null;
   useEffect(() => {
     if (lastSubtitleId === null) return;
-    // Motion contract: follow new lines only, block: 'nearest' + behavior
-    // 'auto' so the jump is never animated.
-    streamEndRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    // Motion contract: follow new lines only; behavior 'auto' keeps the jump
+    // unanimated.
+    lastBubbleRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
   }, [lastSubtitleId]);
+  useEffect(() => {
+    if (lastTimelineId === null) return;
+    lastTimelineRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+  }, [lastTimelineId]);
 
   return (
     <div className="dot-matrix-root flex h-full w-full flex-col overflow-hidden rounded-3xl border-4 border-black shadow-cartoon-blue">
@@ -74,28 +70,6 @@ export default function DualPanePage() {
           listening ? (
             <div className="flex items-center gap-2">
               <MicStatusPill />
-              <div className="flex gap-1">
-                <NeobrutalismButton
-                  variant="paper"
-                  size="sm"
-                  disabled={!generating}
-                  title={generating ? undefined : '回答生成中才可打断'}
-                  onClick={() => control('interrupt')}
-                >
-                  <FontAwesomeIcon icon={faForwardStep} aria-hidden="true" />
-                  打断
-                </NeobrutalismButton>
-                <NeobrutalismButton
-                  variant="paper"
-                  size="sm"
-                  disabled={!generating}
-                  title={generating ? undefined : '回答生成中才可重听'}
-                  onClick={() => control('repeat')}
-                >
-                  <FontAwesomeIcon icon={faRotateLeft} aria-hidden="true" />
-                  重听
-                </NeobrutalismButton>
-              </div>
             </div>
           ) : null
         }
@@ -112,14 +86,18 @@ export default function DualPanePage() {
             className="flex flex-1 flex-col gap-6 overflow-y-auto p-4"
             data-testid="subtitle-stream"
           >
-            {subtitles.map((subtitle) => (
-              <ChatBubble
+            {subtitles.map((subtitle, index) => (
+              <div
                 key={subtitle.id}
-                speaker={subtitle.speaker}
-                zh={subtitle.zh}
-                en={subtitle.en}
-                mode={languageMode}
-              />
+                ref={index === subtitles.length - 1 ? lastBubbleRef : null}
+              >
+                <ChatBubble
+                  speaker={subtitle.speaker}
+                  zh={subtitle.zh}
+                  en={subtitle.en}
+                  mode={languageMode}
+                />
+              </div>
             ))}
             {generating ? <TypewriterDots /> : null}
             {subtitles.length === 0 ? (
@@ -129,7 +107,6 @@ export default function DualPanePage() {
                 body="模拟会话开始后，双语字幕将显示在这里"
               />
             ) : null}
-            <div ref={streamEndRef} />
           </div>
         </section>
 
@@ -154,7 +131,7 @@ export default function DualPanePage() {
             data-testid="ai-timeline"
           >
             {timelineItems.length > 0 ? (
-              <AiTimeline items={timelineItems} />
+              <AiTimeline items={timelineItems} lastItemRef={lastTimelineRef} />
             ) : (
               <EmptyState
                 icon={faLightbulb}
