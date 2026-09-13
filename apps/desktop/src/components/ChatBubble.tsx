@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faMicrophone, faUserTie } from '@fortawesome/free-solid-svg-icons';
 import type { LanguagePref, Speaker } from '@nextalk/protocol';
+import { useTypewriter } from '../hooks/useTypewriter';
 import LanguageToggle from './LanguageToggle';
 
 /**
@@ -66,6 +67,10 @@ export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleP
     secondary = undefined;
   }
   if (primary === undefined) return null;
+  // UAT-10: the desktop teleprompters like the phone — the primary line
+  // types out character by character (40ms/char, instant under reduced
+  // motion); the subline stays instant so it never lags behind.
+  const typedPrimary = useTypewriter(primary);
 
   return (
     <div className={`flex w-[95%] flex-col gap-1 ${isUser ? 'self-end' : ''}`}>
@@ -80,13 +85,13 @@ export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleP
       </div>
 
       <p
-        className={`rounded-xl border-2 p-3 text-[15px] text-white ${
+        className={`min-h-[1.5em] rounded-xl border-2 p-3 text-[15px] text-white ${
           isUser
             ? 'rounded-tr-none border-portalGreen bg-green-900 text-right font-bold shadow-[2px_2px_0_0_#97ce4c]'
             : 'rounded-tl-none border-gray-600 bg-slate-800 font-semibold'
         }`}
       >
-        {primary}
+        {typedPrimary}
       </p>
 
       {secondary !== undefined ? (

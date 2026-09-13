@@ -2,6 +2,16 @@ import type { Ref } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRobot, faUserTie } from '@fortawesome/free-solid-svg-icons';
 import type { ServerEvent } from '@nextalk/protocol';
+import { useTypewriter } from '../hooks/useTypewriter';
+
+/**
+ * TypedLine — one line revealed character by character (UAT-10, the desktop
+ * port of the phone's typing; 40ms/char, instant under reduced motion).
+ */
+function TypedLine({ text, className }: { text: string; className?: string }) {
+  const shown = useTypewriter(text);
+  return <p className={className}>{shown}</p>;
+}
 
 export type TimelineItem =
   | { kind: 'context'; id: string; en?: string; zh?: string }
@@ -94,9 +104,11 @@ export default function AiTimeline({
                     {item.answerZh ? (
                       <div className="rounded-md border-2 border-black bg-spaceDark p-2">
                         <p className="mb-0.5 text-[9px] font-bold uppercase text-gray-400">中文回答</p>
-                        <p className="whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white">
-                          {item.answerZh}
-                        </p>
+                        <TypedLine
+                          key={`${item.id}-zh`}
+                          text={item.answerZh}
+                          className="min-h-[1.5em] whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white"
+                        />
                       </div>
                     ) : null}
                     {item.answerEn ? (
@@ -104,9 +116,11 @@ export default function AiTimeline({
                         <p className="mb-0.5 text-[9px] font-bold uppercase text-gray-400">
                           English answer
                         </p>
-                        <p className="whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white">
-                          {item.answerEn}
-                        </p>
+                        <TypedLine
+                          key={`${item.id}-en`}
+                          text={item.answerEn}
+                          className="min-h-[1.5em] whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white"
+                        />
                       </div>
                     ) : null}
                   </section>
@@ -128,7 +142,11 @@ export default function AiTimeline({
               <FontAwesomeIcon icon={faUserTie} className="text-[10px]" />
             </div>
             <section className="w-full rounded-xl border-2 border-black bg-slate-800 p-3 text-sm shadow-cartoon-black">
-              <span className="mb-1 block font-bold text-white">{primary}</span>
+              <TypedLine
+                key={`${item.id}-primary`}
+                text={primary}
+                className="mb-1 block min-h-[1.5em] font-bold text-white"
+              />
               {secondary !== undefined ? (
                 <span className="block text-xs text-gray-400">{secondary}</span>
               ) : null}
