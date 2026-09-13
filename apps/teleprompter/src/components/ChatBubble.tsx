@@ -46,16 +46,22 @@ export default function ChatBubble({ speaker, zh, en, language }: ChatBubbleProp
   const zhText = present(zh);
   const enText = present(en);
 
-  // The mode the phone owns (SYNC-03) drives the primary line; when the
-  // requested language has not arrived in this subtitle, fall back to the
-  // other one — the bubble never renders empty.
+  // The mode the phone owns (SYNC-03) FILTERS the bubble (UAT-4): 中 shows
+  // the Chinese line only, EN the English line only, EN+中 both with the
+  // spoken language as the primary. When the requested language has not
+  // arrived in this subtitle, fall back to the other — never render empty.
   let primary: string | undefined;
-  if (language === 'all-zh') primary = zhText ?? enText;
-  else if (language === 'all-en') primary = enText ?? zhText;
-  else primary = (isUser ? zhText : enText) ?? (isUser ? enText : zhText);
+  let subline: string | undefined;
+  if (language === 'all-zh') {
+    primary = zhText ?? enText;
+  } else if (language === 'all-en') {
+    primary = enText ?? zhText;
+  } else {
+    primary = (isUser ? zhText : enText) ?? (isUser ? enText : zhText);
+    subline = primary === zhText ? enText : zhText;
+  }
 
   if (primary === undefined) return null;
-  const subline = primary === zhText ? enText : zhText;
 
   return (
     <article

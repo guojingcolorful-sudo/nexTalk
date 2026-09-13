@@ -195,24 +195,36 @@ describe('TeleprompterPage', () => {
     expect(screen.queryByText('不应渲染')).toBeNull();
   });
 
-  test('the bubble primary line follows the session language mode (UAT-4)', () => {
+  test('the bubble filters to the session language mode (UAT-4)', () => {
     render(<App />);
     const socket = currentSocket();
 
     act(() => {
       socket.accept();
-      socket.emit(SUBTITLE); // interviewer: the spoken language is EN
+      socket.emit(SUBTITLE); // interviewer: both languages present on the wire
       socket.emit({ t: 'language', language: 'all-zh' });
     });
 
-    // With the mode on 中 the interviewer's bubble leads with the Chinese
-    // line as the 15px primary and tucks the English original under it.
-    const bubble = screen.getByRole('article', { name: '面试官' });
-    const lines = bubble.querySelectorAll('p');
-    expect(lines[0]?.textContent).toBe(SUBTITLE.zh);
-    expect(lines[0]?.className).toContain('text-[15px]');
-    expect(lines[1]?.textContent).toBe(SUBTITLE.en);
-    expect(lines[1]?.className).toContain('text-[12px]');
+    // 中: only the Chinese line renders — the English original is filtered
+    // out, not reordered under it.
+    expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
+    expect(screen.queryByText(SUBTITLE.en)).toBeNull();
+
+    act(() => {
+      socket.emit({ t: 'language', language: 'all-en' });
+    });
+
+    // EN: only the English line renders.
+    expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(screen.queryByText(SUBTITLE.zh)).toBeNull();
+
+    act(() => {
+      socket.emit({ t: 'language', language: 'bilingual' });
+    });
+
+    // EN+中: both lines render.
+    expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
   });
 
   test('开始提词 engages the stay-awake fallback on a plain http LAN origin', () => {
