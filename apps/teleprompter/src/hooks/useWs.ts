@@ -50,6 +50,12 @@ export interface WsResult {
   /** Events that passed the isServerEvent gate, in arrival order, deduped. */
   events: ServerEvent[];
   state: WsConnectionState;
+  /**
+   * True once the reconnect ladder has failed repeatedly (attempt ≥ 3) —
+   * usually a pairing token the desktop rotated on restart. The page shows
+   * the re-scan guidance instead of retrying silently forever.
+   */
+  stale: boolean;
   /** Push the phone's session-level language mode to the desktop (SYNC-03). */
   sendLanguagePref: (pref: LanguagePref) => void;
   /**
@@ -68,6 +74,7 @@ export function useWs(ticket: WsTicket | null): WsResult {
   const [state, setState] = useState<WsConnectionState>(
     ticket?.token ? 'connecting' : 'closed',
   );
+  const [stale, setStale] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   /** Highest subtitle seq rendered so far — the resume cursor (SYNC-05). */
@@ -133,6 +140,9 @@ export function useWs(ticket: WsTicket | null): WsResult {
         dropped = true;
         attempt += 1;
         setState('reconnecting');
+        // UAT-5: three failed rungs usually mean the desktop restarted and
+        // rotated the pairing token — surface the re-scan guidance.
+        if (attempt >= 3) setStale(true);
         reconnectTimer = window.setTimeout(connect, backoffDelay(attempt));
       };
 
@@ -140,6 +150,7 @@ export function useWs(ticket: WsTicket | null): WsResult {
         if (disposed) return;
         attempt = 0; // a healthy connection resets the ladder
         setState('connected');
+        setStale(false);
         // CR-01: the cursor alone cannot tell two sessions apart (both number
         // their lines from 1), so the epoch travels with it — the server
         // replays the whole timeline when it no longer matches.
@@ -202,5 +213,5 @@ export function useWs(ticket: WsTicket | null): WsResult {
     [],
   );
 
-  return { events, state, sendLanguagePref, sendSessionAction };
+  return { events, state, stale, sendLanguagePref, sendSessionAction };
 }

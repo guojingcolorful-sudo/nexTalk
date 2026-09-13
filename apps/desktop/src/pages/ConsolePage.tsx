@@ -48,12 +48,17 @@ export default function ConsolePage() {
   const active = status === 'listening' || status === 'generating';
   const generating = status === 'generating';
 
-  const startSession = () => {
+  const startSession = async () => {
     setStartFailed(false);
-    invoke('start_session').catch((err) => {
+    try {
+      await invoke('start_session');
+      // UAT-5 bidirectional: the desktop's own 开始模拟会话 reveals 扩展视图
+      // too — the same surface a phone-initiated start opens.
+      await openDualPane();
+    } catch (err) {
       console.error('start_session failed', err);
       setStartFailed(true);
-    });
+    }
   };
 
   const stopSession = () => {

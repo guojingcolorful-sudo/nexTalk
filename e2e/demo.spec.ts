@@ -194,6 +194,11 @@ test.describe('console demo run', () => {
 
     await page.getByRole('button', { name: '开始模拟会话' }).click();
     expect(await emittedCommands(page)).toContain('start_session');
+    // UAT-5 bidirectional: the desktop's own start reveals 扩展视图 too —
+    // exactly like a phone-initiated start does.
+    await expect
+      .poll(async () => (await calls(page)).filter((call) => call.cmd === 'plugin:window|show'))
+      .toEqual([{ cmd: 'plugin:window|show', args: { label: 'dual' } }]);
 
     // Rust answers with the session status; the action bar becomes the live run.
     await emit(page, 'session_status', { session: 'listening' });
@@ -208,7 +213,10 @@ test.describe('console demo run', () => {
     await dualButton.click();
     await expect
       .poll(async () => (await calls(page)).filter((call) => call.cmd === 'plugin:window|show'))
-      .toEqual([{ cmd: 'plugin:window|show', args: { label: 'dual' } }]);
+      .toEqual([
+        { cmd: 'plugin:window|show', args: { label: 'dual' } },
+        { cmd: 'plugin:window|show', args: { label: 'dual' } },
+      ]);
 
     // The answer is generating: the mic pill state moves, no extra controls.
     await emit(page, 'session_status', { session: 'generating' });

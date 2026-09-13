@@ -3,6 +3,7 @@ import { faBrain, faClosedCaptioning } from '@fortawesome/free-solid-svg-icons';
 import type { LanguagePref, ServerEvent } from '@nextalk/protocol';
 import ChatBubble from '../components/ChatBubble';
 import EmptyState from '../components/EmptyState';
+import ErrorBanner from '../components/ErrorBanner';
 import GateScreen from '../components/GateScreen';
 import MobileTabs, { type PhoneTab } from '../components/MobileTabs';
 import StatusCapsule, { type CapsuleStatus } from '../components/StatusCapsule';
@@ -71,7 +72,7 @@ interface TeleprompterPageProps {
 }
 
 export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
-  const { events, state, sendLanguagePref, sendSessionAction } = useWs(ticket);
+  const { events, state, stale, sendLanguagePref, sendSessionAction } = useWs(ticket);
   const [tab, setTab] = useState<PhoneTab>(readTabFromUrl);
   const [sessionActive, setSessionActive] = useState(false);
   const [languagePref, setLanguagePref] = useState<LanguagePref>('bilingual');
@@ -242,6 +243,15 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
           onToggleSession={toggleSession}
           onCycleLanguage={cycleLanguage}
         />
+
+        {state === 'reconnecting' && stale ? (
+          <ErrorBanner
+            tone="red"
+            title="连接失败"
+            body="请重新扫描桌面二维码"
+            className="mx-4 mb-3"
+          />
+        ) : null}
       </div>
 
       {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}

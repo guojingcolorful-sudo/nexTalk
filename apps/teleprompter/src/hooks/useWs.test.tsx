@@ -136,6 +136,26 @@ describe('useWs reconnect', () => {
     expect(FakeSocket.instances).toHaveLength(6);
   });
 
+  test('surfaces a stale flag after repeated failed reconnects (UAT-5 stale-token hint)', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+
+    act(() => latest().accept());
+    expect(result.current.stale).toBe(false);
+
+    // Three failed reconnects (attempt 3 fires on the 4s rung).
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(2000));
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(4000));
+    expect(result.current.stale).toBe(true);
+
+    // A healthy open clears it.
+    act(() => latest().accept());
+    expect(result.current.stale).toBe(false);
+  });
+
   test('a successful reconnect resets the ladder to 1s', () => {
     renderHook(() => useWs(TICKET));
 
