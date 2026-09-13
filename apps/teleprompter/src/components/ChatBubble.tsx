@@ -17,6 +17,11 @@ interface ChatBubbleProps {
   en?: string;
   /** Session language mode the phone owns (SYNC-03); absent = speaker default. */
   language?: LanguagePref;
+  /**
+   * True for every bubble except the newest line (UAT-12): past subtitles
+   * render complete immediately — only the line being spoken types out.
+   */
+  instant?: boolean;
 }
 
 const SPEAKER_LABEL: Record<Speaker, string> = {
@@ -40,7 +45,7 @@ function present(text?: string): string | undefined {
  * message text is white; the interviewer's translation is rickBlue, the
  * user's is portalGreen.
  */
-export default function ChatBubble({ speaker, zh, en, language }: ChatBubbleProps) {
+export default function ChatBubble({ speaker, zh, en, language, instant = false }: ChatBubbleProps) {
   const isUser = speaker === 'user';
 
   const zhText = present(zh);
@@ -78,11 +83,17 @@ export default function ChatBubble({ speaker, zh, en, language }: ChatBubbleProp
             : 'rounded-tl-none border-black bg-slate-800'
         }`}
       >
-        <TypedLine
-          key={`${speaker}-${primary}`}
-          text={primary}
-          className="text-[15px] font-semibold leading-normal text-white"
-        />
+        {instant ? (
+          <p className="min-h-[1.5em] whitespace-pre-wrap break-words text-[15px] font-semibold leading-normal text-white">
+            {primary}
+          </p>
+        ) : (
+          <TypedLine
+            key={`${speaker}-${primary}`}
+            text={primary}
+            className="text-[15px] font-semibold leading-normal text-white"
+          />
+        )}
         {subline !== undefined ? (
           <p
             className={`mt-1.5 whitespace-pre-wrap break-words font-semibold ${

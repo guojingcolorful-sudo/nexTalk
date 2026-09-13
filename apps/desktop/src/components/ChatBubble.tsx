@@ -24,6 +24,11 @@ interface ChatBubbleProps {
   /** Session mode applied from the phone (SYNC-03), or null while the session
    *  runs on the per-speaker defaults. */
   mode?: LanguagePref | null;
+  /**
+   * True for every bubble except the newest line (UAT-12): past subtitles
+   * render complete immediately — only the line being spoken types out.
+   */
+  instant?: boolean;
 }
 
 function present(text?: string): string | undefined {
@@ -41,7 +46,13 @@ function present(text?: string): string | undefined {
  * untouched bubble follows the phone live while a deliberate local choice is
  * never overridden.
  */
-export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleProps) {
+export default function ChatBubble({
+  speaker,
+  zh,
+  en,
+  mode = null,
+  instant = false,
+}: ChatBubbleProps) {
   const [localPref, setLocalPref] = useState<LanguagePref | null>(null);
   const pref = localPref ?? mode ?? SPEAKER_DEFAULT_PREF[speaker];
   const isUser = speaker === 'user';
@@ -67,10 +78,11 @@ export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleP
     secondary = undefined;
   }
   if (primary === undefined) return null;
-  // UAT-10: the desktop teleprompters like the phone — the primary line
-  // types out character by character (40ms/char, instant under reduced
-  // motion); the subline stays instant so it never lags behind.
+  // UAT-10/12: the newest line teleprompters (40ms/char, instant under
+  // reduced motion); past subtitles render complete immediately. The subline
+  // always stays instant so it never lags behind.
   const typedPrimary = useTypewriter(primary);
+  const shownPrimary = instant ? primary : typedPrimary;
 
   return (
     <div className={`flex w-[95%] flex-col gap-1 ${isUser ? 'self-end' : ''}`}>
@@ -91,7 +103,7 @@ export default function ChatBubble({ speaker, zh, en, mode = null }: ChatBubbleP
             : 'rounded-tl-none border-gray-600 bg-slate-800 font-semibold'
         }`}
       >
-        {typedPrimary}
+        {shownPrimary}
       </p>
 
       {secondary !== undefined ? (

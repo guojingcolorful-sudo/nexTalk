@@ -56,6 +56,26 @@ function isGenerating(events: ServerEvent[]): boolean {
   return false;
 }
 
+/**
+ * UAT-12: true while the newest content is an interviewer question that has
+ * no strategy card yet — the window in which the AI is "thinking". The AI
+ * tab renders the 思考中 indicator for as long as this holds (the desktop
+ * hosts the mirror in apps/desktop/src/components/AiTimeline.tsx).
+ */
+export function isAiThinking(events: ServerEvent[]): boolean {
+  let lastQuestionRound: string | null = null;
+  let lastStrategyRound: string | null = null;
+  for (const event of events) {
+    if (event.t === 'subtitle' && event.speaker === 'interviewer') {
+      lastQuestionRound = event.id.replace(/-q$/, '');
+    } else if (event.t === 'strategy') {
+      lastStrategyRound = event.roundId;
+    }
+  }
+  if (lastQuestionRound === null) return false;
+  return lastStrategyRound !== lastQuestionRound;
+}
+
 const NEXT_LANGUAGE: Record<LanguagePref, LanguagePref> = {
   'all-zh': 'all-en',
   'all-en': 'bilingual',
@@ -93,6 +113,9 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
     [events],
   );
   const generating = useMemo(() => isGenerating(events), [events]);
+  // UAT-12: the AI tab shows the thinking state while the newest question
+  // awaits its strategy card.
+  const aiThinking = useMemo(() => isAiThinking(events), [events]);
 
   // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
   // when the desktop starts 开始模拟会话 on its own, the phone flips to the
@@ -191,13 +214,14 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                   className="mt-12"
                 />
               ) : (
-                subtitles.map((subtitle) => (
+                subtitles.map((subtitle, index) => (
                   <ChatBubble
                     key={`${subtitle.id}-${subtitle.seq}`}
                     speaker={subtitle.speaker}
                     zh={subtitle.zh}
                     en={subtitle.en}
                     language={languagePref}
+                    instant={index < subtitles.length - 1}
                   />
                 ))
               )}
@@ -231,6 +255,29 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                   />
                 ))
               )}
+              {aiThinking ? (
+                <div
+                  role="status"
+                  aria-label="AI 思考中"
+                  className="flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-[4px_4px_0_0_#fbf061]"
+                >
+                  <FontAwesomeIcon
+                    icon={faBrain}
+                    aria-hidden="true"
+                    className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
+                  />
+                  <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
+                  <span aria-hidden="true" className="flex items-center gap-1">
+                    {[0, 1, 2].map((dot) => (
+                      <span
+                        key={dot}
+                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
+                        style={{ animationDelay: `${dot * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                </div>
+              ) : null}
             </section>
           )}
           <div ref={streamEndRef} aria-hidden="true" />

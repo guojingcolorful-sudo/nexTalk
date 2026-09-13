@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from '../App';
-import { nextLanguagePref } from './TeleprompterPage';
+import { isAiThinking, nextLanguagePref } from './TeleprompterPage';
 
 /**
  * 01-04 Task 1 gate: the phone surface renders the locked copy, the tab
@@ -299,5 +299,40 @@ describe('nextLanguagePref', () => {
     expect(nextLanguagePref('all-zh')).toBe('all-en');
     expect(nextLanguagePref('all-en')).toBe('bilingual');
     expect(nextLanguagePref('bilingual')).toBe('all-zh');
+  });
+});
+
+describe('isAiThinking (UAT-12)', () => {
+  const question = (id: string, seq: number) => ({
+    t: 'subtitle' as const,
+    id,
+    speaker: 'interviewer' as const,
+    seq,
+    zh: '问题',
+    en: 'Question',
+    final: true,
+  });
+  const strategy = (roundId: string) => ({
+    t: 'strategy' as const,
+    id: `s-${roundId}`,
+    roundId,
+    title: '策略',
+    bullets: [],
+  });
+
+  test('is false with no interviewer question yet', () => {
+    expect(isAiThinking([])).toBe(false);
+  });
+
+  test('is true while the newest question has no strategy card', () => {
+    expect(isAiThinking([question('r1-q', 1)])).toBe(true);
+  });
+
+  test('turns false once the strategy for the current round arrives', () => {
+    expect(isAiThinking([question('r1-q', 1), strategy('r1')])).toBe(false);
+  });
+
+  test('turns true again when the next question opens a new round', () => {
+    expect(isAiThinking([question('r1-q', 1), strategy('r1'), question('r2-q', 3)])).toBe(true);
   });
 });

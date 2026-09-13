@@ -88,6 +88,25 @@ export type TimelineItem =
     };
 
 /**
+ * UAT-12: true while the newest content is an interviewer question that has
+ * no strategy card yet — the window in which the AI is "thinking". The AI
+ * pane renders the 思考中 indicator for as long as this holds.
+ */
+export function isAiThinking(events: readonly ServerEvent[]): boolean {
+  let lastQuestionRound: string | null = null;
+  let lastStrategyRound: string | null = null;
+  for (const event of events) {
+    if (event.t === 'subtitle' && event.speaker === 'interviewer') {
+      lastQuestionRound = event.id.replace(/-q$/, '');
+    } else if (event.t === 'strategy') {
+      lastStrategyRound = event.roundId;
+    }
+  }
+  if (lastQuestionRound === null) return false;
+  return lastStrategyRound !== lastQuestionRound;
+}
+
+/**
  * Maps the narrowed server events onto right-pane timeline nodes: every
  * interviewer sentence becomes a context node, every strategy event becomes
  * a strategy card. The user's own subtitles stay in the left stream — they

@@ -7,7 +7,7 @@ import {
   faLightbulb,
 } from '@fortawesome/free-solid-svg-icons';
 import type { ServerEvent } from '@nextalk/protocol';
-import AiTimeline, { toTimelineItems } from '../components/AiTimeline';
+import AiTimeline, { isAiThinking, toTimelineItems } from '../components/AiTimeline';
 import ChatBubble from '../components/ChatBubble';
 import EmptyState from '../components/EmptyState';
 import HeaderBar from '../components/HeaderBar';
@@ -36,6 +36,9 @@ export default function DualPanePage() {
     [events],
   );
   const timelineItems = useMemo(() => toTimelineItems(events), [events]);
+  // UAT-12: the AI pane shows the thinking state for as long as the newest
+  // question has no strategy card yet.
+  const aiThinking = useMemo(() => isAiThinking(events), [events]);
 
   const generating = status === 'generating';
   const listening = status === 'listening' || generating;
@@ -96,6 +99,7 @@ export default function DualPanePage() {
                   zh={subtitle.zh}
                   en={subtitle.en}
                   mode={languageMode}
+                  instant={index < subtitles.length - 1}
                 />
               </div>
             ))}
@@ -140,6 +144,29 @@ export default function DualPanePage() {
                 body="提问结束后，策略卡片会出现在这里"
               />
             )}
+            {aiThinking ? (
+              <div
+                role="status"
+                aria-label="AI 思考中"
+                className="mt-3 flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-cartoon-yellow"
+              >
+                <FontAwesomeIcon
+                  icon={faBolt}
+                  aria-hidden="true"
+                  className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
+                />
+                <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
+                <span aria-hidden="true" className="flex items-center gap-1">
+                  {[0, 1, 2].map((dot) => (
+                    <span
+                      key={dot}
+                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
+                      style={{ animationDelay: `${dot * 150}ms` }}
+                    />
+                  ))}
+                </span>
+              </div>
+            ) : null}
           </div>
         </section>
       </div>
