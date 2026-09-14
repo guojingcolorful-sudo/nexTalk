@@ -11,6 +11,7 @@ import StrategyCard from '../components/StrategyCard';
 import ThinkingCard from '../components/ThinkingCard';
 import Toast from '../components/Toast';
 import TypewriterDots from '../components/TypewriterDots';
+import { useCenterAnchor } from '../hooks/useCenterAnchor';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { useWs, type WsConnectionState, type WsTicket } from '../hooks/useWs';
 
@@ -191,18 +192,13 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   }, [languagePref, sendLanguagePref]);
 
   // Auto-scroll on new content only — no scroll listeners, no hijacking
-  // (UI-SPEC Motion Contract). UAT-13/14: the anchor centers in the viewport
-  // — on the AI tab the thinking card / newest strategy takes the middle, on
-  // the subtitle tab the newest subtitle does.
-  useEffect(() => {
-    if (tab === 'ai') {
-      if (aiThinking) thinkingAnchorRef.current?.scrollIntoView?.({ block: 'center' });
-      else strategyAnchorRef.current?.scrollIntoView?.({ block: 'center' });
-      return;
-    }
-    if (anchorId === null) return;
-    anchorRef.current?.scrollIntoView?.({ block: 'center' });
-  }, [tab, aiThinking, anchorId, lastStrategyId, subtitles.length, strategies.length]);
+  // (UI-SPEC Motion Contract). UAT-13/14/15: the anchors stay centered WHILE
+  // their content grows — the ResizeObserver re-centers on every typed
+  // character, so the newest question, thinking text and answer never leave
+  // the middle of the screen.
+  useCenterAnchor(anchorRef, tab !== 'ai' && anchorId);
+  useCenterAnchor(thinkingAnchorRef, tab === 'ai' && aiThinking);
+  useCenterAnchor(strategyAnchorRef, tab === 'ai' && !aiThinking && lastStrategyId);
 
   return (
     <div className="flex h-full justify-center">

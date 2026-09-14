@@ -15,6 +15,7 @@ import MicStatusPill from '../components/MicStatusPill';
 import PanelHeader from '../components/PanelHeader';
 import TypewriterDots from '../components/TypewriterDots';
 import ThinkingCard from '../components/ThinkingCard';
+import { useCenterAnchor } from '../hooks/useCenterAnchor';
 import { useTauriEvents } from '../hooks/useTauriEvents';
 
 type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
@@ -55,24 +56,13 @@ export default function DualPanePage() {
   const anchorId = subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
   const lastTimelineId =
     timelineItems.length > 0 ? timelineItems[timelineItems.length - 1].id : null;
-  useEffect(() => {
-    if (anchorId === null) return;
-    // Motion contract: follow new lines only; behavior 'auto' keeps the jump
-    // unanimated.
-    anchorRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [anchorId]);
-  // UAT-14: while the AI thinks, the 思考中 card takes the center of the AI
-  // pane — the next question's thinking is on screen immediately, not after
-  // the previous content finishes.
+  // UAT-14/15: the anchors stay centered WHILE their content grows — the
+  // ResizeObserver re-centers on every typed character, so the newest
+  // question, thinking text and answer never leave the middle of the screen.
   const thinkingRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (aiThinking) {
-      thinkingRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
-      return;
-    }
-    if (lastTimelineId === null) return;
-    lastTimelineRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [aiThinking, lastTimelineId]);
+  useCenterAnchor(anchorRef, anchorId);
+  useCenterAnchor(thinkingRef, aiThinking);
+  useCenterAnchor(lastTimelineRef, !aiThinking && lastTimelineId !== null && lastTimelineId);
 
   return (
     <div className="dot-matrix-root flex h-full w-full flex-col overflow-hidden rounded-3xl border-4 border-black shadow-cartoon-blue">
