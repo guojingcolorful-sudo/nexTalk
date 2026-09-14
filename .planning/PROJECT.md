@@ -12,13 +12,14 @@
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] 跨端提词器：桌面端生成局域网二维码，手机扫码打开 H5 提词器（无需安装 App），上半屏双语滚动字幕、下半屏 AI 策略卡片，支持全中/全英/双语切换（过滤式）— Validated in Phase 1: Foundation + Simulation Mode (2026-09-14, 真机 UAT 通过)
+- [x] UI 设计系统落地：新粗野主义暗黑风格（4px 粗黑边框 + 硬偏移阴影 + 传送门绿/瑞克蓝/莫蒂黄功能色），参考 HTML 4 屏为视觉基准，补齐虚拟声卡引导向导、录音资产、复盘报告等缺页 — Validated in Phase 1（桌面 6 页面 + 手机 H5 全量实现，e2e 32 项覆盖）
 
 ### Active
 
 - [ ] 音频核心：虚拟声卡接管会议软件音频（macOS CoreAudio/BlackHole），支持中→英实时转换 + 用户音色克隆输出，对方英文原声透传耳机（零延迟），集成 AEC 回声消除
 - [ ] 级联流式管线：STT 识别 3-5 词即触发翻译，翻译前半句即触发 TTS 合成，端到端延迟 ≤ 2s
-- [ ] 桌面端静默运行：Tauri + Rust 客户端，全局快捷键 Cmd+Shift+H 一键真隐藏/唤出（防抓屏），双栏扩展视图（左字幕右 AI 辅助）
+- [ ] 桌面端静默运行：Tauri + Rust 客户端，全局快捷键 Cmd+Shift+H 一键真隐藏/唤出（防抓屏），双栏扩展视图（左字幕右 AI 辅助）——双栏扩展视图已于 Phase 1 验证；真隐藏（orderOut）与全局快捷键留在 Phase 4
 - [ ] 跨端提词器：桌面端生成局域网二维码，手机扫码打开 H5 提词器（无需安装 App），上半屏双语滚动字幕、下半屏 AI 策略卡片，支持全中/全英/双语切换
 - [ ] AI 面试辅助引擎：导入简历（PDF/Word）与高频面试题库；自动检测提问结束（静默检测 + LLM 问句完整性判断）触发 AI 思考；综合【简历真实经历 + 题库预设答案 + 实时网络搜索】生成流式要点提纲
 - [ ] 会后本地资产：本地分轨录制（我的声音 vs 对方声音）、双语逐字稿导出、面试复盘报告生成（含 Action Items、情绪与关键关注点提取）
@@ -82,4 +83,11 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-26 after initialization*
+### Phase 1 (Foundation + Simulation Mode) — completed 2026-09-14
+
+- 5/5 plans, automated gates green (vitest 103 / e2e 32 / cargo 34+4 / build), verification 22/22 must-haves, human UAT 3/3 passed
+- Established: pnpm workspace + Tauri 2.11 shell, design tokens + wire protocol packages, LAN QR pairing (128-bit token), bidirectional session control (phone ↔ desktop), hear-then-think pacing, staged AI reveals, centered live anchors, bilingual AI answers
+- 15 UAT fixes landed during manual verification rounds (token rotation guidance, capabilities for dual-window creation, Info.plist mic description, typewriter filtering, ResizeObserver centering, etc.)
+- Deferred to later phases: real stealth hiding (Phase 4), real mic/TCC in dev mode (test via bundled build), draft timeline node (protocol lacks a draft variant)
+
+*Last updated: 2026-09-14 after Phase 1 completion*
