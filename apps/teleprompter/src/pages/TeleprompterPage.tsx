@@ -7,6 +7,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import GateScreen from '../components/GateScreen';
 import MobileTabs, { type PhoneTab } from '../components/MobileTabs';
 import StatusCapsule, { type CapsuleStatus } from '../components/StatusCapsule';
+import QuestionCard from '../components/QuestionCard';
 import StrategyCard from '../components/StrategyCard';
 import ThinkingCard from '../components/ThinkingCard';
 import Toast from '../components/Toast';
@@ -27,7 +28,19 @@ import { useWs, type WsConnectionState, type WsTicket } from '../hooks/useWs';
 const TAB_PARAM = 'tab';
 
 type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
-type StrategyEvent = Extract<ServerEvent, { t: 'strategy' }>;
+
+/** One item in the AI 辅助 tab: a recorded question or a strategy card. */
+type AiTabItem =
+  | { kind: 'question'; id: string; zh?: string; en?: string }
+  | {
+      kind: 'strategy';
+      id: string;
+      title: string;
+      bullets: string[];
+      roundId: string;
+      answerZh?: string;
+      answerEn?: string;
+    };
 
 function readTabFromUrl(): PhoneTab {
   return new URLSearchParams(window.location.search).get(TAB_PARAM) === 'ai' ? 'ai' : 'subs';
@@ -109,10 +122,28 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
     () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
     [events],
   );
-  const strategies = useMemo(
-    () => events.filter((event): event is StrategyEvent => event.t === 'strategy'),
-    [events],
-  );
+  // UAT-16: the AI tab records the interviewer's questions in real time,
+  // interleaved with the strategy cards in arrival order — the same timeline
+  // the desktop AI pane shows.
+  const aiTabItems = useMemo<AiTabItem[]>(() => {
+    const items: AiTabItem[] = [];
+    for (const event of events) {
+      if (event.t === 'subtitle' && event.speaker === 'interviewer') {
+        items.push({ kind: 'question', id: event.id, zh: event.zh, en: event.en });
+      } else if (event.t === 'strategy') {
+        items.push({
+          kind: 'strategy',
+          id: event.id,
+          title: event.title,
+          bullets: event.bullets,
+          roundId: event.roundId,
+          answerZh: event.answerZh,
+          answerEn: event.answerEn,
+        });
+      }
+    }
+    return items;
+  }, [events]);
   const generating = useMemo(() => isGenerating(events), [events]);
   // UAT-12: the AI tab shows the thinking state while the newest question
   // awaits its strategy card.
@@ -123,11 +154,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // content moves up in real time. Until a subtitle exists nothing anchors.
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const anchorId = subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
-  // UAT-14: on the AI tab the 思考中 card (or the newest strategy card) takes
+  // UAT-14: on the AI tab the 思考中 card (or the newest recorded item) takes
   // the center — the next question's thinking is on screen immediately.
-  const strategyAnchorRef = useRef<HTMLDivElement | null>(null);
+  const aiItemAnchorRef = useRef<HTMLDivElement | null>(null);
   const thinkingAnchorRef = useRef<HTMLDivElement | null>(null);
-  const lastStrategyId = strategies.length > 0 ? strategies[strategies.length - 1].id : null;
+  const lastAiItemId = aiTabItems.length > 0 ? aiTabItems[aiTabItems.length - 1].id : null;
 
   // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
   // when the desktop starts 开始模拟会话 on its own, the phone flips to the
@@ -198,7 +229,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // the middle of the screen.
   useCenterAnchor(anchorRef, tab !== 'ai' && anchorId);
   useCenterAnchor(thinkingAnchorRef, tab === 'ai' && aiThinking);
-  useCenterAnchor(strategyAnchorRef, tab === 'ai' && !aiThinking && lastStrategyId);
+  useCenterAnchor(aiItemAnchorRef, tab === 'ai' && !aiThinking && lastAiItemId);
 
   return (
     <div className="flex h-full justify-center">
@@ -255,7 +286,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
             aria-live="polite"
             className={`flex flex-col gap-4 ${tab !== 'ai' ? 'hidden' : ''}`}
           >
-            {strategies.length === 0 ? (
+            {aiTabItems.length === 0 ? (
               <EmptyState
                 icon={faBrain}
                 tone="yellow"
@@ -264,18 +295,22 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                 className="mt-12"
               />
             ) : (
-              strategies.map((strategy) => (
+              aiTabItems.map((item, index) => (
                 <div
-                  key={strategy.id}
-                  ref={strategy.id === lastStrategyId ? strategyAnchorRef : null}
+                  key={item.id}
+                  ref={index === aiTabItems.length - 1 ? aiItemAnchorRef : null}
                 >
-                  <StrategyCard
-                    title={strategy.title}
-                    bullets={strategy.bullets}
-                    roundId={strategy.roundId}
-                    answerZh={strategy.answerZh}
-                    answerEn={strategy.answerEn}
-                  />
+                  {item.kind === 'question' ? (
+                    <QuestionCard zh={item.zh} en={item.en} />
+                  ) : (
+                    <StrategyCard
+                      title={item.title}
+                      bullets={item.bullets}
+                      roundId={item.roundId}
+                      answerZh={item.answerZh}
+                      answerEn={item.answerEn}
+                    />
+                  )}
                 </div>
               ))
             )}

@@ -75,10 +75,10 @@ test('H5 renders one valid subtitle broadcast over WS', async ({ page }) => {
 
     // zh line types out (~11 chars x 40ms ≈ 0.5s), then the en line
     // (~79 chars ≈ 3.2s) — generous timeout for full-text completion.
-    const zhLine = page.getByText(VALID_SUBTITLE.zh);
+    const zhLine = page.locator('#panel-subs').getByText(VALID_SUBTITLE.zh);
     await expect(zhLine).toHaveText(VALID_SUBTITLE.zh, { timeout: 10_000 });
 
-    const enLine = page.getByText(VALID_SUBTITLE.en);
+    const enLine = page.locator('#panel-subs').getByText(VALID_SUBTITLE.en);
     await expect(enLine).toHaveText(VALID_SUBTITLE.en, { timeout: 15_000 });
 
     // Speaker chip reflects the event (interviewer -> 面试官).

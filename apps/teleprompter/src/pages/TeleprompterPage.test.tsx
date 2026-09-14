@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from '../App';
 import { isAiThinking, nextLanguagePref } from './TeleprompterPage';
@@ -216,6 +216,31 @@ describe('TeleprompterPage', () => {
     expect(screen.getByText('数据库优化').closest('article')).toBe(card);
   });
 
+  test('records interviewer questions in the AI 辅助 tab like the desktop (UAT-16)', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+      socket.emit(SUBTITLE); // the interviewer's question
+      socket.emit({
+        t: 'strategy',
+        id: 's-r1',
+        roundId: 'r1',
+        title: '数据库优化',
+        bullets: ['慢查询日志定位'],
+      });
+      screen.getByRole('tab', { name: 'AI 辅助' }).click();
+    });
+
+    // The question record and the strategy card both live in the AI tab.
+    const aiPanel = within(document.getElementById('panel-ai') as HTMLElement);
+    expect(aiPanel.getByText('面试官提问')).toBeTruthy();
+    expect(aiPanel.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(aiPanel.getByText(SUBTITLE.zh)).toBeTruthy();
+    expect(aiPanel.getByText('数据库优化')).toBeTruthy();
+  });
+
   test('renders a validated subtitle frame and drops malformed ones', () => {
     render(<App />);
     const socket = currentSocket();
@@ -225,9 +250,10 @@ describe('TeleprompterPage', () => {
       socket.emit({ t: 'subtitle', id: 'evil', speaker: 'user', zh: '不应渲染', final: true });
     });
 
-    expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
-    expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
-    expect(screen.queryByText('不应渲染')).toBeNull();
+    const subsPanel = within(document.getElementById('panel-subs') as HTMLElement);
+    expect(subsPanel.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(subsPanel.getByText(SUBTITLE.zh)).toBeTruthy();
+    expect(subsPanel.queryByText('不应渲染')).toBeNull();
   });
 
   test('the bubble filters to the session language mode (UAT-4)', () => {
@@ -240,26 +266,30 @@ describe('TeleprompterPage', () => {
       socket.emit({ t: 'language', language: 'all-zh' });
     });
 
-    // 中: only the Chinese line renders — the English original is filtered
-    // out, not reordered under it.
-    expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
-    expect(screen.queryByText(SUBTITLE.en)).toBeNull();
+    // The question RECORD in the AI tab always carries both languages —
+    // the filter applies to the subtitle stream only (UAT-16).
+    const subsPanel = within(document.getElementById('panel-subs') as HTMLElement);
+
+    // 中: only the Chinese line renders in the stream — the English original
+    // is filtered out, not reordered under it.
+    expect(subsPanel.getByText(SUBTITLE.zh)).toBeTruthy();
+    expect(subsPanel.queryByText(SUBTITLE.en)).toBeNull();
 
     act(() => {
       socket.emit({ t: 'language', language: 'all-en' });
     });
 
-    // EN: only the English line renders.
-    expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
-    expect(screen.queryByText(SUBTITLE.zh)).toBeNull();
+    // EN: only the English line renders in the stream.
+    expect(subsPanel.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(subsPanel.queryByText(SUBTITLE.zh)).toBeNull();
 
     act(() => {
       socket.emit({ t: 'language', language: 'bilingual' });
     });
 
-    // EN+中: both lines render.
-    expect(screen.getByText(SUBTITLE.en)).toBeTruthy();
-    expect(screen.getByText(SUBTITLE.zh)).toBeTruthy();
+    // EN+中: both lines render in the stream.
+    expect(subsPanel.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(subsPanel.getByText(SUBTITLE.zh)).toBeTruthy();
   });
 
   test('开始提词 engages the stay-awake fallback on a plain http LAN origin', () => {

@@ -288,8 +288,8 @@ test.describe('phone teleprompter H5', () => {
       second.send(JSON.stringify({ t: 'timeline', events: [SUBTITLE_5, SUBTITLE_6] }));
 
       await expect(page.locator('article[aria-label="我"]')).toHaveCount(2);
-      await expect(page.getByText(LINE_5_ZH)).toHaveCount(1);
-      await expect(page.getByText(LINE_6_ZH)).toHaveCount(1);
+      await expect(page.locator('#panel-subs').getByText(LINE_5_ZH)).toHaveCount(1);
+      await expect(page.locator('#panel-subs').getByText(LINE_6_ZH)).toHaveCount(1);
     } finally {
       await mock.close();
     }
@@ -306,8 +306,8 @@ test.describe('phone teleprompter H5', () => {
       socket.send(JSON.stringify(SUBTITLE_5));
       socket.send(JSON.stringify(SUBTITLE_6));
       socket.send(JSON.stringify({ ...STRATEGY_FRAME, title: '旧策略' }));
-      await expect(page.getByText(LINE_5_ZH)).toBeVisible();
-      await expect(page.getByText(LINE_6_ZH)).toBeVisible();
+      await expect(page.locator('#panel-subs').getByText(LINE_5_ZH)).toBeVisible();
+      await expect(page.locator('#panel-subs').getByText(LINE_6_ZH)).toBeVisible();
 
       // 停止 → 开始模拟会话: the timeline restarts, so seq 1/2 and "s-r1" are
       // both "already seen" to a phone that never drops its cursors.
@@ -317,10 +317,10 @@ test.describe('phone teleprompter H5', () => {
       socket.send(JSON.stringify(STRATEGY_FRAME));
 
       // The previous session is gone, not stacked under the new one.
-      await expect(page.getByText(LINE_5_ZH)).toHaveCount(0);
-      await expect(page.getByText(LINE_6_ZH)).toHaveCount(0);
-      await expect(page.getByText(QUESTION_ZH)).toBeVisible();
-      await expect(page.getByText(ANSWER_ZH)).toBeVisible();
+      await expect(page.locator('#panel-subs').getByText(LINE_5_ZH)).toHaveCount(0);
+      await expect(page.locator('#panel-subs').getByText(LINE_6_ZH)).toHaveCount(0);
+      await expect(page.locator('#panel-subs').getByText(QUESTION_ZH)).toBeVisible();
+      await expect(page.locator('#panel-subs').getByText(ANSWER_ZH)).toBeVisible();
 
       await page.getByRole('tab', { name: 'AI 辅助' }).click();
       await expect(page.getByText('数据库优化')).toBeVisible();
@@ -344,7 +344,9 @@ test.describe('phone teleprompter H5', () => {
       );
       socket.send(JSON.stringify(QUESTION_FRAME));
 
-      await expect(page.locator('article')).toHaveCount(1);
+      // One bubble in the stream; the AI tab holds the same question as its
+      // record (UAT-16), so scope the count to the subtitle panel.
+      await expect(page.locator('#panel-subs article')).toHaveCount(1);
       await expect(page.getByText('恶意载荷不应显示')).toHaveCount(0);
     } finally {
       await mock.close();
