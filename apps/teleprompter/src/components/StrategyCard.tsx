@@ -19,7 +19,9 @@ interface StrategyCardProps {
  * all on screen — the card reads as title → outline → written answer.
  */
 function TypedAnswer({ label, text }: { label: string; text: string }) {
-  const shown = useTypewriter(text);
+  // UAT-14: the AI answer types faster than subtitles (12ms/char) so a
+  // ~200-char answer is fully readable within ~2.5s.
+  const shown = useTypewriter(text, 12);
   return (
     <div className="rounded-lg border-2 border-black bg-spaceDark p-2.5">
       <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</p>

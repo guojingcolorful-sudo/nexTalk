@@ -29,8 +29,9 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function useRevealCount(count: number, stepMs = 600): number {
-  const [revealed, setRevealed] = useState(0);
+export function useRevealCount(count: number, stepMs = 400): number {
+  // The first item is present immediately; the rest mature one per tick.
+  const [revealed, setRevealed] = useState(() => (count === 0 ? 0 : 1));
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
@@ -38,7 +39,7 @@ export function useRevealCount(count: number, stepMs = 600): number {
       setRevealed(count);
       return;
     }
-    setRevealed(0);
+    setRevealed(1); // the first item is visible from the first frame
     const id = window.setInterval(() => {
       setRevealed((n) => {
         if (n >= count) {

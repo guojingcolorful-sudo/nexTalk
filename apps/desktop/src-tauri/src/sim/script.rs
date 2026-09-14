@@ -95,10 +95,10 @@ pub const ROUNDS: [Round; 4] = [
         },
         timing: Timing {
             question_at_ms: 1_500,
-            strategy_at_ms: 7_000,
-            answer_at_ms: 14_000,
-            generating_at_ms: 14_500,
-            end_at_ms: 17_000,
+            strategy_at_ms: 6_000,
+            answer_at_ms: 12_000,
+            generating_at_ms: 12_500,
+            end_at_ms: 15_000,
         },
     },
     // ---------------------------------------------------------------- r2 ---
@@ -119,10 +119,10 @@ pub const ROUNDS: [Round; 4] = [
         },
         timing: Timing {
             question_at_ms: 1_500,
-            strategy_at_ms: 7_000,
-            answer_at_ms: 14_000,
-            generating_at_ms: 14_500,
-            end_at_ms: 17_000,
+            strategy_at_ms: 6_000,
+            answer_at_ms: 12_000,
+            generating_at_ms: 12_500,
+            end_at_ms: 15_000,
         },
     },
     // ---------------------------------------------------------------- r3 ---
@@ -143,10 +143,10 @@ pub const ROUNDS: [Round; 4] = [
         },
         timing: Timing {
             question_at_ms: 1_500,
-            strategy_at_ms: 7_000,
-            answer_at_ms: 14_000,
-            generating_at_ms: 14_500,
-            end_at_ms: 17_000,
+            strategy_at_ms: 6_000,
+            answer_at_ms: 12_000,
+            generating_at_ms: 12_500,
+            end_at_ms: 15_000,
         },
     },
     // ---------------------------------------------------------------- r4 ---
@@ -167,10 +167,10 @@ pub const ROUNDS: [Round; 4] = [
         },
         timing: Timing {
             question_at_ms: 1_500,
-            strategy_at_ms: 7_000,
-            answer_at_ms: 14_000,
-            generating_at_ms: 14_500,
-            end_at_ms: 17_000,
+            strategy_at_ms: 6_000,
+            answer_at_ms: 12_000,
+            generating_at_ms: 12_500,
+            end_at_ms: 15_000,
         },
     },
 ];
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn total_duration_is_the_sum_of_every_round() {
-        assert_eq!(total_duration_ms(), 17_000 * 4);
+        assert_eq!(total_duration_ms(), 15_000 * 4);
     }
 
     #[test]

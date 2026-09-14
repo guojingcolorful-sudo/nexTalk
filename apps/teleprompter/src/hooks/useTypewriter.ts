@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
  * SYNC-05).
  *
  * Contract:
- * - reveals one character per `intervalMs` tick (default 40ms) — exactly
+ * - reveals one character per `intervalMs` tick (default 20ms) — exactly
  *   `intervalMs × text.length` ms to full reveal;
  * - with `prefers-reduced-motion: reduce`, the full text renders immediately
  *   with zero timers pending;
@@ -36,7 +36,7 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function useTypewriter(text: string, intervalMs = 40): string {
+export function useTypewriter(text: string, intervalMs = 20): string {
   const [visible, setVisible] = useState(0);
   const reduced = usePrefersReducedMotion();
 

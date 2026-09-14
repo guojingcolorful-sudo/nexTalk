@@ -14,6 +14,7 @@ import HeaderBar from '../components/HeaderBar';
 import MicStatusPill from '../components/MicStatusPill';
 import PanelHeader from '../components/PanelHeader';
 import TypewriterDots from '../components/TypewriterDots';
+import ThinkingCard from '../components/ThinkingCard';
 import { useTauriEvents } from '../hooks/useTauriEvents';
 
 type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
@@ -60,10 +61,18 @@ export default function DualPanePage() {
     // unanimated.
     anchorRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
   }, [anchorId]);
+  // UAT-14: while the AI thinks, the 思考中 card takes the center of the AI
+  // pane — the next question's thinking is on screen immediately, not after
+  // the previous content finishes.
+  const thinkingRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
+    if (aiThinking) {
+      thinkingRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      return;
+    }
     if (lastTimelineId === null) return;
     lastTimelineRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [lastTimelineId]);
+  }, [aiThinking, lastTimelineId]);
 
   return (
     <div className="dot-matrix-root flex h-full w-full flex-col overflow-hidden rounded-3xl border-4 border-black shadow-cartoon-blue">
@@ -145,29 +154,7 @@ export default function DualPanePage() {
                 body="提问结束后，策略卡片会出现在这里"
               />
             )}
-            {aiThinking ? (
-              <div
-                role="status"
-                aria-label="AI 思考中"
-                className="mt-3 flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-cartoon-yellow"
-              >
-                <FontAwesomeIcon
-                  icon={faBolt}
-                  aria-hidden="true"
-                  className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
-                />
-                <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
-                <span aria-hidden="true" className="flex items-center gap-1">
-                  {[0, 1, 2].map((dot) => (
-                    <span
-                      key={dot}
-                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
-                      style={{ animationDelay: `${dot * 150}ms` }}
-                    />
-                  ))}
-                </span>
-              </div>
-            ) : null}
+            {aiThinking ? <ThinkingCard nodeRef={thinkingRef} /> : null}
           </div>
         </section>
       </div>

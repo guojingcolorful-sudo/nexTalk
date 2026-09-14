@@ -25,7 +25,7 @@ const QUESTION_EN =
 /** Reveals every typing line currently rendered (longest line = QUESTION_EN). */
 function revealAll() {
   act(() => {
-    vi.advanceTimersByTime(40 * QUESTION_EN.length);
+    vi.advanceTimersByTime(20 * QUESTION_EN.length);
   });
 }
 

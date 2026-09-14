@@ -28,7 +28,7 @@ const QUESTION_EN =
   'Could you walk me through the specific steps you took to optimize the database?';
 
 /** useTypewriter reveals one character per 40ms tick. */
-const TYPEWRITER_INTERVAL_MS = 40;
+const TYPEWRITER_INTERVAL_MS = 20; // UAT-14: 40ms → 20ms cadence
 const TYPEWRITER_CHECKPOINT_CHARS = 20;
 
 const ANSWER_FRAME = {

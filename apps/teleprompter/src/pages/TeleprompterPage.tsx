@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBrain, faClosedCaptioning } from '@fortawesome/free-solid-svg-icons';
 import type { LanguagePref, ServerEvent } from '@nextalk/protocol';
 import ChatBubble from '../components/ChatBubble';
@@ -9,6 +8,7 @@ import GateScreen from '../components/GateScreen';
 import MobileTabs, { type PhoneTab } from '../components/MobileTabs';
 import StatusCapsule, { type CapsuleStatus } from '../components/StatusCapsule';
 import StrategyCard from '../components/StrategyCard';
+import ThinkingCard from '../components/ThinkingCard';
 import Toast from '../components/Toast';
 import TypewriterDots from '../components/TypewriterDots';
 import { useWakeLock } from '../hooks/useWakeLock';
@@ -122,6 +122,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // content moves up in real time. Until a subtitle exists nothing anchors.
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const anchorId = subtitles.length > 0 ? subtitles[subtitles.length - 1].id : null;
+  // UAT-14: on the AI tab the 思考中 card (or the newest strategy card) takes
+  // the center — the next question's thinking is on screen immediately.
+  const strategyAnchorRef = useRef<HTMLDivElement | null>(null);
+  const thinkingAnchorRef = useRef<HTMLDivElement | null>(null);
+  const lastStrategyId = strategies.length > 0 ? strategies[strategies.length - 1].id : null;
 
   // UAT-5 bidirectional: the phone's gate mirrors the DESKTOP's session —
   // when the desktop starts 开始模拟会话 on its own, the phone flips to the
@@ -186,12 +191,18 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   }, [languagePref, sendLanguagePref]);
 
   // Auto-scroll on new content only — no scroll listeners, no hijacking
-  // (UI-SPEC Motion Contract). UAT-13: the anchor centers in the viewport —
-  // the latest answer never leaves the middle of the screen.
+  // (UI-SPEC Motion Contract). UAT-13/14: the anchor centers in the viewport
+  // — on the AI tab the thinking card / newest strategy takes the middle, on
+  // the subtitle tab the newest subtitle does.
   useEffect(() => {
+    if (tab === 'ai') {
+      if (aiThinking) thinkingAnchorRef.current?.scrollIntoView?.({ block: 'center' });
+      else strategyAnchorRef.current?.scrollIntoView?.({ block: 'center' });
+      return;
+    }
     if (anchorId === null) return;
     anchorRef.current?.scrollIntoView?.({ block: 'center' });
-  }, [anchorId, subtitles.length, strategies.length, tab]);
+  }, [tab, aiThinking, anchorId, lastStrategyId, subtitles.length, strategies.length]);
 
   return (
     <div className="flex h-full justify-center">
@@ -258,39 +269,21 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
               />
             ) : (
               strategies.map((strategy) => (
-                <StrategyCard
+                <div
                   key={strategy.id}
-                  title={strategy.title}
-                  bullets={strategy.bullets}
-                  roundId={strategy.roundId}
-                  answerZh={strategy.answerZh}
-                  answerEn={strategy.answerEn}
-                />
+                  ref={strategy.id === lastStrategyId ? strategyAnchorRef : null}
+                >
+                  <StrategyCard
+                    title={strategy.title}
+                    bullets={strategy.bullets}
+                    roundId={strategy.roundId}
+                    answerZh={strategy.answerZh}
+                    answerEn={strategy.answerEn}
+                  />
+                </div>
               ))
             )}
-            {aiThinking ? (
-              <div
-                role="status"
-                aria-label="AI 思考中"
-                className="flex items-center gap-2 self-start rounded-xl border-4 border-black bg-white px-3 py-2 shadow-[4px_4px_0_0_#fbf061]"
-              >
-                <FontAwesomeIcon
-                  icon={faBrain}
-                  aria-hidden="true"
-                  className="animate-pulse text-mortyYellow [filter:drop-shadow(0_1px_0_#000)]"
-                />
-                <span className="text-xs font-bold uppercase text-gray-600">AI 思考中</span>
-                <span aria-hidden="true" className="flex items-center gap-1">
-                  {[0, 1, 2].map((dot) => (
-                    <span
-                      key={dot}
-                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-mortyYellow"
-                      style={{ animationDelay: `${dot * 150}ms` }}
-                    />
-                  ))}
-                </span>
-              </div>
-            ) : null}
+            {aiThinking ? <ThinkingCard nodeRef={thinkingAnchorRef} /> : null}
           </section>
         </main>
 

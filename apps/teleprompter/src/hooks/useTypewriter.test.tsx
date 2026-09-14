@@ -17,7 +17,7 @@ describe('useTypewriter', () => {
     vi.unstubAllGlobals();
   });
 
-  test('reveals exactly text.length characters after 40 × text.length ms', () => {
+  test('reveals exactly text.length characters after interval × text.length ms', () => {
     const text = 'hello nex'; // 9 chars
     const { result } = renderHook(() => useTypewriter(text, 40));
 
@@ -30,6 +30,16 @@ describe('useTypewriter', () => {
 
     act(() => {
       vi.advanceTimersByTime(40 * 5);
+    });
+    expect(result.current).toBe(text);
+  });
+
+  test('defaults to the 20ms cadence (UAT-14: subtitles keep up with speech)', () => {
+    const text = 'hi'; // 2 chars
+    const { result } = renderHook(() => useTypewriter(text));
+
+    act(() => {
+      vi.advanceTimersByTime(20 * 2);
     });
     expect(result.current).toBe(text);
   });

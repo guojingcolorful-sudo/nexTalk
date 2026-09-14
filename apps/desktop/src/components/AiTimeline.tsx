@@ -7,10 +7,18 @@ import { useTypewriter } from '../hooks/useTypewriter';
 
 /**
  * TypedLine — one line revealed character by character (UAT-10, the desktop
- * port of the phone's typing; 40ms/char, instant under reduced motion).
+ * port of the phone's typing; instant under reduced motion).
  */
-function TypedLine({ text, className }: { text: string; className?: string }) {
-  const shown = useTypewriter(text);
+function TypedLine({
+  text,
+  className,
+  intervalMs = 20,
+}: {
+  text: string;
+  className?: string;
+  intervalMs?: number;
+}) {
+  const shown = useTypewriter(text, intervalMs);
   return <p className={className}>{shown}</p>;
 }
 
@@ -53,6 +61,7 @@ function StrategyNode({ item, nodeRef }: { item: StrategyItem; nodeRef?: Ref<HTM
                 <TypedLine
                   key={`${item.id}-zh`}
                   text={item.answerZh}
+                  intervalMs={12}
                   className="min-h-[1.5em] whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white"
                 />
               </div>
@@ -65,6 +74,7 @@ function StrategyNode({ item, nodeRef }: { item: StrategyItem; nodeRef?: Ref<HTM
                 <TypedLine
                   key={`${item.id}-en`}
                   text={item.answerEn}
+                  intervalMs={12}
                   className="min-h-[1.5em] whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-white"
                 />
               </div>
