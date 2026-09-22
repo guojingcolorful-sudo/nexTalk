@@ -62,7 +62,7 @@ None — discussion stayed within phase scope.
 
 ## Project Constraints (from CLAUDE.md)
 
-Directives extracted from `<home>/nexTalk/CLAUDE.md` that the planner must honor:
+Directives extracted from `<repo-root>/CLAUDE.md` that the planner must honor:
 
 - **GSD workflow enforcement:** No direct repo edits outside a GSD workflow — work must start through `/gsd:quick`, `/gsd:debug`, or `/gsd:execute-phase`. Planning artifacts must stay in sync with execution.
 - **Tech stack (constraints section):** Tauri + Rust desktop; mobile H5 (React + WebSocket); AI capabilities all cloud-API (none in Phase 1 — SimSource only); macOS 12.7 compatibility; neobrutalism design system per spec V1.0 (green=user/pronunciation, yellow=AI/strategy, blue=translation/system); reference HTML is the visual baseline.

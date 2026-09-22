@@ -7,3 +7,14 @@ test-results/
 .DS_Store
 *.log
 .vite/
+
+# Local Claude settings (machine-specific, never published)
+.claude/
+
+AIåä¼ è¯.txt
+è®¾è®¡è§è.docx
+
+# Private input documents (requirement/design sources - not for publication)
+AI 同传.docx
+AI同传译.txt
+设计规范.docx
