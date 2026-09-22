@@ -1,66 +1,66 @@
 # 极言 NexTalk
 
-AI 跨语言实时面试辅助系统。让你**以母语思考、以本人音色讲出地道英文**——在跨国技术面试中，你讲中文，系统实时翻译并以克隆的你本人音色输出流利英文；手机作为提词器，实时滚动双语字幕并给出基于简历与题库的 AI 回答策略。
+An AI real-time cross-language interview copilot. Think in your native language, speak fluent English in **your own cloned voice**: during international technical interviews you speak Chinese, and NexTalk transcribes, translates, and speaks out fluent English in a clone of your voice — while your phone acts as a teleprompter, scrolling bilingual subtitles in real time and surfacing AI answer strategies grounded in your resume.
 
-**Core Value:** 面试官听到的是无缝衔接的英文回答，你看到的是实时字幕与回答策略——端到端延迟 ≤ 2 秒。
+**Core Value:** the interviewer hears seamless English answers; you see live subtitles and answer strategies — end-to-end latency ≤ 2 seconds.
 
-## 功能
+## Features
 
-- **桌面双窗口**：340×680 微型控制台（中枢：隐形模式、手机配对、知识库、资产入口）+ 860×680 扩展视图（左实时字幕、右 AI 时间线）
-- **手机 H5 提词器**：扫码即用（无需安装 App），上半屏双语字幕、下半屏 AI 辅助；支持熄屏保持、断线自动重连续传
-- **双向会话控制**：手机「开始提词」与桌面「开始模拟会话」是同一功能，任一端发起，另一端同步
-- **AI 面试辅助**：面试官提问实时记录 → 「AI 思考中」过程文字逐步呈现 → 策略要点逐条浮现 → **中英文完整智能回答**逐字打出
-- **语言切换**：中 / EN / EN+中 过滤式切换，桌面与手机实时同步
-- **模拟会话演示**：四轮确定性模拟面试（全部内容标注「模拟数据」），完整的听题 → 思考 → 回答节奏
-- **厂商实验框架**（`tools/vendor-experiments/`）：STT A/B 协议、克隆盲听测试集、RTT 测量工具——零密钥政策，实验结论决定真实管线选型
+- **Desktop dual-window app**: a 340×680 mini console (stealth mode, phone pairing, knowledge base, assets) plus an 860×680 extended view (live subtitles left, AI timeline right)
+- **Phone H5 teleprompter**: scan a QR code and start — no app install. Bilingual subtitles on top, AI assistant below; wake-lock on plain `http://` LAN origins and automatic reconnect with resume
+- **Bidirectional session control**: the phone's 开始提词 (Start) and the desktop's 开始模拟会话 (Start Session) are the same function — either side starts and stops the session, and the other follows
+- **AI interview assistant**: interviewer questions are recorded in real time → an "AI thinking" card reveals its reasoning step by step → strategy bullets cascade in → a complete bilingual AI answer types itself out
+- **Language switching**: 中 / EN / EN+中 filtering, synced live between desktop and phone
+- **Simulated demo session**: a deterministic 4-round mock interview (every line badged 模拟数据) with a natural hear → think → answer cadence
+- **Vendor experiment framework** (`tools/vendor-experiments/`): STT A/B protocol, blind clone-listening test set, RTT measurement tool — a zero-keys policy; experiment results decide the real pipeline's provider selection
 
-## 技术栈
+## Tech Stack
 
-| 层 | 技术 |
-|----|------|
-| 桌面壳 | Tauri 2.11 + Rust（axum LAN 服务器、tokio 广播、确定性模拟引擎） |
-| 桌面 UI / 手机 H5 | React 19 + TypeScript + Vite 7（同一套前端，safari15 目标，macOS 12.7 可用） |
-| 跨端同步 | 局域网 WebSocket（128 位配对 token 门禁），单事件模型双传输 |
-| 契约 | pnpm workspace：`packages/protocol`（闭合联合类型 + 运行时守卫）、`packages/design-tokens`（新粗野主义设计令牌） |
-| 测试 | Vitest · Playwright（32 项 e2e）· cargo test（34 单测 + 4 集成） |
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | Tauri 2.11 + Rust (axum LAN server, tokio broadcast, deterministic simulation engine) |
+| Desktop UI / Phone H5 | React 19 + TypeScript + Vite 7 (one shared frontend, `safari15` target, runs on macOS 12.7) |
+| Cross-device sync | LAN WebSocket gated by a 128-bit pairing token; one event model, two transports |
+| Contracts | pnpm workspace: `packages/protocol` (closed union types + runtime guards), `packages/design-tokens` (neobrutalism design tokens) |
+| Testing | Vitest · Playwright (32 e2e tests) · cargo test (34 unit + 4 integration) |
 
-## 快速开始
+## Quick Start
 
-前置：macOS 12.7+（Monterey 兼容）、Node 20+、pnpm、Rust 工具链（rustup）。
+Prerequisites: macOS 12.7+ (Monterey-compatible), Node 20+, pnpm, Rust toolchain (rustup).
 
 ```bash
 pnpm install
-pnpm --filter @nextalk/desktop dev:tauri   # 启动桌面应用（双窗口）
+pnpm --filter @nextalk/desktop dev:tauri   # launches the desktop app (both windows)
 ```
 
-桌面控制台会显示配对二维码，手机同 Wi-Fi 扫码即进入提词器。
+The console shows a pairing QR code — scan it with a phone on the same Wi-Fi to open the teleprompter.
 
-测试：
+Tests:
 
 ```bash
-pnpm -r test                                  # 全部单元测试
-pnpm exec playwright test                     # e2e（含模拟会话全流程）
+pnpm -r test                                  # all unit suites
+pnpm exec playwright test                     # e2e (incl. the full demo session)
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-## 仓库结构
+## Repository Layout
 
 ```
-apps/desktop/         Tauri 桌面壳（Rust src-tauri/ + React UI）
-apps/teleprompter/    手机 H5 提词器
-packages/protocol/    线协议：ServerEvent/ClientMessage 联合类型 + isServerEvent 守卫
-packages/design-tokens/ 新粗野主义设计令牌 + Tailwind 预设
-e2e/                  Playwright 全流程测试
-tools/vendor-experiments/ 供应商实验框架（零密钥）
-.planning/            开发规划档案（ROADMAP / 阶段计划 / 验证报告）
+apps/desktop/           Tauri desktop shell (Rust src-tauri/ + React UI)
+apps/teleprompter/      phone H5 teleprompter
+packages/protocol/      wire protocol: ServerEvent/ClientMessage unions + isServerEvent guard
+packages/design-tokens/ neobrutalism design tokens + Tailwind preset
+e2e/                    Playwright end-to-end suites
+tools/vendor-experiments/ vendor experiment framework (zero keys)
+.planning/              development planning archive (roadmap, phase plans, verification reports)
 ```
 
-## 当前状态
+## Current Status
 
-- **Phase 1 完成**：全 UI + 模拟会话演示（5/5 计划，自动化测试全绿，人工 UAT 通过）
-- **Phase 2 进行中**：真实云管线（STT→翻译→克隆 TTS）+ 延迟测量装置；供应商选型由 `tools/vendor-experiments/` 的 A/B 实测决定
+- **Phase 1 complete**: full UI + simulated demo session (5/5 plans, all automated gates green, human UAT passed)
+- **Phase 2 in progress**: the real cloud pipeline (STT → translate → clone TTS) with a latency rig as the gate; provider selection will be decided by the A/B experiments in `tools/vendor-experiments/`
 
-## 隐私
+## Privacy
 
-- 纯本地工具：录音、逐字稿、复盘报告均不传任何自有云端；v1 无后端
-- AI 能力全部走云端 API 调用时最小化数据暴露；实验框架不提交任何密钥（`.env` 不入库）
+- Purely local tool: recordings, transcripts, and review reports never leave the machine; v1 has no backend of its own
+- Cloud AI calls minimize data exposure; the experiment framework never commits any key (`.env` is gitignored)
