@@ -23,3 +23,7 @@ AI同传译.txt
 .env
 .env.*
 !.env.example
+
+# Voice-clone training samples (biometric data — never commit)
+voice-sample.*
+samples/
