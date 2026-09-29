@@ -158,7 +158,7 @@ apps/desktop/src-tauri/src/
 - STT 中文（用户路径）：Gemini Live 文本模态 / Deepgram Nova-3 / 讯飞流式听写——实验定
 - STT 英文（面试官路径）：Deepgram Nova-3 / 讯飞——实验定
 - 翻译：Gemini Flash-Lite 或 DeepSeek-chat，temperature 0（翻译确定性），max_tokens 按片段（单句）
-- TTS：MiniMax Speech 2.6 Turbo / 火山复刻 / Cartesia——实验定（克隆音色）
+- TTS：火山复刻 ICL 2.0（已定，D-11：盲听 MOS 5.0/5.0，国内直连，1.3s 合成；备用供应商 v1 可免，失败走降级显示原文）
 - **全链路温度 0、无创意采样、无思维链**（R1 类推理模型在实时翻译禁用——延迟陷阱）
 
 **Core Pattern:**

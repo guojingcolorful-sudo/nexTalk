@@ -30,7 +30,7 @@
 | STT — interviewer's English (subtitles/copilot) | (same Deepgram) | **Deepgram Nova-3** (streaming) | Still the latency leader (sub-300ms, ~$0.0048/min) and English is its strongest language; keeps a second independent vendor path |
 | Translation (C→EN incremental) | GPT-4o-mini | **Gemini 3.5 Flash-Lite** (or 3.5 Flash for quality) | GPT-4o-mini is legacy: ~4x slower throughput, worse quality. Flash-Lite $0.30/$2.50 per MTok, ~350 t/s, ~0.1-0.2s TTFT |
 | Copilot agent (resume-grounded strategy) | GPT-4o / Claude 3.5 Sonnet | **Gemini 3.5 Flash** primary; **Claude Sonnet 5** quality alt; **Haiku 4.5** for micro-tasks | Gemini 3.5 Flash: 1M ctx (resume+题库 fit with 90% prompt-cache discount), 280+ t/s for the ~1.5s strategy budget, strong Chinese. Claude Sonnet 5: best-in-class tool-use/agentic (Aug 2026 Agent Arena #1-#3 are Anthropic) |
-| TTS voice cloning (user's voice, C→EN) | ElevenLabs | **MiniMax Speech 2.6 Turbo** primary; **Cartesia Sonic 3.5** latency alt; **Fish Audio S2.1 Pro** budget alt | ElevenLabs: known Mandarin weaknesses (tone errors, weak emotion control in Chinese) + ~$300/M chars (5-10x alternatives) + v3 not realtime-optimized. MiniMax: best Chinese cross-lingual cloning (10s clone, ~99% similarity, sub-250ms, ~$10-40/M chars) |
+| TTS voice cloning (user's voice, C→EN) | ElevenLabs | **火山复刻 ICL 2.0** primary (D-11 已定); **Cartesia Sonic 3.5** latency alt; **Fish Audio S2.1 Pro** budget alt | ElevenLabs: known Mandarin weaknesses (tone errors, weak emotion control in Chinese) + ~$300/M chars (5-10x alternatives) + v3 not realtime-optimized. 火山复刻 ICL 2.0: 盲听 MOS 5.0/5.0 满分（用户判定）、国内直连、1.3s 合成；MiniMax 国际站不再必需（D-11，2026-09-29 盲听实验） |
 | Web search (copilot grounding) | Tavily API | **Brave Search API** (+ LLM Context API) | Tavily acquired by Nebius (Feb 2026) → roadmap uncertainty; Brave fastest (669ms), largest independent index, BrowseComp 38.3% vs Tavily 19.3%, $5/1K queries |
 | Unified S2S option | Why not primary |
 |---|---|
@@ -55,7 +55,7 @@
 | tokio-tungstenite | latest | WebSocket: Gemini Live API, Deepgram, mobile H5 | All three streaming endpoints are WSS; one client library for everything |
 | axum | latest | LAN server: H5 hosting + QR pairing endpoint | Lightweight tokio-native HTTP server inside the desktop app |
 | qrcode (rust) | latest | LAN pairing QR generation | No deps on external services; QR encodes `ws://<lan-ip>:<port>` |
-| reqwest | latest | Streaming REST for TTS (MiniMax/Cartesia/Fish) | HTTP chunked/SSE consumption of TTS streams; async-friendly |
+| reqwest | latest | Streaming REST for TTS (火山复刻 ICL 2.0) | HTTP chunked/SSE consumption of TTS streams; async-friendly |
 | rubato | latest | Sample-rate resampling (44.1k↔48k, STT 16k) | Needed at every provider boundary; fast polyphase resampler |
 | hound | latest | Dual-track WAV recording (user track / interviewer track) | Zero-dep WAV writer for post-meeting assets; 32-bit float, 48kHz |
 
@@ -69,7 +69,7 @@
 | Copilot agent | **Gemini 3.5 Flash** (May 2026, 1M ctx, 280+ t/s, cache reads $0.15/MTok) | `gemini-3.5-flash` | ~$0.05-0.2/question with prompt caching | HIGH pricing / MEDIUM best-model |
 | Copilot quality alternative | **Claude Sonnet 5** (Jun 2026; $2/$10 intro until Aug 31 2026 → $3/$15) | `claude-sonnet-5` (or stable `claude-sonnet-4-6`) | — | HIGH |
 | Copilot micro-tasks (question-completeness detection, summary) | **Claude Haiku 4.5** ($1/$5, 200K ctx) or `gemini-3.5-flash-lite` | `claude-haiku-4-5` | pennies | HIGH |
-| TTS voice clone (user's voice, C→EN) | **MiniMax Speech 2.6 Turbo** (10s clone, 40+ langs, sub-250ms, ~99% similarity) | `speech-2.6-turbo` via **api.minimax.io** (international endpoint — cloning NOT available on mainland `api.minimax.chat`) | ~$10-40/MTok chars (≈$0.5-3 per interview hour) | HIGH market / MEDIUM clone-quality (must A/B listening test) |
+| TTS voice clone (user's voice, C→EN) | **火山复刻 ICL 2.0**（D-11 已定，盲听 MOS 5.0/5.0） | 火山语音复刻 2.0（声音复刻 ICL 2.0），国内直连，1.3s 合成 | 实验期实测（tools/vendor-experiments） | HIGH（实测满分，2026-09-29） |
 | TTS latency alternative | **Cartesia Sonic 3.5** (sub-50ms TTFA, 42 langs incl. Chinese, instant clone 3-10s) | `sonic-3.5` WebSocket | Pro $5/mo, ~$35-50/MTok | MEDIUM (Chinese clone quality less battle-tested) |
 | TTS budget/free alternative | **Fish Audio S2.1 Pro** (141ms TTFA measured, 83 langs, 10-30s clone) | `s2.1-pro` (free `s2.1-pro-free` tier, no SLA) | $15/MB = **$45/MTok for CJK chars** (3 bytes/char gotcha) | MEDIUM |
 | Web search | **Brave Search API** (+ LLM Context API for LLM-ready output) | Brave v2 endpoints | $5/1K queries | MEDIUM-HIGH |
@@ -115,7 +115,7 @@
 |-------------|-------------|-------------------------|
 | Gemini Live (text mode) for user STT+translate | Deepgram Nova-3 + separate LLM translate | If Live API interim-text behavior proves unsuitable or latency/accuracy fails validation; classic 3-hop cascade, still fine |
 | Deepgram Nova-3 for interviewer STT | OpenAI `gpt-4o-transcribe` ($0.006/min, 99+ langs) | If single-vendor OpenAI billing/ecosystem matters; English+Chinese both solid there |
-| MiniMax Speech 2.6 Turbo (clone TTS) | Cartesia Sonic 3.5 | If the cascade needs more latency headroom (sub-100ms TTFA) or MiniMax Turbo's 22kHz/jargon artifacts fail the listening test |
+| 火山复刻 ICL 2.0 (clone TTS) | Cartesia Sonic 3.5 / MiniMax Speech 2.6 Turbo | If the cascade needs more latency headroom (sub-100ms TTFA) or 火山's jargon artifacts fail the listening test; MiniMax 为第二备选（国际站） |
 | MiniMax / Cartesia (clone TTS) | Fish Audio S2.1 Pro | Budget MVP / free-tier prototyping (`s2.1-pro-free`); CJK char billing is 3x — factor into cost |
 | MiniMax / Cartesia / Fish | ElevenLabs Flash v2.5 | Only if English-voice quality benchmark must be beaten and Mandarin flaws acceptable; ~5-10x cost |
 | Gemini 3.5 Flash (copilot) | Claude Sonnet 5 / Sonnet 4.6 | When strategy quality beats latency (hard interviews, ambiguous questions); Anthropic = best tool-use/agentic Aug 2026 |
@@ -130,7 +130,7 @@
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| ElevenLabs as primary clone TTS | Mandarin weaknesses documented across 2026 reviews (tone errors, weak Chinese emotion, awkward code-switching); ~$300/MTok = 5-10x alternatives; v3 not realtime-optimized (250ms inference); Flash v2.5 is the only realtime tier and quality drops | MiniMax Speech 2.6 Turbo (primary) / Cartesia Sonic 3.5 / Fish S2.1 Pro |
+| ElevenLabs as primary clone TTS | Mandarin weaknesses documented across 2026 reviews (tone errors, weak Chinese emotion, awkward code-switching); ~$300/MTok = 5-10x alternatives; v3 not realtime-optimized (250ms inference); Flash v2.5 is the only realtime tier and quality drops | 火山复刻 ICL 2.0 (primary, D-11) / Cartesia Sonic 3.5 / Fish S2.1 Pro |
 | GPT-4o-mini for translation | Legacy (Oct 2023 knowledge), ~4x slower throughput than Gemini Flash-class (54-101 t/s vs 204-359 t/s), beaten on quality | Gemini 3.5 Flash-Lite / 3.5 Flash |
 | Gemini 3.5 Live Translate as core pipeline | ~2.9s first-audio (independent LiveLingo benchmark) exceeds the 2s budget; not a voice clone; voice-instability issues; audio-only, no tool use | Cascade: Gemini Live text mode (STT+translate) → MiniMax clone TTS |
 | gpt-realtime-translate as core pipeline | **No voice selection whatsoever**; only 13 output languages; no tools; single-session-per-language | Same cascade |
@@ -166,7 +166,7 @@
 | Vite 7 build output | Safari 15.6 | Configure `build.target: ['safari15', 'es2022']`; no top-level-await-only syntax |
 | Claude Sonnet 5 intro pricing | Billing | $2/$10 intro ends **Aug 31, 2026** → $3/$15 from Sep 1 — price into the roadmap (today is Aug 26) |
 | Fish Audio free tier | SLA | `s2.1-pro-free` no latency/SLA guarantee; free extension through **Aug 31, 2026** — paid path required for production |
-| MiniMax | Region split | Cloning + HD models only on `api.minimax.io` (international); keys are NOT interchangeable between international and mainland platforms |
+| 火山复刻 ICL 2.0 | v1 主供应商（D-11） | 国内直连、1.3s 合成、盲听 MOS 5.0/5.0；备用供应商 v1 可免（失败走降级显示原文） |
 | Gemini Live API | Audio formats | Input PCM 16-bit/16kHz mono, output 16-bit/24kHz mono, 100ms chunks — resample everything through rubato at the API boundary |
 
 ## Sources

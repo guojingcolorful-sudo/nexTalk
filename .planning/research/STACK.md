@@ -14,8 +14,10 @@ The requirement doc's 2024-25 picks (Deepgram / GPT-4o-mini / GPT-4o+Claude 3.5 
 | STT — interviewer's English (subtitles/copilot) | (same Deepgram) | **Deepgram Nova-3** (streaming) | Still the latency leader (sub-300ms, ~$0.0048/min) and English is its strongest language; keeps a second independent vendor path |
 | Translation (C→EN incremental) | GPT-4o-mini | **Gemini 3.5 Flash-Lite** (or 3.5 Flash for quality) | GPT-4o-mini is legacy: ~4x slower throughput, worse quality. Flash-Lite $0.30/$2.50 per MTok, ~350 t/s, ~0.1-0.2s TTFT |
 | Copilot agent (resume-grounded strategy) | GPT-4o / Claude 3.5 Sonnet | **Gemini 3.5 Flash** primary; **Claude Sonnet 5** quality alt; **Haiku 4.5** for micro-tasks | Gemini 3.5 Flash: 1M ctx (resume+题库 fit with 90% prompt-cache discount), 280+ t/s for the ~1.5s strategy budget, strong Chinese. Claude Sonnet 5: best-in-class tool-use/agentic (Aug 2026 Agent Arena #1-#3 are Anthropic) |
-| TTS voice cloning (user's voice, C→EN) | ElevenLabs | **MiniMax Speech 2.6 Turbo** primary; **Cartesia Sonic 3.5** latency alt; **Fish Audio S2.1 Pro** budget alt | ElevenLabs: known Mandarin weaknesses (tone errors, weak emotion control in Chinese) + ~$300/M chars (5-10x alternatives) + v3 not realtime-optimized. MiniMax: best Chinese cross-lingual cloning (10s clone, ~99% similarity, sub-250ms, ~$10-40/M chars) |
+| TTS voice cloning (user's voice, C→EN) | ElevenLabs | **MiniMax Speech 2.6 Turbo** primary（⚠️ 已被 D-11 取代：火山复刻 ICL 2.0）; **Cartesia Sonic 3.5** latency alt; **Fish Audio S2.1 Pro** budget alt | ElevenLabs: known Mandarin weaknesses (tone errors, weak emotion control in Chinese) + ~$300/M chars (5-10x alternatives) + v3 not realtime-optimized. MiniMax: best Chinese cross-lingual cloning (10s clone, ~99% similarity, sub-250ms, ~$10-40/M chars) |
 | Web search (copilot grounding) | Tavily API | **Brave Search API** (+ LLM Context API) | Tavily acquired by Nebius (Feb 2026) → roadmap uncertainty; Brave fastest (669ms), largest independent index, BrowseComp 38.3% vs Tavily 19.3%, $5/1K queries |
+
+> **⚠️ Superseded（2026-09-29）:** 本文档所有 TTS 推荐行为实验前结论。盲听实验后 TTS 主供应商已定为**火山复刻 ICL 2.0**（D-11：盲听 MOS 5.0/5.0、国内直连、1.3s 合成），MiniMax 国际站不再必需。本文件保留作研究过程记录，选型以 `.planning/phases/02-real-cloud-pipeline-audio-core/02-CONTEXT.md` 的 D-11 为准。
 
 **Critical finding — do NOT replace the cascade with a unified S2S model:**
 
@@ -136,7 +138,7 @@ brew install blackhole-2ch
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| ElevenLabs as primary clone TTS | Mandarin weaknesses documented across 2026 reviews (tone errors, weak Chinese emotion, awkward code-switching); ~$300/MTok = 5-10x alternatives; v3 not realtime-optimized (250ms inference); Flash v2.5 is the only realtime tier and quality drops | MiniMax Speech 2.6 Turbo (primary) / Cartesia Sonic 3.5 / Fish S2.1 Pro |
+| ElevenLabs as primary clone TTS | Mandarin weaknesses documented across 2026 reviews (tone errors, weak Chinese emotion, awkward code-switching); ~$300/MTok = 5-10x alternatives; v3 not realtime-optimized (250ms inference); Flash v2.5 is the only realtime tier and quality drops | MiniMax Speech 2.6 Turbo (primary) / Cartesia Sonic 3.5 / Fish S2.1 Pro（⚠️ 已被 D-11 取代：火山复刻 ICL 2.0） |
 | GPT-4o-mini for translation | Legacy (Oct 2023 knowledge), ~4x slower throughput than Gemini Flash-class (54-101 t/s vs 204-359 t/s), beaten on quality | Gemini 3.5 Flash-Lite / 3.5 Flash |
 | Gemini 3.5 Live Translate as core pipeline | ~2.9s first-audio (independent LiveLingo benchmark) exceeds the 2s budget; not a voice clone; voice-instability issues; audio-only, no tool use | Cascade: Gemini Live text mode (STT+translate) → MiniMax clone TTS |
 | gpt-realtime-translate as core pipeline | **No voice selection whatsoever**; only 13 output languages; no tools; single-session-per-language | Same cascade |
