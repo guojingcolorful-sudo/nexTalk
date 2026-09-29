@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 5: AI Interview Assistant** - Auto question-end detection, resume-grounded streaming strategy cards in ~1.5s
 - [ ] **Phase 6: Recording + Review Assets** - Consent gate, dual-track recording, transcript export, review report
 - [ ] **Phase 7: Productization** - Signed/notarized distribution, clean-machine install, compliance, onboarding polish
+- [ ] **Phase 8: Beta Infrastructure + Commercialization** - Account system (invite code + email), telemetry, admin observability dashboard, minimal remote gateway, minute-bundle pricing — before public beta
 
 ## Phase Details
 
@@ -202,10 +203,27 @@ Plans:
 
 **Research notes**: Pricing survey (must undercut $89-148/mo interview copilots; positioned as a language tool); performance traps on old Intel Macs (CPU starvation) and API cost caps.
 
+### Phase 8: Beta Infrastructure + Commercialization
+
+**Goal**: Before public beta the product becomes observable and controllable as a service: invite-code account system, telemetry aggregation, an admin dashboard (cost / errors / bottleneck analysis), a minimal remote gateway (server-held keys) and minute-bundle pricing live
+**Mode:** mvp
+**Depends on**: Phase 7 (productized app) — telemetry design happens earlier (Phase 2 local JSONL reuse, D-18)
+**Requirements**: (commercialization requirements TBD at planning — pricing model decided: minute-bundle subscription + free beta with invite codes)
+**Success Criteria** (what must be TRUE):
+
+  1. Beta onboarding: user registers with email + invite code; per-user usage funnel observable in the admin dashboard
+  2. Admin dashboard shows cost / error / bottleneck analysis, fed by telemetry aggregated from the local JSONL trace stream (no second instrumentation layer)
+  3. Remote gateway (minimal): holds provider keys server-side, applies retry / circuit-breaker / budget gate; local-first direct connection remains the v1 fallback
+  4. Minute-bundle pricing implemented (monthly minutes, overage purchase); marginal cost target ≤ $3.5 per interview hour
+
+**Plans**: TBD at planning (decisions from 2026-09-29 discuss: account → telemetry → observability ordering; local gateway first, remote gateway with commercialization)
+
+**Research notes**: Pricing model (minute-bundle subscription; free beta + invite code + funnel observation) captured in .planning/todos/pending/pricing-model.md and 02-DISCUSSION-LOG.md.
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -216,3 +234,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. AI Interview Assistant | 0/4 | Not started | - |
 | 6. Recording + Review Assets | 0/4 | Not started | - |
 | 7. Productization | 0/4 | Not started | - |
+| 8. Beta Infrastructure + Commercialization | 0/? | Not started | - |
