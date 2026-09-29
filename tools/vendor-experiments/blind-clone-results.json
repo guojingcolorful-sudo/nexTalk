@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-29",
+  "test": "克隆音色盲听对比（3 样本乱序播放）",
+  "samples": [
+    {"id": "blind-1", "identity": "预置音色 zh_female_vv_uranus_bigtts", "similarity": 1, "naturalness": 2},
+    {"id": "blind-2", "identity": "克隆音色（火山官方长段落试听）", "similarity": 5, "naturalness": 5},
+    {"id": "blind-3", "identity": "克隆音色 S_9k337yqg2（训练语料外短句）", "similarity": 5, "naturalness": 5}
+  ],
+  "verdict": "火山 ICL 2.0 克隆音色 MOS 5.0/5.0（达标线 3.5），跨文本泛化验证通过；预置音色作为对照得 1/2，证明评分有效",
+  "decision": "TTS 主供应商 = 火山声音复刻 2.0（国内直连）；MiniMax 国际站不再必需"
+}
