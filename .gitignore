@@ -18,3 +18,8 @@ AIåä¼ è¯.txt
 AI 同传.docx
 AI同传译.txt
 设计规范.docx
+
+# Secrets: local-only environment files
+.env
+.env.*
+!.env.example
