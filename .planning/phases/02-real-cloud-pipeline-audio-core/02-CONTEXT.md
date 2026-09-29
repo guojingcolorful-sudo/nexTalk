@@ -72,6 +72,9 @@
 - `.planning/REQUIREMENTS.md` — 本阶段需求：AUDI-03/04/05/06。
 - `.planning/PROJECT.md` — 项目关键决策：2s 预算、纯本地 v1、隐私最小暴露、2026 供应商再评估结论（CLAUDE.md 内）。
 
+### 需求口径（治理）
+- `.planning/ref/ai-governance-requirements.md` — **AI 输出治理需求文档**（GOV-01..GOV-22）：用户视角的需求与验收标准，与本文档决策一一对应；规划代理需同时读。
+
 ### 技术研究
 - `CLAUDE.md` — 2026 供应商再评估表（各阶段 Primary/Alternative、成本、置信度标注）；webrtc-audio-processing AEC3、rubato 重采样、silero-vad 等管线组件选型。
 - `.planning/research/STACK.md` — 技术栈定案与供应商候选推理。

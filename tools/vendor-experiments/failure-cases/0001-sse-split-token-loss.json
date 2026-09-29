@@ -1,0 +1,11 @@
+{
+  "id": "0001",
+  "title": "SSE 事件跨 TCP 块截断导致 token 丢失（800 数字消失）",
+  "root_cause": "解析层截断（其他）：按 TCP chunk 逐行解析 SSE，事件被分块时 JSON 解析失败被静默丢弃",
+  "source": "人工抽检（translation-probe.mjs v1，2026-09-29 实验）",
+  "input": "你能详细说一下你优化数据库的具体步骤吗？我们通过慢查询日志发现了商品详情页的连表查询瓶颈，单次响应超过 800 毫秒。",
+  "wrong_output": "…with a single response exceeding  milliseconds.（800 丢失，留双空格）",
+  "expected_output": "…with a single response exceeding 800 milliseconds.",
+  "fix": "SSE 按 \\n\\n 边界缓冲解析完整事件；数字一致性校验层（D-04）应能拦截此类输出",
+  "regression_test": "probe 复测断言译文包含全部源文数字（800）"
+}
