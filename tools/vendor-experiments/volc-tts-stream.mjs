@@ -18,6 +18,8 @@ import WebSocket from 'ws';
 const APP_ID = process.env.VOLC_TTS_APP_ID;
 const TOKEN = process.env.VOLC_TTS_ACCESS_TOKEN;
 const VOICE = process.env.VOLC_TTS_VOICE ?? 'zh_female_vv_uranus_bigtts';
+// seed-tts-2.0 = 预置音色；seed-icl-2.0 = 克隆音色（speaker 填 S_xxx 或 ICL_xxx）
+const RESOURCE = process.env.VOLC_TTS_RESOURCE ?? 'seed-tts-2.0';
 const TEXT =
   process.argv[2] ??
   '你能详细说一下你优化数据库的具体步骤吗？我们通过慢查询日志发现了商品详情页的连表查询瓶颈。';
@@ -75,7 +77,7 @@ function parse(data) {
 const ws = new WebSocket(URL, {
   headers: {
     'X-Api-Key': TOKEN,
-    'X-Api-Resource-Id': 'seed-tts-2.0',
+    'X-Api-Resource-Id': RESOURCE,
     'X-Api-Request-Id': crypto.randomUUID(),
   },
   maxPayload: 20 * 1024 * 1024,
