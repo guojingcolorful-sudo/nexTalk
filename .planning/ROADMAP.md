@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 2: Real Cloud Pipeline + Audio Core** - Cascaded streaming STT→translate→TTS with cloned voice, ≤2s e2e, latency rig as gate
 - [ ] **Phase 3: Virtual Audio Device Integration** - BlackHole install wizard, aggregate multi-output device, meeting-app audio loop
 - [ ] **Phase 4: Stealth + Desktop Completion** - Cmd+Shift+H real orderOut hiding verified against real meeting apps, glossary term protection
-- [ ] **Phase 5: AI Interview Assistant** - Auto question-end detection, resume-grounded streaming strategy cards in ~1.5s
+- [ ] **Phase 5: AI Interview Assistant** - Auto question-end detection; resume+glossary RAG with web-search evidence → answer framework (~1.5s), every point traceable, no fabrication (GOV-23)
 - [ ] **Phase 6: Recording + Review Assets** - Consent gate, dual-track recording, transcript export, review report
 - [ ] **Phase 7: Productization** - Signed/notarized distribution, clean-machine install, compliance, onboarding polish
 - [ ] **Phase 8: Beta Infrastructure + Commercialization** - Account system (invite code + email), telemetry, admin observability dashboard, minimal remote gateway, minute-bundle pricing — before public beta
