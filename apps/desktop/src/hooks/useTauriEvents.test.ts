@@ -100,6 +100,28 @@ describe('useTauriEvents', () => {
     expect(result.current.languageMode).toBeNull();
   });
 
+  it('clears the stream on the terminal status so 停止 empties both panes', async () => {
+    const { result } = renderHook(() => useTauriEvents());
+    await waitForListeners('session');
+    await waitForListeners('session_status');
+
+    act(() => {
+      emit('session', { t: 'subtitle', id: 'r1-q', speaker: 'interviewer', seq: 1, zh: '问题', en: 'question', final: true });
+      emit('session', { t: 'strategy', id: 's1', roundId: 'r1', title: '策略', bullets: ['先给结论'] });
+      emit('session_status', { session: 'listening' });
+    });
+    expect(result.current.events).toHaveLength(2);
+
+    // Rust 发布 停止 的顺序：announce_status(session_status) → publish(session)。
+    act(() => {
+      emit('session_status', { session: 'ended' });
+      emit('session', { t: 'status', session: 'ended' });
+    });
+
+    expect(result.current.status).toBe('ended');
+    expect(result.current.events).toHaveLength(0);
+  });
+
   it('tracks session_status and phone_count with payload validation', async () => {
     const { result } = renderHook(() => useTauriEvents());
     await waitForListeners('session_status');

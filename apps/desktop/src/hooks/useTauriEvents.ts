@@ -64,6 +64,15 @@ export function useTauriEvents(): TauriEventsState {
   const [phoneCount, setPhoneCount] = useState<number | null>(null);
   const [languageMode, setLanguageMode] = useState<LanguagePref | null>(null);
 
+  // 停止: stop_session publishes the terminal status without a session_started
+  // marker, so the terminal transition also drops the rendered stream — the
+  // locked 停止 copy (当前字幕与策略将清空) must hold when the session stops,
+  // not only when the next one starts (WR-02/CR-01 follow-up).
+  const applyStatus = (next: SessionStatus): void => {
+    setStatus(next);
+    if (next === 'ended') setEvents([]);
+  };
+
   useEffect(() => {
     let alive = true;
     const unlisteners: UnlistenFn[] = [];
@@ -95,7 +104,7 @@ export function useTauriEvents(): TauriEventsState {
         if (batch.length === 0) return;
         setEvents((previous) => [...previous, ...batch]);
         for (const item of batch) {
-          if (item.t === 'status') setStatus(item.session);
+          if (item.t === 'status') applyStatus(item.session);
           // SYNC-03: the mode the phone applied arrives on the same stream, so
           // the desktop renders the change without a second channel.
           if (item.t === 'language') setLanguageMode(item.language);
@@ -106,7 +115,7 @@ export function useTauriEvents(): TauriEventsState {
     track(
       listen<unknown>('session_status', (event) => {
         const next = narrowStatus(event.payload);
-        if (next !== null) setStatus(next);
+        if (next !== null) applyStatus(next);
       }),
     );
 
