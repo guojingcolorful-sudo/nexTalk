@@ -421,6 +421,44 @@ test.describe('dual pane extended view', () => {
     await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
     await expect(page.getByRole('status', { name: '正在生成' })).toHaveCount(0);
   });
+
+  test('停止 from the header ends the session behind the locked confirm, keeping the window open', async ({ page }) => {
+    await page.goto('/#/dual');
+    await waitForListeners(page);
+
+    await emit(page, 'session_status', { session: 'listening' });
+    await emit(page, 'session', QUESTION_EVENT);
+    await expect(page.getByRole('region', { name: '实时字幕' })).toContainText(QUESTION_EN);
+
+    // 头部停止控件（MicStatusPill 旁）。
+    await page.getByRole('button', { name: '停止', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('停止会话？');
+    await expect(dialog).toContainText('当前字幕与策略将清空');
+
+    // 取消：不触达命令，会话继续。
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect((await calls(page)).map((call) => call.cmd)).not.toContain('stop_session');
+    await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+
+    // 确认：stop_session 到达命令层，弹窗关闭。
+    await page.getByRole('button', { name: '停止', exact: true }).click();
+    await dialog.getByRole('button', { name: '停止' }).click();
+    expect((await calls(page)).map((call) => call.cmd)).toContain('stop_session');
+    await expect(dialog).toHaveCount(0);
+
+    // Rust 发布终态：窗口保持打开，双栏回到锁定空态。
+    await emit(page, 'session_status', { session: 'ended' });
+    await expect(page).toHaveURL(/#\/dual$/);
+    await expect(page.getByRole('heading', { name: '扩展视图' })).toBeVisible();
+    await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '停止', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: '实时字幕' })).toContainText('等待语音输入');
+    await expect(page.getByRole('region', { name: '实时字幕' })).not.toContainText(QUESTION_EN);
+    await expect(page.getByRole('region', { name: 'AI 辅助' })).toContainText('AI 策略将自动生成');
+    expect((await calls(page)).map((call) => call.cmd)).not.toContain('plugin:window|close');
+  });
 });
 
 const VOICE_READING_TEXT =

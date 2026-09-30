@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBolt,
@@ -9,9 +10,11 @@ import {
 import type { ServerEvent } from '@nextalk/protocol';
 import AiTimeline, { isAiThinking, toTimelineItems } from '../components/AiTimeline';
 import ChatBubble from '../components/ChatBubble';
+import ConfirmModal from '../components/ConfirmModal';
 import EmptyState from '../components/EmptyState';
 import HeaderBar from '../components/HeaderBar';
 import MicStatusPill from '../components/MicStatusPill';
+import NeobrutalismButton from '../components/NeobrutalismButton';
 import PanelHeader from '../components/PanelHeader';
 import TypewriterDots from '../components/TypewriterDots';
 import ThinkingCard from '../components/ThinkingCard';
@@ -29,9 +32,15 @@ type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
  * reach React state), so a malformed payload renders nothing here. Per-bubble
  * language choice is local UI state; the session mode the phone applies
  * (SYNC-03) arrives on the same stream and seeds every untouched bubble.
+ *
+ * While the session runs, the header offers the red 停止 control behind the
+ * locked confirmation (UI-SPEC Copywriting Contract); confirming sends
+ * `stop_session` and the Rust terminal state drives both panes back to their
+ * empty states — the window itself stays open (no window API is touched).
  */
 export default function DualPanePage() {
   const { events, status, languageMode } = useTauriEvents();
+  const [confirmStop, setConfirmStop] = useState(false);
 
   const subtitles = useMemo(
     () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
@@ -44,6 +53,13 @@ export default function DualPanePage() {
 
   const generating = status === 'generating';
   const listening = status === 'listening' || generating;
+
+  // Same shape as ConsolePage: the destructive command only runs after the
+  // locked confirmation, and the dialog closes immediately either way.
+  const stopSession = () => {
+    setConfirmStop(false);
+    invoke('stop_session').catch((err) => console.error('stop_session failed', err));
+  };
 
   // UAT-9/13: the newest content of BOTH panes must stay in the MIDDLE of the
   // viewport, not at the bottom edge — the reader's eye never chases content
@@ -73,6 +89,9 @@ export default function DualPanePage() {
           listening ? (
             <div className="flex items-center gap-2">
               <MicStatusPill />
+              <NeobrutalismButton variant="red" size="sm" onClick={() => setConfirmStop(true)}>
+                停止
+              </NeobrutalismButton>
             </div>
           ) : null
         }
@@ -148,6 +167,15 @@ export default function DualPanePage() {
           </div>
         </section>
       </div>
+
+      <ConfirmModal
+        open={confirmStop}
+        title="停止会话？"
+        body="当前字幕与策略将清空"
+        confirmLabel="停止"
+        onCancel={() => setConfirmStop(false)}
+        onConfirm={stopSession}
+      />
     </div>
   );
 }
