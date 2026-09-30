@@ -4,8 +4,8 @@ milestone: v3.4
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context + AI-SPEC + gateway topology decided (2026-09-29)
-last_updated: "2026-09-29T00:00:00.000Z"
-last_activity: 2026-09-29 -- Phase 2 discussion round 2
+last_updated: "2026-09-30T04:51:45.000Z"
+last_activity: 2026-09-30 -- Completed quick task 20260930-dualpane-stop-button: 双栏扩展视图「停止」按钮
 progress:
   total_phases: 8
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
 Plan: 0 of 5 in current phase
 Status: Phase 2 context gathered — vendor experiments in progress (keys being collected), then plan
-Last activity: 2026-09-29 -- Phase 2 discussion round 2 (gateway topology, Phase 8 on roadmap)
+Last activity: 2026-09-30 -- Completed quick task 20260930-dualpane-stop-button: 双栏扩展视图「停止」按钮 (header 停止 + locked confirm + stop_session + terminal empty state)
 
 Progress: [██░░░░░░░░] 18% (5/28 plans, Phase 1/7 done)
 
@@ -116,6 +116,12 @@ None yet.
 - 01-05 Task 2 `<human-check>` (interactive `pnpm --filter @nextalk/desktop tauri dev` demo pass: QR scan → 开始模拟会话 → r1 flows to console + dual + phone in sync → phone count flips to 已连接 1 台设备 → phone mode switch → 打断/重听 → ended) is outstanding — needs a GUI session + phone + camera. Every leg has a green automated equivalent (29 cargo tests incl. the real-WS integration test; 29 playwright specs incl. demo.spec.ts); run it before `/gsd:verify-work`
 - Phase 1 is code-complete (5/5 plans, all automated gates green at HEAD) but its three human passes (01-03 desktop walkthrough, 01-04 real-device phone, 01-05 full demo) are the remaining end-of-phase manual checks
 - Playwright e2e now proves the mock-WS flow for BOTH surfaces; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 20260930-dualpane-stop-button | 双栏扩展视图「停止」按钮（锁定确认 + stop_session + 终态回空态） | 2026-09-30 | 56f90f4 | [20260930-dualpane-stop-button](./quick/20260930-dualpane-stop-button/) |
 
 ## Deferred Items
 
