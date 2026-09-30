@@ -100,7 +100,7 @@ describe('useTauriEvents', () => {
     expect(result.current.languageMode).toBeNull();
   });
 
-  it('clears the stream on the terminal status so 停止 empties both panes', async () => {
+  it('keeps the stream when the terminal status arrives — 停止 retains until the next session', async () => {
     const { result } = renderHook(() => useTauriEvents());
     await waitForListeners('session');
     await waitForListeners('session_status');
@@ -118,7 +118,16 @@ describe('useTauriEvents', () => {
       emit('session', { t: 'status', session: 'ended' });
     });
 
+    // 停止保留：两条通道的终态都不再清空渲染流（与手机端一致）。
     expect(result.current.status).toBe('ended');
+    expect(result.current.events).toHaveLength(3); // 字幕+策略+session 通道 append 的 ended status
+    expect(result.current.events.some((e) => e.t === 'subtitle' && e.id === 'r1-q')).toBe(true);
+    expect(result.current.events.some((e) => e.t === 'strategy' && e.id === 's1')).toBe(true);
+
+    // 只有下一次会话开始才清空重来。
+    act(() => {
+      emit('session', { t: 'session_started', epoch: 2 });
+    });
     expect(result.current.events).toHaveLength(0);
   });
 

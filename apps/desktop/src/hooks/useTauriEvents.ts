@@ -64,15 +64,6 @@ export function useTauriEvents(): TauriEventsState {
   const [phoneCount, setPhoneCount] = useState<number | null>(null);
   const [languageMode, setLanguageMode] = useState<LanguagePref | null>(null);
 
-  // 停止: stop_session publishes the terminal status without a session_started
-  // marker, so the terminal transition also drops the rendered stream — the
-  // locked 停止 copy (当前字幕与策略将清空) must hold when the session stops,
-  // not only when the next one starts (WR-02/CR-01 follow-up).
-  const applyStatus = (next: SessionStatus): void => {
-    setStatus(next);
-    if (next === 'ended') setEvents([]);
-  };
-
   useEffect(() => {
     let alive = true;
     const unlisteners: UnlistenFn[] = [];
@@ -90,10 +81,11 @@ export function useTauriEvents(): TauriEventsState {
 
     track(
       listen<unknown>('session', (event) => {
-        // WR-02/CR-01: the session restarted — the locked 停止 copy promises
-        // 当前字幕与策略将清空, and the new session must not stack under the
-        // previous one. Checked before narrowSession: a marker that narrows to
-        // an empty batch is dropped by the early return below.
+        // WR-02/CR-01: the session restarted — clear the previous stream so the
+        // new session never stacks on top of it. 停止/ended 故意不清空（2026-09-30
+        // 用户实测修正，撤销 246baae）：双栏在会话结束后保留内容，与手机端一致；
+        // 空态只在从未渲染过内容时出现。Checked before narrowSession: a marker
+        // that narrows to an empty batch is dropped by the early return below.
         const payload = event.payload as { t?: unknown } | null;
         if (payload?.t === 'session_started') {
           setEvents([]);
@@ -104,7 +96,7 @@ export function useTauriEvents(): TauriEventsState {
         if (batch.length === 0) return;
         setEvents((previous) => [...previous, ...batch]);
         for (const item of batch) {
-          if (item.t === 'status') applyStatus(item.session);
+          if (item.t === 'status') setStatus(item.session);
           // SYNC-03: the mode the phone applied arrives on the same stream, so
           // the desktop renders the change without a second channel.
           if (item.t === 'language') setLanguageMode(item.language);
@@ -115,7 +107,7 @@ export function useTauriEvents(): TauriEventsState {
     track(
       listen<unknown>('session_status', (event) => {
         const next = narrowStatus(event.payload);
-        if (next !== null) applyStatus(next);
+        if (next !== null) setStatus(next);
       }),
     );
 

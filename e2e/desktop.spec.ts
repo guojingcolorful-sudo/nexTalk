@@ -422,13 +422,15 @@ test.describe('dual pane extended view', () => {
     await expect(page.getByRole('status', { name: '正在生成' })).toHaveCount(0);
   });
 
-  test('停止 from the header ends the session behind the locked confirm, keeping the window open', async ({ page }) => {
+  test('停止 from the header keeps both panes until the next session starts (window stays open)', async ({ page }) => {
     await page.goto('/#/dual');
     await waitForListeners(page);
 
     await emit(page, 'session_status', { session: 'listening' });
     await emit(page, 'session', QUESTION_EVENT);
+    await emit(page, 'session', STRATEGY_EVENT);
     await expect(page.getByRole('region', { name: '实时字幕' })).toContainText(QUESTION_EN);
+    await expect(page.getByRole('region', { name: 'AI 辅助' })).toContainText('数据库优化');
 
     // 头部停止控件（MicStatusPill 旁）。
     await page.getByRole('button', { name: '停止', exact: true }).click();
@@ -448,12 +450,19 @@ test.describe('dual pane extended view', () => {
     expect((await calls(page)).map((call) => call.cmd)).toContain('stop_session');
     await expect(dialog).toHaveCount(0);
 
-    // Rust 发布终态：窗口保持打开，双栏回到锁定空态。
+    // Rust 发布终态：窗口保持打开，双栏保留停止前的字幕与策略（与手机端一致）。
     await emit(page, 'session_status', { session: 'ended' });
     await expect(page).toHaveURL(/#\/dual$/);
     await expect(page.getByRole('heading', { name: '扩展视图' })).toBeVisible();
     await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '停止', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: '实时字幕' })).toContainText(QUESTION_EN);
+    await expect(page.getByRole('region', { name: '实时字幕' })).not.toContainText('等待语音输入');
+    await expect(page.getByRole('region', { name: 'AI 辅助' })).toContainText('数据库优化');
+    await expect(page.getByRole('region', { name: 'AI 辅助' })).not.toContainText('AI 策略将自动生成');
+
+    // 只有下一次会话开始（Rust session_started）才清空重来。
+    await emit(page, 'session', { t: 'session_started', epoch: 2 });
     await expect(page.getByRole('region', { name: '实时字幕' })).toContainText('等待语音输入');
     await expect(page.getByRole('region', { name: '实时字幕' })).not.toContainText(QUESTION_EN);
     await expect(page.getByRole('region', { name: 'AI 辅助' })).toContainText('AI 策略将自动生成');

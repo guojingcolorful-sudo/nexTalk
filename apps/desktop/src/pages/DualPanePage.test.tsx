@@ -53,6 +53,14 @@ const QUESTION_EVENT = {
   final: true,
 };
 
+const STRATEGY_EVENT = {
+  t: 'strategy',
+  id: 's-r1',
+  roundId: 'r1',
+  title: '数据库优化',
+  bullets: ['慢查询日志定位'],
+};
+
 beforeEach(() => {
   handlers.clear();
   invokeMock.mockClear();
@@ -132,15 +140,17 @@ describe('DualPanePage stop control', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('empties both panes when Rust publishes the terminal status after 停止', async () => {
+  it('keeps both panes after the terminal status; only the next session clears them', async () => {
     await renderDualPane();
 
     act(() => {
       emit('session_status', { session: 'listening' });
       emit('session', QUESTION_EVENT);
+      emit('session', STRATEGY_EVENT);
     });
     const subtitles = screen.getByRole('region', { name: '实时字幕' });
     expect(within(subtitles).getByText(QUESTION_EVENT.en)).toBeTruthy();
+    expect(screen.getByText('数据库优化')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', STOP_LABEL));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', STOP_LABEL));
@@ -151,10 +161,20 @@ describe('DualPanePage stop control', () => {
       emit('session', { t: 'status', session: 'ended' });
     });
 
+    // 停止保留：内容仍在、无空态；控件随 status 收起（与手机端一致）。
+    expect(within(subtitles).getByText(QUESTION_EVENT.en)).toBeTruthy();
+    expect(within(subtitles).queryByText('等待语音输入')).toBeNull();
+    expect(screen.getByText('数据库优化')).toBeTruthy();
+    expect(screen.queryByText('AI 策略将自动生成')).toBeNull();
+    expect(screen.queryByText(PILL_COPY)).toBeNull();
+    expect(screen.queryByRole('button', STOP_LABEL)).toBeNull();
+
+    // 只有新会话开始才清空重来。
+    act(() => {
+      emit('session', { t: 'session_started', epoch: 2 });
+    });
     expect(within(subtitles).getByText('等待语音输入')).toBeTruthy();
     expect(within(subtitles).queryByText(QUESTION_EVENT.en)).toBeNull();
     expect(screen.getByText('AI 策略将自动生成')).toBeTruthy();
-    expect(screen.queryByText(PILL_COPY)).toBeNull();
-    expect(screen.queryByRole('button', STOP_LABEL)).toBeNull();
   });
 });

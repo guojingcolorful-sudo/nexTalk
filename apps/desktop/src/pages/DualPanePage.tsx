@@ -35,8 +35,9 @@ type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
  *
  * While the session runs, the header offers the red 停止 control behind the
  * locked confirmation (UI-SPEC Copywriting Contract); confirming sends
- * `stop_session` and the Rust terminal state drives both panes back to their
- * empty states — the window itself stays open (no window API is touched).
+ * `stop_session` and the panes keep their content after the stop (与手机端一致)
+ * — only the next session's `session_started` clears them. The window itself
+ * stays open (no window API is touched).
  */
 export default function DualPanePage() {
   const { events, status, languageMode } = useTauriEvents();
