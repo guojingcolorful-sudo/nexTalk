@@ -1,6 +1,12 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { backoffDelay, useWs, type WsTicket } from './useWs';
+import {
+  backoffDelay,
+  useWs,
+  WATCHDOG_PROBE_GRACE_MS,
+  WATCHDOG_SILENCE_MS,
+  type WsTicket,
+} from './useWs';
 
 /**
  * 01-04 Task 2 gate (SYNC-02 / SYNC-03 / SYNC-05):
@@ -31,7 +37,12 @@ class FakeSocket {
   }
 
   close(): void {
+    const wasOpen = this.readyState === FakeSocket.OPEN;
     this.readyState = 3;
+    // A browser fires `close` after close() — the reconnect ladder hangs off
+    // that event, so a double that stays silent would hide a dead-socket
+    // recovery path (the hook nulls onclose before its own teardown closes).
+    if (wasOpen) this.onclose?.();
   }
 
   /** Server accepts the connection. */
@@ -357,5 +368,115 @@ describe('useWs frame gate (T-01-02 regression)', () => {
     const rendered = result.current.events.filter((event) => event.t === 'subtitle');
     expect(rendered).toHaveLength(1);
     expect(rendered[0].t === 'subtitle' && rendered[0].seq).toBe(2);
+  });
+});
+
+describe('useWs session action queue (A)', () => {
+  test('a tap while the socket is down is flushed on open, after resume and language', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+    const socket = latest();
+
+    // The reconnect window: 开始提词 must not evaporate because there is no
+    // wire to carry it yet (the page flips its gate optimistically).
+    act(() => result.current.sendSessionAction('start_session'));
+    expect(socket.sent).toHaveLength(0);
+
+    act(() => latest().accept());
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+    expect(parsed(latest(), 1)).toEqual({ t: 'control', language: 'bilingual' });
+    expect(parsed(latest(), 2)).toEqual({ t: 'control', action: 'start_session' });
+  });
+
+  test('queued taps are last-wins and are not replayed after delivery', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+
+    act(() => {
+      result.current.sendSessionAction('start_session');
+      result.current.sendSessionAction('stop_session');
+    });
+
+    act(() => latest().accept());
+    expect(latest().sent.filter((frame) => frame.includes('"action"'))).toHaveLength(1);
+    expect(parsed(latest(), 2)).toEqual({ t: 'control', action: 'stop_session' });
+
+    // Delivered is delivered: a later reconnect must not fire the stale tap.
+    act(() => latest().drop());
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => latest().accept());
+    expect(latest().sent.filter((frame) => frame.includes('"action"'))).toHaveLength(0);
+  });
+
+  test('a tap on an open socket still goes straight out', () => {
+    const { result } = renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+
+    act(() => result.current.sendSessionAction('start_session'));
+
+    expect(parsed(latest(), 2)).toEqual({ t: 'control', action: 'start_session' });
+    expect(latest().sent.filter((frame) => frame.includes('"action"'))).toHaveLength(1);
+  });
+});
+
+describe('useWs liveness watchdog (B)', () => {
+  const resumeCount = (socket: FakeSocket) =>
+    socket.sent.filter((frame) => frame.includes('"t":"resume"')).length;
+
+  test('a silent socket gets one resume probe, then a close and a fresh reconnect', () => {
+    renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+    const socket = latest();
+    const opened = socket.sent.length; // resume + the language re-assert
+
+    act(() => vi.advanceTimersByTime(WATCHDOG_SILENCE_MS - 1));
+    expect(socket.sent).toHaveLength(opened); // silence is still tolerable
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(parsed(socket, opened)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+    expect(socket.readyState).toBe(FakeSocket.OPEN); // the probe is out, grace running
+
+    act(() => vi.advanceTimersByTime(WATCHDOG_PROBE_GRACE_MS));
+    expect(socket.readyState).toBe(3); // no answer: half-open, the client closes it
+
+    // The existing ladder takes over — 1s later a fresh socket resumes.
+    act(() => vi.advanceTimersByTime(1000));
+    expect(FakeSocket.instances).toHaveLength(2);
+    act(() => latest().accept());
+    expect(parsed(latest(), 0)).toEqual({ t: 'resume', sinceSeq: 0, sinceEpoch: 0 });
+  });
+
+  test('a reply to the probe keeps the socket and re-arms the silence window', () => {
+    renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+    const socket = latest();
+    const opened = resumeCount(socket);
+
+    act(() => vi.advanceTimersByTime(WATCHDOG_SILENCE_MS));
+    expect(resumeCount(socket)).toBe(opened + 1);
+
+    // The server answers (a timeline reply is the real contract; any frame
+    // proves the transport is alive).
+    act(() => socket.push({ t: 'timeline', events: [] }));
+    act(() => vi.advanceTimersByTime(WATCHDOG_PROBE_GRACE_MS - 1));
+    expect(socket.readyState).toBe(FakeSocket.OPEN); // liveness proven: no close
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(resumeCount(socket)).toBe(opened + 1); // and no second probe yet
+
+    act(() => vi.advanceTimersByTime(1)); // a fresh full silence window elapses
+    expect(resumeCount(socket)).toBe(opened + 2);
+  });
+
+  test('a steady stream of frames never triggers a probe', () => {
+    renderHook(() => useWs(TICKET));
+    act(() => latest().accept());
+    const socket = latest();
+    const opened = socket.sent.length;
+
+    for (let i = 0; i < 3; i += 1) {
+      act(() => vi.advanceTimersByTime(WATCHDOG_SILENCE_MS - 1));
+      act(() => socket.push({ t: 'status', session: 'listening' }));
+    }
+
+    expect(socket.sent).toHaveLength(opened);
+    expect(FakeSocket.instances).toHaveLength(1);
   });
 });

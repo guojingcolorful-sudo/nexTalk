@@ -20,6 +20,13 @@ import {
  * - On every (re)open the client sends `{ t: 'resume', sinceSeq }` so the
  *   desktop replays the timeline tail — the phone picks the interview back up
  *   where it stopped instead of coming back blank (SYNC-05).
+ * - A session action tapped while the socket is down is queued (last wins)
+ *   and flushed on the next open, after the resume/language replay — the
+ *   gate the page flips optimistically is never a lie (A).
+ * - A liveness watchdog probes a silent socket with the same resume handshake
+ *   and rebuilds it when the probe goes unanswered, so a half-open transport
+ *   (iOS suspension, NAT timeout, dead Wi-Fi) cannot freeze the teleprompter
+ *   on a socket that still looks connected (B).
  */
 
 export type WsConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -38,6 +45,17 @@ export function backoffDelay(attempt: number): number {
   const index = Math.min(Math.max(attempt, 1), BACKOFF_LADDER_MS.length) - 1;
   return BACKOFF_LADDER_MS[index];
 }
+
+/**
+ * Liveness watchdog (B): silence after which the client probes the server.
+ * The probe is the resume handshake the client already sends on open — the
+ * desktop always answers one (an empty timeline counts), so silence after the
+ * probe means the transport, not the desktop, is gone.
+ */
+export const WATCHDOG_SILENCE_MS = 10_000;
+
+/** Grace for that probe's reply before the socket is closed and rebuilt (B). */
+export const WATCHDOG_PROBE_GRACE_MS = 10_000;
 
 export interface WsTicket {
   /** 128-bit pairing token from the QR URL (T-01-01). */
@@ -60,7 +78,9 @@ export interface WsResult {
   sendLanguagePref: (pref: LanguagePref) => void;
   /**
    * Trigger a session lifecycle action on the desktop (SYNC-01 round-trip):
-   * 开始提词 is the same function as the desktop's 开始模拟会话.
+   * 开始提词 is the same function as the desktop's 开始模拟会话. A tap that
+   * lands while the socket is down is queued (last wins) and flushed on the
+   * next open — the gate the page flips optimistically is never a lie.
    */
   sendSessionAction: (action: 'start_session' | 'stop_session') => void;
 }
@@ -85,6 +105,11 @@ export function useWs(ticket: WsTicket | null): WsResult {
   const epochRef = useRef(0);
   /** Last mode the user picked; re-asserted on every (re)open (WR-03). */
   const languageRef = useRef<LanguagePref>('bilingual');
+  /**
+   * Session action tapped while the socket was not open (A). Last one wins:
+   * tapping 开始 then 暂停 during an outage must not start a session late.
+   */
+  const pendingActionRef = useRef<'start_session' | 'stop_session' | null>(null);
 
   useEffect(() => {
     if (!ticket || !ticket.token) {
@@ -96,6 +121,46 @@ export function useWs(ticket: WsTicket | null): WsResult {
     let reconnectTimer: number | undefined;
     let socket: WebSocket | null = null;
     let attempt = 0;
+
+    // B: liveness watchdog. A socket can stay "OPEN" while nothing travels on
+    // it (iOS suspension, NAT timeout, dead Wi-Fi): no error, no close, just
+    // silence while the teleprompter freezes. Silence is measured by a timer
+    // that every inbound frame re-arms, so a probe only goes out when the
+    // stream really stopped.
+    let watchdogTimer: number | undefined;
+
+    const disarmWatchdog = () => {
+      if (watchdogTimer !== undefined) {
+        window.clearTimeout(watchdogTimer);
+        watchdogTimer = undefined;
+      }
+    };
+
+    /** The probe was never answered — half-open: let the ladder rebuild it. */
+    const rebuildSilentSocket = () => {
+      watchdogTimer = undefined;
+      if (disposed || !socket || socket.readyState !== WS_OPEN) return;
+      // onclose -> scheduleReconnect -> fresh socket, full resume replay.
+      socket.close();
+    };
+
+    /** T1 of silence elapsed: probe with the resume handshake, then await T2. */
+    const probeForLife = () => {
+      watchdogTimer = undefined;
+      if (disposed || !socket || socket.readyState !== WS_OPEN) return;
+      send(socket, {
+        t: 'resume',
+        sinceSeq: seenSeqRef.current,
+        sinceEpoch: epochRef.current,
+      });
+      watchdogTimer = window.setTimeout(rebuildSilentSocket, WATCHDOG_PROBE_GRACE_MS);
+    };
+
+    /** Any inbound frame proves the transport is alive: restart the window. */
+    const noteInbound = () => {
+      disarmWatchdog();
+      watchdogTimer = window.setTimeout(probeForLife, WATCHDOG_SILENCE_MS);
+    };
 
     const accept = (incoming: ServerEvent[]) => {
       const fresh: ServerEvent[] = [];
@@ -138,6 +203,7 @@ export function useWs(ticket: WsTicket | null): WsResult {
       const scheduleReconnect = () => {
         if (disposed || dropped) return;
         dropped = true;
+        disarmWatchdog();
         attempt += 1;
         setState('reconnecting');
         // UAT-5: three failed rungs usually mean the desktop restarted and
@@ -162,10 +228,22 @@ export function useWs(ticket: WsTicket | null): WsResult {
         // WR-03: a tap that landed while the socket was down is otherwise
         // lost for the rest of the session — re-assert the mode on every open.
         send(ws, { t: 'control', language: languageRef.current });
+        // A: the same promise for the session gate — a tap swallowed by the
+        // outage goes out now, once, after the state the desktop needs to
+        // interpret it.
+        const pendingAction = pendingActionRef.current;
+        if (pendingAction !== null) {
+          pendingActionRef.current = null;
+          send(ws, { t: 'control', action: pendingAction });
+        }
+        noteInbound(); // arm the liveness watchdog for this socket
       };
 
       ws.onmessage = (message) => {
         if (disposed) return;
+        // Any frame — even one the gate below drops — proves the transport is
+        // alive, so the watchdog starts its silence window over here.
+        noteInbound();
         const data = typeof message.data === 'string' ? message.data : '';
         if (data.length === 0 || data.length > MAX_FRAME_BYTES) return;
         let payload: unknown;
@@ -188,6 +266,7 @@ export function useWs(ticket: WsTicket | null): WsResult {
     return () => {
       disposed = true;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      disarmWatchdog();
       if (socket) {
         socket.onclose = null;
         socket.onerror = null;
@@ -207,7 +286,12 @@ export function useWs(ticket: WsTicket | null): WsResult {
   const sendSessionAction = useCallback(
     (action: 'start_session' | 'stop_session') => {
       const socket = socketRef.current;
-      if (!socket || socket.readyState !== WS_OPEN) return;
+      if (!socket || socket.readyState !== WS_OPEN) {
+        // A: the outage must not swallow the tap — remember the latest one
+        // (last wins) and let onopen replay it once the socket is back.
+        pendingActionRef.current = action;
+        return;
+      }
       send(socket, { t: 'control', action });
     },
     [],
