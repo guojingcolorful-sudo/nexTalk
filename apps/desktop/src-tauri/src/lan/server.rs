@@ -215,10 +215,12 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
         }
     });
 
-    // Broadcast fan-out: session events -> outbound queue.
+    // Broadcast fan-out: session events -> outbound queue. The state clone
+    // lets a lagged client be handed the whole timeline back (see
+    // `forward_events`).
     let broadcast_rx = state.subscribe();
     let tx_broadcast = tx_msgs.clone();
-    let broadcast_task = tokio::spawn(forward_events(broadcast_rx, tx_broadcast));
+    let broadcast_task = tokio::spawn(forward_events(state.clone(), broadcast_rx, tx_broadcast));
 
     // Read half: strict protocol handling (T-01-02).
     while let Some(msg) = receiver.next().await {
@@ -306,23 +308,41 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
 /// it as terminal would leave the socket open and healthy-looking while the
 /// teleprompter freezes forever, and the phone never reconnects because the
 /// transport itself is fine (WR-01).
-async fn forward_events(mut rx: broadcast::Receiver<ServerEvent>, tx: mpsc::Sender<Message>) {
+///
+/// Dropping the missed frames is only half the recovery: what fell off the
+/// ring may be `session_started` itself, and a client that never saw it keeps
+/// its dedupe cursors — the restarted session numbers its subtitles from 1 and
+/// reuses strategy ids, so every following frame is discarded as a duplicate.
+/// A lagged client therefore gets the whole timeline back in the existing
+/// `Timeline` frame (no protocol change): the marker inside it resets those
+/// cursors and the teleprompter rebuilds instead of freezing until a manual
+/// page reload.
+async fn forward_events(
+    state: SessionState,
+    mut rx: broadcast::Receiver<ServerEvent>,
+    tx: mpsc::Sender<Message>,
+) {
     loop {
-        match rx.recv().await {
-            Ok(event) => {
-                let Ok(text) = serde_json::to_string(&event) else {
-                    continue;
-                };
-                if tx.send(Message::Text(text.into())).await.is_err() {
-                    break; // client gone
-                }
-            }
+        let message = match rx.recv().await {
+            Ok(event) => match serde_json::to_string(&event) {
+                Ok(text) => Message::Text(text.into()),
+                Err(_) => continue,
+            },
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 // This crate has no tracing setup; lib.rs logs with eprintln!.
-                eprintln!("lan ws: phone lagged, dropped {skipped} event(s); resuming");
-                continue;
+                eprintln!("lan ws: phone lagged, dropped {skipped} event(s); resending timeline");
+                let snapshot = ServerEvent::Timeline {
+                    events: state.timeline(),
+                };
+                match serde_json::to_string(&snapshot) {
+                    Ok(text) => Message::Text(text.into()),
+                    Err(_) => continue,
+                }
             }
             Err(broadcast::error::RecvError::Closed) => break,
+        };
+        if tx.send(message).await.is_err() {
+            break; // client gone
         }
     }
 }
@@ -510,11 +530,10 @@ mod tests {
         }
     }
 
-    /// A phone that fell behind the 64-slot ring buffer (backgrounded tab, GC
-    /// pause, congested Wi-Fi) must not lose its fan-out: the forwarder drops
-    /// the frames it missed and keeps delivering (WR-01).
-    #[tokio::test]
-    async fn a_lagged_receiver_keeps_forwarding() {
+    /// A state whose broadcast ring buffer has already overflowed for the
+    /// returned receiver: 80 appends against a 64-slot channel, nothing read
+    /// yet — the next `recv` is guaranteed to report `Lagged`.
+    fn lagged_state() -> (SessionState, broadcast::Receiver<ServerEvent>) {
         let state = SessionState::new(8787);
         let rx = state.subscribe();
 
@@ -529,9 +548,18 @@ mod tests {
                 final_flag: true,
             });
         }
+        (state, rx)
+    }
+
+    /// A phone that fell behind the 64-slot ring buffer (backgrounded tab, GC
+    /// pause, congested Wi-Fi) must not lose its fan-out: the forwarder drops
+    /// the frames it missed and keeps delivering (WR-01).
+    #[tokio::test]
+    async fn a_lagged_receiver_keeps_forwarding() {
+        let (state, rx) = lagged_state();
 
         let (tx, mut forwarded) = mpsc::channel::<Message>(8);
-        let task = tokio::spawn(forward_events(rx, tx));
+        let task = tokio::spawn(forward_events(state.clone(), rx, tx));
 
         // Anything appended now is delivered only if the task survived the
         // Lagged error the overflow produced.
@@ -554,6 +582,42 @@ mod tests {
             }
         }
         assert!(saw_after, "delivery resumes after the dropped frames");
+
+        task.abort();
+    }
+
+    /// Dropping the frames is not enough: whatever the ring buffer discarded
+    /// may include `session_started` itself, and the phone's dedupe cursors
+    /// would then swallow the whole restarted session while the socket looks
+    /// healthy (WR-01's freeze). The forwarder must re-send the full timeline
+    /// on `Lagged` so the client resets on the marker it missed.
+    #[tokio::test]
+    async fn a_lagged_receiver_is_resent_the_whole_timeline() {
+        let (state, rx) = lagged_state();
+
+        let (tx, mut forwarded) = mpsc::channel::<Message>(8);
+        let task = tokio::spawn(forward_events(state.clone(), rx, tx));
+
+        let frame = tokio::time::timeout(Duration::from_secs(5), forwarded.recv())
+            .await
+            .expect("a lagged receiver must get its recovery frame, not silence")
+            .expect("the forwarder keeps the channel open");
+
+        let Message::Text(text) = frame else {
+            panic!("expected a text frame, got {frame:?}");
+        };
+        let event: ServerEvent = serde_json::from_str(&text).expect("a well-formed ServerEvent");
+        let ServerEvent::Timeline { events } = event else {
+            panic!("the recovery frame must be the whole-timeline snapshot, got {event:?}");
+        };
+        let subtitles = events
+            .iter()
+            .filter(|event| matches!(event, ServerEvent::Subtitle { .. }))
+            .count();
+        assert_eq!(
+            subtitles, 80,
+            "the snapshot carries every frame the ring buffer dropped"
+        );
 
         task.abort();
     }
