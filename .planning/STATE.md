@@ -5,7 +5,7 @@ milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context + AI-SPEC + gateway topology decided (2026-09-29)
 last_updated: "2026-09-30T04:51:45.000Z"
-last_activity: 2026-09-30 -- Completed quick task 20260930-dualpane-stop-button: 双栏扩展视图「停止」按钮
+last_activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空）
 progress:
   total_phases: 8
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
 Plan: 0 of 5 in current phase
 Status: Phase 2 context gathered — vendor experiments in progress (keys being collected), then plan
-Last activity: 2026-09-30 -- Completed quick task 20260930-dualpane-stop-button: 双栏扩展视图「停止」按钮 (header 停止 + locked confirm + stop_session + terminal empty state)
+Last activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空，仅 session_started 清空重来）
 
 Progress: [██░░░░░░░░] 18% (5/28 plans, Phase 1/7 done)
 
@@ -122,6 +122,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 20260930-dualpane-stop-button | 双栏扩展视图「停止」按钮（锁定确认 + stop_session + 终态回空态） | 2026-09-30 | 56f90f4 | [20260930-dualpane-stop-button](./quick/20260930-dualpane-stop-button/) |
+| 20260930-stop-keeps-stream | 停止后双栏保留字幕与策略（与手机端一致），仅 session_started 清空（撤销 246baae） | 2026-09-30 | a442841 | [20260930-stop-keeps-stream](./quick/20260930-stop-keeps-stream/) |
 
 ## Deferred Items
 
