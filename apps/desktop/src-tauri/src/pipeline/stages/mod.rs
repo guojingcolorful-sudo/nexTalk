@@ -32,6 +32,7 @@ pub use config::{
     DeepgramCredentials, DeepseekCredentials, Endpoint, Endpoints, RoutingConfig, Secret,
     StageRole, Track, VolcCredentials, XfyunCredentials,
 };
+pub use deepseek::DeepseekTranslator;
 pub use error::{classify_http_status, classify_xfyun_code, ErrorKind, RetryClass, StageError};
 pub use traits::{
     AbstainReason, AudioChunk, ConfidenceSource, GlossaryEntry, InterviewerTrack, MarkHandle,
@@ -101,7 +102,8 @@ impl SttSource for VendorStt {
 #[derive(Debug, Clone)]
 pub enum VendorTranslator {
     Scripted(ScriptedTranslator),
-    // T2.4 adds `Deepseek(DeepseekTranslator)`.
+    /// DeepSeek `deepseek-chat` — the production translation line (T2.4).
+    Deepseek(DeepseekTranslator),
 }
 
 impl From<ScriptedTranslator> for VendorTranslator {
@@ -110,22 +112,31 @@ impl From<ScriptedTranslator> for VendorTranslator {
     }
 }
 
+impl From<DeepseekTranslator> for VendorTranslator {
+    fn from(translator: DeepseekTranslator) -> Self {
+        Self::Deepseek(translator)
+    }
+}
+
 impl Translator for VendorTranslator {
     fn provider(&self) -> &'static str {
         match self {
             VendorTranslator::Scripted(translator) => translator.provider(),
+            VendorTranslator::Deepseek(translator) => translator.provider(),
         }
     }
 
     fn model_version(&self) -> String {
         match self {
             VendorTranslator::Scripted(translator) => translator.model_version(),
+            VendorTranslator::Deepseek(translator) => translator.model_version(),
         }
     }
 
     fn set_marks(&mut self, marks: MarkHandle) {
         match self {
             VendorTranslator::Scripted(translator) => translator.set_marks(marks),
+            VendorTranslator::Deepseek(translator) => translator.set_marks(marks),
         }
     }
 
@@ -137,6 +148,9 @@ impl Translator for VendorTranslator {
     ) -> Result<TranslatorStream, StageError> {
         match self {
             VendorTranslator::Scripted(translator) => {
+                translator.translate(fragment, glossary, epoch)
+            }
+            VendorTranslator::Deepseek(translator) => {
                 translator.translate(fragment, glossary, epoch)
             }
         }
@@ -222,6 +236,19 @@ mod tests {
             translated.next().await,
             Some(TranslatorEvent::Fragment { .. })
         ));
+
+        // The DeepSeek variant routes through the same contract (T2.4); no
+        // request is made, so no mock is needed here.
+        let deepseek: VendorTranslator = DeepseekTranslator::new(
+            DeepseekCredentials {
+                api_key: Secret::new("test-key"),
+            },
+            Endpoints::defaults(),
+        )
+        .into();
+        assert_eq!(deepseek.provider(), "deepseek");
+        assert_eq!(deepseek.model_version(), "deepseek-chat");
+        assert!(matches!(deepseek, VendorTranslator::Deepseek(_)));
 
         let mut tts: VendorTts = ScriptedTts::default().into();
         assert_eq!(tts.model_version(), "scripted-1");

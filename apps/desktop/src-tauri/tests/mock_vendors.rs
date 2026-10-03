@@ -584,9 +584,9 @@ impl DeepseekMock {
             sse_content("{\"t\":\"fragment\",\"text\":\"The query was ")
                 .trim_end()
                 .to_string(),
-            // …and the JSON delta itself is also split across the two chunks.
-            "\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"800 ms.\",\"final_flag\":true}}]}\n\n"
-                .to_string(),
+            // …and the model's JSON itself is split too: this chunk starts with
+            // the missing event boundary and ends the payload.
+            format!("\n\n{}", sse_content(r#"800 ms.","final_flag":true}"#)),
             sse_usage(31, 11),
             "data: [DONE]\n\n".to_string(),
         ];
@@ -1368,8 +1368,8 @@ async fn deepseek_client_streams_a_structured_fragment_and_marks_the_first_token
 async fn deepseek_client_keeps_a_token_split_across_tcp_chunks() {
     // Failure case 0001 on the path a real translation takes: the event
     // boundary and the JSON payload both straddle the chunk edge.
-    let (mock, _state) = deepseek_mock(DeepseekMock::default().with_split_structured_fragment())
-        .await;
+    let (mock, _state) =
+        deepseek_mock(DeepseekMock::default().with_split_structured_fragment()).await;
     let mut client = deepseek_client(&mock);
 
     let mut stream = client
@@ -1427,9 +1427,10 @@ async fn deepseek_client_refuses_a_reasoning_model_before_it_reaches_the_wire() 
     let (mock, state) = deepseek_mock(DeepseekMock::default().with_structured_fragment()).await;
     let mut client = deepseek_client(&mock).with_model("deepseek-reasoner");
 
-    let error = client
-        .translate(&zh("思考会拖垮 1.5 秒预算。", 1), &[], 1)
-        .expect_err("a thinking model is refused");
+    let error = match client.translate(&zh("思考会拖垮 1.5 秒预算。", 1), &[], 1) {
+        Err(error) => error,
+        Ok(_) => panic!("a thinking model is refused"),
+    };
     assert_eq!(error.retry_class, RetryClass::Terminal, "{error}");
     assert!(error.to_string().contains("deepseek-reasoner"), "{error}");
     assert!(

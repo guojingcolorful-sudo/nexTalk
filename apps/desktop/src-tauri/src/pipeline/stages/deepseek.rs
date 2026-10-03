@@ -25,11 +25,21 @@
 //!   **retryable failure**, never a lenient empty-string fallback — a silent
 //!   empty translation would look like success all the way to the headphones.
 
-use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
 
-use super::config::{DeepseekCredentials, Endpoints};
-use super::error::StageError;
-use super::traits::{AbstainReason, GlossaryEntry, ZhFragment};
+use futures_util::StreamExt;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+
+use crate::pipeline::budget::Stage;
+
+use super::config::{DeepseekCredentials, Endpoint, Endpoints, Secret};
+use super::error::{ErrorKind, RetryClass, StageError};
+use super::traits::{
+    AbstainReason, GlossaryEntry, MarkHandle, TokenUsage, Translator, TranslatorEvent,
+    TranslatorStream, ZhFragment, EVENT_QUEUE_ITEMS,
+};
 
 // ---------------------------------------------------------------------------
 // protocol constants
@@ -62,6 +72,487 @@ If the fragment carries no translatable content, reply {\"t\":\"abstained\",\"re
 pub fn is_reasoning_model(model: &str) -> bool {
     let lowered = model.to_ascii_lowercase();
     lowered.contains("reasoner") || lowered.contains("-r1") || lowered.contains("r1-")
+}
+
+/// The model to use: the `DEEPSEEK_MODEL` override when set and non-blank,
+/// else [`DEFAULT_MODEL`]. Mirrors `Endpoint::from_lookup` — the lookup keeps
+/// the environment out of the tests.
+pub fn configured_model(lookup: impl Fn(&str) -> Option<String>) -> String {
+    lookup(MODEL_VAR)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// SSE framing (failure case 0001)
+// ---------------------------------------------------------------------------
+
+/// Buffers a `text/event-stream` body and yields one payload per `\n\n`
+/// boundary.
+///
+/// The v1 probe parsed line by line as chunks arrived, so an event whose
+/// boundary fell mid-chunk failed to parse and was dropped — failure case 0001.
+/// Here the incomplete tail of a chunk stays in [`SseBuffer::residual`] and is
+/// completed by the next one.
+///
+/// DeepSeek emits one `data:` line per event and `\n\n` separators; the CRLF
+/// form of the SSE specification is not produced by this endpoint.
+#[derive(Debug, Default, Clone)]
+pub struct SseBuffer {
+    residual: String,
+}
+
+impl SseBuffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append `chunk`, returning every event it completed (payload without the
+    /// `data:` prefix; comments and blank blocks are skipped).
+    pub fn push(&mut self, chunk: &str) -> Vec<String> {
+        self.residual.push_str(chunk);
+        let mut payloads = Vec::new();
+        while let Some(boundary) = self.residual.find("\n\n") {
+            let block = self.residual[..boundary].to_string();
+            self.residual.drain(..boundary + 2);
+            if let Some(payload) = payload_of(&block) {
+                payloads.push(payload);
+            }
+        }
+        payloads
+    }
+
+    /// The bytes of an event that has not been completed yet.
+    pub fn residual(&self) -> &str {
+        &self.residual
+    }
+}
+
+/// The payload of one complete SSE block, or `None` for keep-alive noise.
+fn payload_of(block: &str) -> Option<String> {
+    let lines: Vec<&str> = block
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// model output
+// ---------------------------------------------------------------------------
+
+/// What one request produced, once the model's JSON parses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelOutput {
+    /// The translated fragment.
+    Fragment { text: String, final_flag: bool },
+    /// The model declined (D-03).
+    Abstained { reason: AbstainReason },
+}
+
+/// Parse the model's reply.
+///
+/// Anything that is not one of the two shapes above is a **retryable**
+/// protocol failure. There is deliberately no lenient fallback: an empty
+/// translation that looked like success would reach the headphones as silence.
+pub fn parse_model_output(raw: &str) -> Result<ModelOutput, StageError> {
+    #[derive(Deserialize)]
+    #[serde(tag = "t", rename_all = "snake_case")]
+    enum Wire {
+        Fragment {
+            text: String,
+            #[serde(default)]
+            final_flag: bool,
+        },
+        Abstained {
+            reason: String,
+        },
+    }
+
+    let wire: Wire = serde_json::from_str(raw.trim()).map_err(|error| {
+        StageError::protocol(PROVIDER, format!("unreadable model output: {error}"))
+    })?;
+    Ok(match wire {
+        Wire::Fragment { text, final_flag } => ModelOutput::Fragment { text, final_flag },
+        Wire::Abstained { reason } => ModelOutput::Abstained {
+            // An unknown reason is still a refusal — never a silent success.
+            reason: match reason.trim() {
+                "silent_audio" => AbstainReason::SilentAudio,
+                _ => AbstainReason::Unrecognized,
+            },
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// request shape
+// ---------------------------------------------------------------------------
+
+/// The system message: instructions plus the glossary section.
+///
+/// The section is always present, `(none supplied)` when the term base is
+/// empty, so Phase 4 fills it without changing the request shape.
+fn system_message(glossary: &[GlossaryEntry]) -> String {
+    let mut message = String::from(SYSTEM_PROMPT);
+    message.push_str("\n\nGlossary — always use these English renderings:\n");
+    if glossary.is_empty() {
+        message.push_str("(none supplied)");
+        return message;
+    }
+    let entries: Vec<String> = glossary
+        .iter()
+        .map(|entry| format!("- {} → {}", entry.zh, entry.en))
+        .collect();
+    message.push_str(&entries.join("\n"));
+    message
+}
+
+/// One chat-completions request.
+///
+/// `previous_translation` is the *only* context sent: AI-SPEC §4 allows the
+/// previous English sentence plus the current Chinese, and nothing older.
+pub fn build_request_body(
+    model: &str,
+    fragment: &ZhFragment,
+    glossary: &[GlossaryEntry],
+    previous_translation: Option<&str>,
+) -> Value {
+    let mut messages = vec![json!({
+        "role": "system",
+        "content": system_message(glossary),
+    })];
+    if let Some(previous) = previous_translation.filter(|text| !text.trim().is_empty()) {
+        messages.push(json!({ "role": "assistant", "content": previous }));
+    }
+    messages.push(json!({ "role": "user", "content": fragment.text }));
+
+    json!({
+        "model": model,
+        "temperature": 0,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+        "messages": messages,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// client
+// ---------------------------------------------------------------------------
+
+/// The streaming DeepSeek translation client (T2.4).
+#[derive(Debug, Clone)]
+pub struct DeepseekTranslator {
+    credentials: DeepseekCredentials,
+    endpoints: Endpoints,
+    model: String,
+    marks: MarkHandle,
+    /// The previous fragment's English, written by the last finished run.
+    previous: Arc<Mutex<Option<String>>>,
+    http: reqwest::Client,
+}
+
+impl DeepseekTranslator {
+    pub fn new(credentials: DeepseekCredentials, endpoints: Endpoints) -> Self {
+        Self {
+            credentials,
+            endpoints,
+            model: DEFAULT_MODEL.to_string(),
+            marks: MarkHandle::disabled(),
+            previous: Arc::new(Mutex::new(None)),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Credentials, endpoints and the model override from the environment.
+    pub fn from_env() -> Result<Self, StageError> {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    /// The same, with an injected lookup (tests, per-track configuration).
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, StageError> {
+        let credentials = DeepseekCredentials::from_lookup(&lookup)?;
+        let model = configured_model(&lookup);
+        let endpoints = Endpoints::from_lookup(lookup);
+        Ok(Self::new(credentials, endpoints).with_model(model))
+    }
+
+    /// Pin the model (the refusal path, tests, a cheaper deployment).
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoints.deepseek_http
+    }
+}
+
+impl Translator for DeepseekTranslator {
+    fn provider(&self) -> &'static str {
+        PROVIDER
+    }
+
+    fn model_version(&self) -> String {
+        self.model.clone()
+    }
+
+    fn set_marks(&mut self, marks: MarkHandle) {
+        self.marks = marks;
+    }
+
+    fn translate(
+        &mut self,
+        fragment: &ZhFragment,
+        glossary: &[GlossaryEntry],
+        _epoch: u64,
+    ) -> Result<TranslatorStream, StageError> {
+        if is_reasoning_model(&self.model) {
+            return Err(StageError::new(
+                PROVIDER,
+                ErrorKind::Config,
+                RetryClass::Terminal,
+                format!(
+                    "{} is a reasoning model; the translation budget needs the non-reasoning path",
+                    self.model
+                ),
+            ));
+        }
+
+        let previous = self
+            .previous
+            .lock()
+            .expect("the context lock is never poisoned");
+        let body = build_request_body(&self.model, fragment, glossary, previous.as_deref());
+        drop(previous);
+
+        let url = self.endpoints.deepseek_http.join(CHAT_PATH);
+        let (sender, events) = mpsc::channel(EVENT_QUEUE_ITEMS);
+        tokio::spawn(run_request(RunContext {
+            http: self.http.clone(),
+            url,
+            api_key: self.credentials.api_key.clone(),
+            body,
+            model: self.model.clone(),
+            marks: self.marks.clone(),
+            previous: self.previous.clone(),
+            sender,
+        }));
+        Ok(TranslatorStream::new(events))
+    }
+}
+
+/// Everything the driver task needs — moved in, so `translate` can return.
+struct RunContext {
+    http: reqwest::Client,
+    url: String,
+    api_key: Secret,
+    body: Value,
+    /// D-08: the model recorded with each sentence is the one that ran.
+    model: String,
+    marks: MarkHandle,
+    previous: Arc<Mutex<Option<String>>>,
+    sender: mpsc::Sender<TranslatorEvent>,
+}
+
+impl RunContext {
+    fn model(&self) -> String {
+        self.model.clone()
+    }
+}
+
+async fn run_request(context: RunContext) {
+    let outcome = stream_response(&context).await;
+    if let Err(error) = outcome {
+        let _ = context.sender.send(TranslatorEvent::Failed(error)).await;
+    }
+}
+
+/// Read the SSE body and forward what it carries.
+///
+/// A failure here is always reported: the caller turns it into one
+/// [`TranslatorEvent::Failed`], which is why an unparseable or truncated
+/// response can never masquerade as an empty translation.
+async fn stream_response(context: &RunContext) -> Result<(), StageError> {
+    let response = context
+        .http
+        .post(&context.url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", context.api_key.expose()),
+        )
+        .json(&context.body)
+        .send()
+        .await
+        .map_err(|error| {
+            StageError::transport(PROVIDER, format!("the request failed: {error}"))
+                .with_endpoint(&context.url)
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(StageError::http(PROVIDER, status.as_u16()).with_endpoint(&context.url));
+    }
+
+    let mut buffer = SseBuffer::new();
+    let mut pending: Vec<u8> = Vec::new();
+    let mut body = response.bytes_stream();
+    let mut run = RunState::default();
+
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| {
+            StageError::transport(PROVIDER, format!("the stream broke: {error}"))
+                .with_endpoint(&context.url)
+        })?;
+        pending.extend_from_slice(&chunk);
+        let text = take_valid_utf8(&mut pending)?;
+        for payload in buffer.push(&text) {
+            if payload == "[DONE]" {
+                run.terminated = true;
+                continue;
+            }
+            let event: Value = serde_json::from_str(&payload).map_err(|error| {
+                StageError::protocol(PROVIDER, format!("unreadable SSE event: {error}"))
+                    .with_endpoint(&context.url)
+            })?;
+            if let Some(usage) = usage_from(&event) {
+                run.usage = Some(usage);
+            }
+            run.push_delta(content_delta(&event), context).await?;
+        }
+    }
+
+    if !run.terminated {
+        return Err(
+            StageError::protocol(PROVIDER, "the stream ended before its terminator")
+                .with_endpoint(&context.url),
+        );
+    }
+    if run.emitted.is_none() {
+        return Err(
+            StageError::protocol(PROVIDER, "the response carried no translatable output")
+                .with_endpoint(&context.url),
+        );
+    }
+    if let Some(text) = run.english() {
+        *context
+            .previous
+            .lock()
+            .expect("the context lock is never poisoned") = Some(text);
+    }
+    if let Some(usage) = run.usage {
+        let _ = context.sender.send(TranslatorEvent::Usage(usage)).await;
+    }
+    Ok(())
+}
+
+/// The accumulator behind one response.
+#[derive(Debug, Default)]
+struct RunState {
+    /// Content deltas received so far — the model's JSON, in pieces.
+    content: String,
+    /// What has already been reported downstream.
+    emitted: Option<ModelOutput>,
+    usage: Option<TokenUsage>,
+    terminated: bool,
+}
+
+impl RunState {
+    /// Append one delta, reporting the output as soon as it parses.
+    async fn push_delta(&mut self, delta: &str, context: &RunContext) -> Result<(), StageError> {
+        if delta.is_empty() {
+            return Ok(());
+        }
+        if self.emitted.is_none() {
+            // The rig contract: one mark per segment, at this stage's first
+            // byte — the first content token, before any parsing.
+            context.marks.mark(Stage::TranslateFirstToken);
+        }
+        self.content.push_str(delta);
+
+        let parsed = match parse_model_output(&self.content) {
+            Ok(parsed) => parsed,
+            // Still incomplete: the JSON arrives in deltas.
+            Err(_) => return Ok(()),
+        };
+        if self.emitted.as_ref() == Some(&parsed) {
+            return Ok(());
+        }
+        let event = match &parsed {
+            ModelOutput::Fragment { text, final_flag } => TranslatorEvent::Fragment {
+                text: text.clone(),
+                final_flag: *final_flag,
+                provider: PROVIDER.to_string(),
+                model_version: context.model(),
+            },
+            ModelOutput::Abstained { reason } => TranslatorEvent::Abstained { reason: *reason },
+        };
+        self.emitted = Some(parsed);
+        let _ = context.sender.send(event).await;
+        Ok(())
+    }
+
+    /// The English this run reported, when it reported one.
+    fn english(&self) -> Option<String> {
+        match &self.emitted {
+            Some(ModelOutput::Fragment { text, .. }) if !text.trim().is_empty() => {
+                Some(text.clone())
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Decode the complete UTF-8 prefix of `pending`, leaving a trailing partial
+/// character for the next chunk.
+///
+/// A TCP chunk can end inside a multi-byte character; `from_utf8_lossy` would
+/// replace it with U+FFFD and corrupt the translation, so the tail waits.
+fn take_valid_utf8(pending: &mut Vec<u8>) -> Result<String, StageError> {
+    match std::str::from_utf8(pending) {
+        Ok(text) => {
+            let decoded = text.to_string();
+            pending.clear();
+            Ok(decoded)
+        }
+        Err(error) if error.error_len().is_none() => {
+            let split = error.valid_up_to();
+            let decoded = std::str::from_utf8(&pending[..split])
+                .expect("the prefix is valid by construction")
+                .to_string();
+            pending.drain(..split);
+            Ok(decoded)
+        }
+        Err(_) => Err(StageError::protocol(
+            PROVIDER,
+            "the response body is not UTF-8",
+        )),
+    }
+}
+
+/// The `usage` frame's counts, when the frame carries one.
+fn usage_from(event: &Value) -> Option<TokenUsage> {
+    let usage = event.get("usage")?.as_object()?;
+    Some(TokenUsage {
+        prompt_tokens: usage.get("prompt_tokens")?.as_u64()? as u32,
+        completion_tokens: usage.get("completion_tokens")?.as_u64()? as u32,
+    })
+}
+
+/// The content delta of a chat-completions chunk, if this event is one.
+fn content_delta(event: &Value) -> &str {
+    event["choices"][0]["delta"]["content"]
+        .as_str()
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -201,8 +692,12 @@ mod tests {
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[1]["content"], "当前句。");
 
-        let with_context =
-            build_request_body(DEFAULT_MODEL, &fragment, &[], Some("The previous sentence."));
+        let with_context = build_request_body(
+            DEFAULT_MODEL,
+            &fragment,
+            &[],
+            Some("The previous sentence."),
+        );
         let messages = with_context["messages"].as_array().expect("messages");
         assert_eq!(messages.len(), 1 + MAX_CONTEXT_MESSAGES);
         assert_eq!(messages[1]["role"], "assistant");
@@ -287,8 +782,8 @@ mod tests {
                 reason: AbstainReason::SilentAudio
             }
         );
-        let parsed = parse_model_output("{\"t\":\"abstained\",\"reason\":\"unrecognized\"}")
-            .expect("valid");
+        let parsed =
+            parse_model_output("{\"t\":\"abstained\",\"reason\":\"unrecognized\"}").expect("valid");
         assert_eq!(
             parsed,
             ModelOutput::Abstained {
@@ -314,5 +809,62 @@ mod tests {
             !format!("{configured:?}").contains("sk-secret-value"),
             "the key never renders"
         );
+    }
+
+    #[test]
+    fn the_model_override_is_read_from_the_lookup_and_never_blank() {
+        assert_eq!(configured_model(|_| None), DEFAULT_MODEL);
+        assert_eq!(
+            configured_model(|name| (name == MODEL_VAR).then(|| "deepseek-v4".to_string())),
+            "deepseek-v4"
+        );
+        // A blank override is not a model id.
+        assert_eq!(configured_model(|_| Some("   ".to_string())), DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn the_lookup_constructor_requires_the_key_and_takes_the_override() {
+        let error = DeepseekTranslator::from_lookup(|_| None).expect_err("no key");
+        assert!(error.to_string().contains("DEEPSEEK_API_KEY"), "{error}");
+
+        let translator = DeepseekTranslator::from_lookup(|name| match name {
+            "DEEPSEEK_API_KEY" => Some("sk-secret-value".to_string()),
+            "DEEPSEEK_MODEL" => Some("deepseek-chat-v2".to_string()),
+            _ => None,
+        })
+        .expect("configured");
+        assert_eq!(translator.model(), "deepseek-chat-v2");
+        assert!(!format!("{translator:?}").contains("sk-secret-value"));
+    }
+
+    #[test]
+    fn a_chunk_boundary_inside_a_character_never_corrupts_it() {
+        // The body arrives as bytes, and a chunk can end mid-character: here
+        // the last byte of `。` is left for the next chunk.
+        let sentence = "这条响应超过 800 毫秒。";
+        let bytes = sentence.as_bytes().to_vec();
+        let (head, tail) = bytes.split_at(bytes.len() - 1);
+        let mut pending = head.to_vec();
+
+        let first = take_valid_utf8(&mut pending).expect("the prefix decodes");
+        assert_eq!(first, "这条响应超过 800 毫秒", "the partial tail waits");
+        assert_eq!(
+            pending.len(),
+            2,
+            "the bytes of the split character are kept"
+        );
+
+        pending.extend_from_slice(tail);
+        let second = take_valid_utf8(&mut pending).expect("the tail completes");
+        assert_eq!(second, "。");
+        assert!(pending.is_empty(), "nothing is left behind");
+        assert_eq!(format!("{first}{second}"), sentence, "never a U+FFFD");
+    }
+
+    #[test]
+    fn a_body_that_is_not_utf8_is_a_retryable_protocol_failure() {
+        let mut pending = vec![0xff, 0xfe];
+        let error = take_valid_utf8(&mut pending).expect_err("not text");
+        assert_eq!(error.retry_class, RetryClass::Retryable);
     }
 }
