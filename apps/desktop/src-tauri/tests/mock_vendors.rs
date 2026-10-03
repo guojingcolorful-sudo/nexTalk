@@ -17,6 +17,12 @@
 //! frame must not panic a parser, and a silent session must end with a close
 //! reason the client can recognise (research correction 4: 10 s of silence is a
 //! NET-0001 close).
+//!
+//! The harness is deliberately ahead of its callers: the builder methods that
+//! have no caller *yet* (`with_abstain`, `with_error`, `with_on_audio`, …) are
+//! the fault-injection seams Tasks 2–5 drive from their own client tests, so
+//! "never used" here means "not used in this task's tests".
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -25,6 +31,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+// The harness drives both sides of the wire: `Message` (above) is what the
+// axum handlers send, `ClientMessage` is what the raw socket clients receive.
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -33,15 +41,15 @@ use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
 use nextalk_desktop_lib::pipeline::stages::error::{classify_http_status, RetryClass, StageError};
 
 /// How long a test waits for a mock before declaring the session stuck.
 const MOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
-type ClientSocket = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type ClientSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 // ---------------------------------------------------------------------------
 // server plumbing
@@ -240,7 +248,7 @@ async fn xfyun_ws(
     let (Some(date), Some(authorization)) = (query.get("date"), query.get("authorization")) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !authorization.contains("signature=") || !query.contains_key("host") {
+    if !signed_authorization_is_plausible(authorization) || !query.contains_key("host") {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if signed_date_is_stale(date, state.cfg.clock_skew_window_secs) {
@@ -256,7 +264,11 @@ async fn xfyun_session(mut socket: WebSocket, state: Arc<XfyunState>, session: u
         if frame.after_ms > 0 {
             tokio::time::sleep(Duration::from_millis(frame.after_ms)).await;
         }
-        if socket.send(Message::Text(frame.body.clone().into())).await.is_err() {
+        if socket
+            .send(Message::Text(frame.body.clone().into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -291,7 +303,11 @@ async fn xfyun_session(mut socket: WebSocket, state: Arc<XfyunState>, session: u
                         if frame.after_ms > 0 {
                             tokio::time::sleep(Duration::from_millis(frame.after_ms)).await;
                         }
-                        if socket.send(Message::Text(frame.body.clone().into())).await.is_err() {
+                        if socket
+                            .send(Message::Text(frame.body.clone().into()))
+                            .await
+                            .is_err()
+                        {
                             return;
                         }
                     }
@@ -433,7 +449,9 @@ async fn deepgram_session(mut socket: WebSocket, state: Arc<DeepgramState>) {
     if state.cfg.malformed {
         let _ = socket.send(Message::Text("{not json".into())).await;
         let _ = socket
-            .send(Message::Text(deepgram_results("garbage", true, true, None).into()))
+            .send(Message::Text(
+                deepgram_results("garbage", true, true, None).into(),
+            ))
             .await;
         return;
     }
@@ -441,7 +459,11 @@ async fn deepgram_session(mut socket: WebSocket, state: Arc<DeepgramState>) {
         if frame.after_ms > 0 {
             tokio::time::sleep(Duration::from_millis(frame.after_ms)).await;
         }
-        if socket.send(Message::Text(frame.body.clone().into())).await.is_err() {
+        if socket
+            .send(Message::Text(frame.body.clone().into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -540,7 +562,9 @@ impl DeepseekMock {
 
     fn with_structured_fragment(mut self) -> Self {
         self.chunks = vec![
-            sse_content("{\"t\":\"fragment\",\"text\":\"The query was 800 ms.\",\"final_flag\":true}"),
+            sse_content(
+                "{\"t\":\"fragment\",\"text\":\"The query was 800 ms.\",\"final_flag\":true}",
+            ),
             sse_usage(64, 12),
             "data: [DONE]\n\n".to_string(),
         ];
@@ -781,7 +805,11 @@ async fn volc_session(mut socket: WebSocket, state: Arc<VolcState>) {
         return;
     }
     for reply in &state.cfg.replies {
-        if socket.send(Message::Binary(reply.clone().into())).await.is_err() {
+        if socket
+            .send(Message::Binary(reply.clone().into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -842,14 +870,19 @@ async fn mock_servers_bind_ephemeral_ports_and_serve() {
         assert_ne!(addr.port(), 0, "kernel assigned a port");
     }
     assert!(xfyun.ws_url("/v2/iat").starts_with("ws://127.0.0.1:"));
-    assert!(deepseek.http_url("/chat/completions").starts_with("http://127.0.0.1:"));
+    assert!(deepseek
+        .http_url("/chat/completions")
+        .starts_with("http://127.0.0.1:"));
 }
 
 #[tokio::test]
 async fn xfyun_mock_completes_a_signed_round_trip() {
     let (mock, state) = xfyun_mock(XfyunMock::default()).await;
-    let mut socket = connect(&mock.ws_url("/v2/iat"), &signed_query(mock.addr, &now_rfc1123()))
-        .await;
+    let mut socket = connect(
+        &mock.ws_url("/v2/iat"),
+        &signed_query(mock.addr, &now_rfc1123()),
+    )
+    .await;
 
     let greeting = next_json(&mut socket).await;
     assert_eq!(greeting["data"]["status"], 0, "first frame is a partial");
@@ -858,7 +891,10 @@ async fn xfyun_mock_completes_a_signed_round_trip() {
     let correction = next_json(&mut socket).await;
     assert_eq!(correction["data"]["pgs"], "apd");
     let final_frame = next_json(&mut socket).await;
-    assert_eq!(final_frame["data"]["status"], 2, "session ends with status 2");
+    assert_eq!(
+        final_frame["data"]["status"], 2,
+        "session ends with status 2"
+    );
 
     assert_eq!(state.sessions.load(Ordering::SeqCst), 1);
     assert_eq!(state.audio_frames.load(Ordering::SeqCst), 1);
@@ -929,7 +965,7 @@ async fn deepgram_mock_closes_silent_sessions_with_a_recognisable_reason() {
     let mut reason = None;
     for _ in 0..8 {
         match tokio::time::timeout(MOCK_TIMEOUT, socket.next()).await {
-            Ok(Some(Ok(Message::Close(frame)))) => {
+            Ok(Some(Ok(ClientMessage::Close(frame)))) => {
                 reason = frame.map(|f| f.reason.to_string());
                 break;
             }
@@ -938,13 +974,17 @@ async fn deepgram_mock_closes_silent_sessions_with_a_recognisable_reason() {
         }
     }
     let reason = reason.expect("server closes the silent session");
-    assert!(reason.contains("NET-0001"), "readable reason, got {reason:?}");
+    assert!(
+        reason.contains("NET-0001"),
+        "readable reason, got {reason:?}"
+    );
 }
 
 #[tokio::test]
 async fn volc_mock_replies_with_audio_then_a_finished_frame() {
     let (mock, state) = volc_mock(VolcMock::default()).await;
-    let mut socket = connect_with_volc_headers(&mock.ws_url("/api/v3/tts/unidirectional/stream")).await;
+    let mut socket =
+        connect_with_volc_headers(&mock.ws_url("/api/v3/tts/unidirectional/stream")).await;
     send_binary(&mut socket, &volc_request_frame("hello", "S_test")).await;
 
     let first = next_bytes(&mut socket).await;
@@ -959,7 +999,10 @@ async fn volc_mock_replies_with_audio_then_a_finished_frame() {
     let headers = state.headers.lock().unwrap();
     assert_eq!(headers[0]["x-api-resource-id"], "seed-icl-2.0");
     assert_eq!(headers[0]["x-api-key"], "test-token-not-a-secret");
-    assert!(!headers[0]["x-api-request-id"].is_empty(), "request id present");
+    assert!(
+        !headers[0]["x-api-request-id"].is_empty(),
+        "request id present"
+    );
     let requests = state.requests.lock().unwrap();
     assert_eq!(requests[0]["req_params"]["speaker"], "S_test");
 }
@@ -968,7 +1011,8 @@ async fn volc_mock_replies_with_audio_then_a_finished_frame() {
 async fn volc_mock_error_frame_carries_code_and_message() {
     let (mock, _state) =
         volc_mock(VolcMock::default().with_error(45_000_001, "invalid speaker")).await;
-    let mut socket = connect_with_volc_headers(&mock.ws_url("/api/v3/tts/unidirectional/stream")).await;
+    let mut socket =
+        connect_with_volc_headers(&mock.ws_url("/api/v3/tts/unidirectional/stream")).await;
     send_binary(&mut socket, &volc_request_frame("hello", "S_test")).await;
 
     let frame = next_bytes(&mut socket).await;
@@ -1031,7 +1075,7 @@ async fn connect_with_headers(url: &str, headers: &[(&str, &str)]) -> ClientSock
 
 async fn next_text(socket: &mut ClientSocket) -> String {
     match next_message(socket).await {
-        Message::Text(text) => text.to_string(),
+        ClientMessage::Text(text) => text.to_string(),
         other => panic!("expected text, got {other:?}"),
     }
 }
@@ -1042,12 +1086,12 @@ async fn next_json(socket: &mut ClientSocket) -> Value {
 
 async fn next_bytes(socket: &mut ClientSocket) -> Vec<u8> {
     match next_message(socket).await {
-        Message::Binary(bytes) => bytes.to_vec(),
+        ClientMessage::Binary(bytes) => bytes.to_vec(),
         other => panic!("expected binary, got {other:?}"),
     }
 }
 
-async fn next_message(socket: &mut ClientSocket) -> Message {
+async fn next_message(socket: &mut ClientSocket) -> ClientMessage {
     tokio::time::timeout(MOCK_TIMEOUT, socket.next())
         .await
         .expect("mock answers within the timeout")
@@ -1057,14 +1101,14 @@ async fn next_message(socket: &mut ClientSocket) -> Message {
 
 async fn send_json(socket: &mut ClientSocket, body: &str) {
     socket
-        .send(Message::Text(body.to_string().into()))
+        .send(ClientMessage::Text(body.to_string().into()))
         .await
         .expect("client frame");
 }
 
 async fn send_binary(socket: &mut ClientSocket, body: &[u8]) {
     socket
-        .send(Message::Binary(body.to_vec().into()))
+        .send(ClientMessage::Binary(body.to_vec().into()))
         .await
         .expect("client frame");
 }
@@ -1072,7 +1116,8 @@ async fn send_binary(socket: &mut ClientSocket, body: &[u8]) {
 /// The signed handshake URL: `authorization`/`date`/`host`/`appid`, exactly the
 /// four parameters the real service checks.
 fn signed_query(addr: SocketAddr, date: &str) -> String {
-    let authorization = "YXBpX2tleT0idGVzdCIsIGFsZ29yaXRobT0iaG1hYy1zaGEyNTYiLCBzaWduYXR1cmU9ImFiYyI=";
+    let authorization =
+        "YXBpX2tleT0idGVzdCIsIGFsZ29yaXRobT0iaG1hYy1zaGEyNTYiLCBzaWduYXR1cmU9ImFiYyI=";
     format!(
         "authorization={}&date={}&host={}&appid=test",
         urlencode(authorization),
@@ -1094,6 +1139,20 @@ fn urlencode(raw: &str) -> String {
                 .join(""),
         })
         .collect()
+}
+
+/// The service base64-decodes `authorization` and looks for `key="value"`
+/// pairs; the mock does the same, so a handshake that lost its signature (a
+/// broken encoder upstream) is rejected here exactly as it would be there.
+fn signed_authorization_is_plausible(authorization: &str) -> bool {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(authorization)
+        .map(|bytes| {
+            let decoded = String::from_utf8_lossy(&bytes);
+            decoded.contains("signature=") && decoded.contains("algorithm=\"hmac-sha256\"")
+        })
+        .unwrap_or(false)
 }
 
 fn request_frame() -> String {
