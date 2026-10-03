@@ -34,9 +34,10 @@ pub use error::{classify_http_status, classify_xfyun_code, ErrorKind, RetryClass
 pub use traits::{
     AbstainReason, AudioChunk, ConfidenceSource, GlossaryEntry, InterviewerTrack, MarkHandle,
     ScriptedStt, ScriptedTranslator, ScriptedTts, SpeakerId, SttEvent, SttPartial, SttSource,
-    SttStream, TokenUsage, Translator, TranslatorEvent, TranslatorStream, TtsEvent, TtsSink,
-    TtsStream, TtsUsage, VoiceRef, ZhFragment, AUDIO_QUEUE_FRAMES, EVENT_QUEUE_ITEMS,
+    SttStream, SttUpstream, TokenUsage, Translator, TranslatorEvent, TranslatorStream, TtsEvent,
+    TtsSink, TtsStream, TtsUsage, VoiceRef, ZhFragment, AUDIO_QUEUE_FRAMES, EVENT_QUEUE_ITEMS,
 };
+pub use xfyun::XfyunStt;
 
 // ---------------------------------------------------------------------------
 // dispatch
@@ -47,8 +48,9 @@ pub use traits::{
 pub enum VendorStt {
     /// Deterministic double: tests, offline demos, and the 02-01 rig.
     Scripted(ScriptedStt),
-    // T2.2 adds `Xfyun(XfyunStt)`; T2.3 adds `Deepgram(DeepgramStt)` for the
-    // interviewer track.
+    /// 讯飞 `iat` — the production Chinese line (T2.2).
+    Xfyun(XfyunStt),
+    // T2.3 adds `Deepgram(DeepgramStt)` for the interviewer track.
 }
 
 impl From<ScriptedStt> for VendorStt {
@@ -57,28 +59,38 @@ impl From<ScriptedStt> for VendorStt {
     }
 }
 
+impl From<XfyunStt> for VendorStt {
+    fn from(source: XfyunStt) -> Self {
+        Self::Xfyun(source)
+    }
+}
+
 impl SttSource for VendorStt {
     fn provider(&self) -> &'static str {
         match self {
             VendorStt::Scripted(source) => source.provider(),
+            VendorStt::Xfyun(source) => source.provider(),
         }
     }
 
     fn model_version(&self) -> String {
         match self {
             VendorStt::Scripted(source) => source.model_version(),
+            VendorStt::Xfyun(source) => source.model_version(),
         }
     }
 
     fn set_marks(&mut self, marks: MarkHandle) {
         match self {
             VendorStt::Scripted(source) => source.set_marks(marks),
+            VendorStt::Xfyun(source) => source.set_marks(marks),
         }
     }
 
     fn start(&mut self, epoch: u64) -> Result<SttStream, StageError> {
         match self {
             VendorStt::Scripted(source) => source.start(epoch),
+            VendorStt::Xfyun(source) => source.start(epoch),
         }
     }
 }

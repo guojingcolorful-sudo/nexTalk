@@ -211,22 +211,36 @@ pub enum SttEvent {
     Failed(StageError),
 }
 
+/// What a caller pushes upstream into an STT session.
+///
+/// The fragment end is a *message*, not a dropped channel: 讯飞 needs a closing
+/// frame with `data.status == 2` to emit its committed transcript, and Deepgram
+/// needs a `CloseStream` for the same reason. Closing the sender would be
+/// indistinguishable from "the caller gave up".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SttUpstream {
+    /// One PCM16 @ 16 kHz mono chunk (framing is the client's job).
+    Audio(Vec<i16>),
+    /// No more audio for this fragment: finalise and flush.
+    End,
+}
+
 /// A live STT session: audio in, partials out.
 pub struct SttStream {
     pub provider: &'static str,
-    pub audio: mpsc::Sender<Vec<i16>>,
+    pub upstream: mpsc::Sender<SttUpstream>,
     pub events: mpsc::Receiver<SttEvent>,
 }
 
 impl SttStream {
     pub fn new(
         provider: &'static str,
-        audio: mpsc::Sender<Vec<i16>>,
+        upstream: mpsc::Sender<SttUpstream>,
         events: mpsc::Receiver<SttEvent>,
     ) -> Self {
         Self {
             provider,
-            audio,
+            upstream,
             events,
         }
     }
@@ -248,8 +262,16 @@ impl SttStream {
 
     /// Push one PCM16 @ 16 kHz mono chunk upstream (framing is the client's job).
     pub async fn send_audio(&self, pcm16: Vec<i16>) -> Result<(), StageError> {
-        self.audio
-            .send(pcm16)
+        self.upstream
+            .send(SttUpstream::Audio(pcm16))
+            .await
+            .map_err(|_| StageError::transport(self.provider, "audio queue closed"))
+    }
+
+    /// End the fragment: the vendor flushes and returns its committed text.
+    pub async fn end_fragment(&self) -> Result<(), StageError> {
+        self.upstream
+            .send(SttUpstream::End)
             .await
             .map_err(|_| StageError::transport(self.provider, "audio queue closed"))
     }
@@ -503,7 +525,7 @@ impl SttSource for ScriptedStt {
     }
 
     fn start(&mut self, _epoch: u64) -> Result<SttStream, StageError> {
-        let (audio_tx, _audio_rx) = mpsc::channel(AUDIO_QUEUE_FRAMES);
+        let (upstream_tx, _upstream_rx) = mpsc::channel(AUDIO_QUEUE_FRAMES);
         let (events_tx, events_rx) = mpsc::channel(EVENT_QUEUE_ITEMS);
         let script = self.script.clone();
         let marks = self.marks.clone();
@@ -518,7 +540,7 @@ impl SttSource for ScriptedStt {
             }
             // Dropping the sender closes the stream: a clean end.
         });
-        Ok(SttStream::new("scripted", audio_tx, events_rx))
+        Ok(SttStream::new("scripted", upstream_tx, events_rx))
     }
 }
 

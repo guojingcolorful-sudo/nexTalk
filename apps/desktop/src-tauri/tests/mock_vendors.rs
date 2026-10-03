@@ -881,7 +881,9 @@ fn xfyun_client(mock: &Server, session_cap_ms: Option<u64>) -> XfyunStt {
 }
 
 /// Drain a session into the order the cascade sees it.
-async fn drain_stt(stream: &mut nextalk_desktop_lib::pipeline::stages::traits::SttStream) -> Vec<SttEvent> {
+async fn drain_stt(
+    stream: &mut nextalk_desktop_lib::pipeline::stages::traits::SttStream,
+) -> Vec<SttEvent> {
     let mut events = Vec::new();
     while let Some(event) = stream.next_event().await {
         events.push(event);
@@ -908,13 +910,16 @@ async fn xfyun_client_streams_a_transcript_and_marks_the_first_partial() {
     let events = drain_stt(&mut stream).await;
     let partials: Vec<_> = events
         .iter()
-        .filter_map(|event| match event {
-            SttEvent::Partial(partial) => Some(partial.clone()),
+        .map(|event| match event {
+            SttEvent::Partial(partial) => partial.clone(),
             SttEvent::Failed(error) => panic!("session failed: {error}"),
         })
         .collect();
 
-    assert!(partials.len() >= 3, "greeting, revision, final: {partials:?}");
+    assert!(
+        partials.len() >= 3,
+        "greeting, revision, final: {partials:?}"
+    );
     assert!(!partials[0].committed, "the greeting is interim");
     assert_eq!(partials[0].text, "你能");
     assert!(!partials[1].committed, "apd still is not a commit");
@@ -942,7 +947,10 @@ async fn xfyun_client_reports_a_stale_clock_as_a_client_error() {
         Some(SttEvent::Failed(error)) => error,
         other => panic!("expected a handshake failure, got {other:?}"),
     };
-    assert_eq!(failure.kind, nextalk_desktop_lib::pipeline::stages::error::ErrorKind::Auth);
+    assert_eq!(
+        failure.kind,
+        nextalk_desktop_lib::pipeline::stages::error::ErrorKind::Auth
+    );
     assert_eq!(failure.retry_class, RetryClass::Client);
     assert!(failure.to_string().contains("clock"), "{failure}");
     assert!(!failure.to_string().contains("authorization="), "{failure}");
@@ -952,10 +960,14 @@ async fn xfyun_client_reports_a_stale_clock_as_a_client_error() {
 async fn xfyun_client_rotates_the_session_before_the_service_cap() {
     // The mock hangs up at 300 ms; the client must rebuild the session and
     // still deliver the terminal frame of the fragment it was carrying.
-    let (mock, state) =
-        xfyun_mock(XfyunMock::default().ignoring_audio().with_session_cap_ms(300)).await;
+    let (mock, state) = xfyun_mock(
+        XfyunMock::default()
+            .ignoring_audio()
+            .with_session_cap_ms(300),
+    )
+    .await;
     let mut client = xfyun_client(&mock, Some(300));
-    let mut stream = client.start(1).expect("the signed handshake builds");
+    let stream = client.start(1).expect("the signed handshake builds");
 
     for _ in 0..40 {
         if stream.send_audio(vec![0i16; 640]).await.is_err() {
@@ -963,7 +975,10 @@ async fn xfyun_client_rotates_the_session_before_the_service_cap() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    stream.end_fragment().await.expect("the terminal frame is sent");
+    stream
+        .end_fragment()
+        .await
+        .expect("the terminal frame is sent");
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     assert!(
@@ -987,10 +1002,9 @@ async fn xfyun_client_rotates_the_session_before_the_service_cap() {
 
 #[tokio::test]
 async fn xfyun_client_classifies_an_idle_disconnect_as_retryable() {
-    let (mock, _state) = xfyun_mock(
-        XfyunMock::default()
-            .with_greeting(vec![TimedFrame::now(xfyun_error_frame(10200, "idle timeout"))]),
-    )
+    let (mock, _state) = xfyun_mock(XfyunMock::default().with_greeting(vec![TimedFrame::now(
+        xfyun_error_frame(10200, "idle timeout"),
+    )]))
     .await;
     let mut client = xfyun_client(&mock, None);
     let mut stream = client.start(1).expect("the signed handshake builds");
