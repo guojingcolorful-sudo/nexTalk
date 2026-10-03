@@ -70,7 +70,8 @@ fn waterfall(segment_id: u64, cold: bool, at_ms: [u64; 5]) -> Waterfall {
 
 #[test]
 fn five_boundaries_yield_adjacent_gaps_and_the_e2e_stopwatch() {
-    let mut recorder = WaterfallRecorder::new(ScriptedClock::new(vec![0, 120, 300, 520, 560]), 1, false);
+    let mut recorder =
+        WaterfallRecorder::new(ScriptedClock::new(vec![0, 120, 300, 520, 560]), 1, false);
     for stage in Stage::ALL {
         recorder.mark(stage);
     }
@@ -126,19 +127,27 @@ fn missing_duplicate_and_out_of_order_marks_are_hard_errors() {
 
     // 跨片段混合：不同 segment_id 的 marks 不得拼成一条瀑布。
     assert!(matches!(
-        Waterfall::from_marks(&marks_at(1, false, [0, 100, 200, 300, 400])
-            .into_iter()
-            .map(|mark| if mark.stage == Stage::TtsFirstAudio {
-                LatencyMark { segment_id: 2, ..mark }
-            } else {
-                mark
-            })
-            .collect::<Vec<_>>())
+        Waterfall::from_marks(
+            &marks_at(1, false, [0, 100, 200, 300, 400])
+                .into_iter()
+                .map(|mark| if mark.stage == Stage::TtsFirstAudio {
+                    LatencyMark {
+                        segment_id: 2,
+                        ..mark
+                    }
+                } else {
+                    mark
+                })
+                .collect::<Vec<_>>()
+        )
         .unwrap_err(),
         WaterfallError::SegmentMismatch { .. }
     ));
 
-    assert_eq!(Waterfall::from_marks(&[]).unwrap_err(), WaterfallError::Empty);
+    assert_eq!(
+        Waterfall::from_marks(&[]).unwrap_err(),
+        WaterfallError::Empty
+    );
 }
 
 // Test 2 -------------------------------------------------------------------
@@ -243,7 +252,11 @@ fn session_aggregation_reports_percentiles_and_drops_the_oldest_beyond_the_cap()
     let mut aggregator = WaterfallAggregator::new();
     for index in 0..600u64 {
         // 固定阶段间隙 + 递增的播放段：e2e = 1000 + index。
-        aggregator.push(waterfall(index + 1, false, [0, 300, 500, 800, 1000 + index]));
+        aggregator.push(waterfall(
+            index + 1,
+            false,
+            [0, 300, 500, 800, 1000 + index],
+        ));
     }
 
     let report = aggregator.report();

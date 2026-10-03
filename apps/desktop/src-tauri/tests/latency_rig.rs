@@ -62,7 +62,11 @@ fn print_waterfall(w: &Waterfall) {
     println!(
         "片段 {}{} —— e2e {}ms（朴素串行和 {}ms，重叠 {}ms）",
         w.segment_id,
-        if w.cold { "（冷启动）" } else { "（热路径）" },
+        if w.cold {
+            "（冷启动）"
+        } else {
+            "（热路径）"
+        },
         w.e2e_ms,
         w.serial_sum_ms,
         w.overlap_ms
@@ -93,7 +97,7 @@ fn five_scripted_segments_pass_the_budget_gate() {
     let stages = ScriptedStages;
     let mut aggregator = WaterfallAggregator::new();
     let scripts: [[u64; 5]; 5] = [
-        [0, 260, 480, 900, 1180],  // cold start (first segment of the session)
+        [0, 260, 480, 900, 1180], // cold start (first segment of the session)
         [0, 240, 470, 880, 1210],
         [0, 250, 500, 910, 1250],
         [0, 230, 520, 940, 1300],
@@ -125,7 +129,10 @@ fn five_scripted_segments_pass_the_budget_gate() {
     assert_eq!(report.warm.segments, 4);
     assert!(report.cold.e2e.p95_ms <= E2E_BUDGET_MS);
     assert!(report.warm.e2e.p95_ms <= E2E_BUDGET_MS);
-    assert_eq!(report.cold.over_budget_segments + report.warm.over_budget_segments, 0);
+    assert_eq!(
+        report.cold.over_budget_segments + report.warm.over_budget_segments,
+        0
+    );
 }
 
 #[test]
@@ -214,9 +221,11 @@ fn live_variant_never_passes_silently() {
 #[test]
 #[ignore = "live measurement — needs vendor credentials and the real stages (02-02/02-03)"]
 fn latency_e2e_cold() {
-    if let Err(message) =
-        live_precondition(|key| std::env::var(key).map(|value| !value.is_empty()).unwrap_or(false))
-    {
+    if let Err(message) = live_precondition(|key| {
+        std::env::var(key)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+    }) {
         panic!("{message}");
     }
 
