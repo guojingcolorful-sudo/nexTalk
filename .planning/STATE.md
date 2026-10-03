@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 context + AI-SPEC + gateway topology decided (2026-09-29)
+stopped_at: Phase 2 executing (2026-10-03)
 last_updated: "2026-09-30T04:51:45.000Z"
 last_activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空）
 progress:
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 0 of 5 in current phase
-Status: Phase 2 context gathered — vendor experiments in progress (keys being collected), then plan
+Plan: 0 of 5 in current phase (02-01 executing)
+Status: Phase 2 executing — plans approved (5 plans / 5 waves), experiments complete (domestic path verified)
 Last activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空，仅 session_started 清空重来）
 
 Progress: [██░░░░░░░░] 18% (5/28 plans, Phase 1/7 done)
