@@ -1,0 +1,73 @@
+# NexTalk CI — 四条并行车道：web 单测、e2e、Rust 全量、延迟 rig 冒烟。
+#
+# 研究修正 8（02-01）：本仓库没有 Cargo workspace —— 只有
+# apps/desktop/src-tauri/Cargo.toml 一个 crate 清单。所有 cargo 命令一律写成
+# `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`；任何假定
+# 存在 workspace 根清单的调用都会直接失败。
+#
+# 延迟 rig 车道是确定性的、零网络的（脚本化阶段双打注入五个流式边界），
+# 因此不需要任何供应商 key。真实的 live 端到端测量不进 CI：它需要凭据，
+# 属于阶段门禁的手动记录工件（`cargo test --test latency_rig -- --ignored`）。
+#
+# runner 用 macos-13（x86_64），与目标机 macOS 12.7 Intel 路径一致。
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-web:
+    name: unit-web
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r test
+
+  e2e:
+    name: e2e
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install chromium
+      # playwright.config.ts 的两条 webServer 都跑 `vite preview`，它只服务
+      # 已构建的 dist —— 没有这一步车道起不来。
+      - run: pnpm build
+      - run: pnpm exec playwright test
+
+  rust:
+    name: rust
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # 首次为 Tauri 依赖树编译；缓存命中后显著缩短。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  latency-rig:
+    name: latency-rig
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      # 预算断言在 CI 中硬失败：e2e > 2000ms 即红，并打印归因阶段。
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --nocapture
