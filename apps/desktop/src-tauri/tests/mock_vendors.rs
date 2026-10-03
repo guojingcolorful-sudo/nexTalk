@@ -43,7 +43,9 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
-use nextalk_desktop_lib::pipeline::stages::error::{classify_http_status, RetryClass, StageError};
+use nextalk_desktop_lib::pipeline::stages::error::{
+    classify_http_status, ErrorKind, RetryClass, StageError,
+};
 
 /// How long a test waits for a mock before declaring the session stuck.
 const MOCK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -567,6 +569,25 @@ impl DeepseekMock {
                 "{\"t\":\"fragment\",\"text\":\"The query was 800 ms.\",\"final_flag\":true}",
             ),
             sse_usage(64, 12),
+            "data: [DONE]\n\n".to_string(),
+        ];
+        self
+    }
+
+    /// The structured payload *and* its event boundary split across two TCP
+    /// chunks — failure case 0001 on the path a real translation takes. A
+    /// client that parses per chunk loses `800`; a client that parses per
+    /// boundary and accumulates the JSON deltas keeps it.
+    fn with_split_structured_fragment(mut self) -> Self {
+        self.chunks = vec![
+            // No trailing boundary: the event is completed by the next chunk.
+            sse_content("{\"t\":\"fragment\",\"text\":\"The query was ")
+                .trim_end()
+                .to_string(),
+            // …and the JSON delta itself is also split across the two chunks.
+            "\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"800 ms.\",\"final_flag\":true}}]}\n\n"
+                .to_string(),
+            sse_usage(31, 11),
             "data: [DONE]\n\n".to_string(),
         ];
         self
@@ -1217,6 +1238,288 @@ async fn deepgram_client_skips_a_malformed_frame_without_losing_the_next_run() {
     };
     assert_eq!(partial.text, "garbage");
     assert!(partial.committed);
+}
+
+// ---------------------------------------------------------------------------
+// DeepSeek client against the mock (T2.4)
+// ---------------------------------------------------------------------------
+
+use nextalk_desktop_lib::pipeline::stages::config::DeepseekCredentials;
+use nextalk_desktop_lib::pipeline::stages::deepseek::DeepseekTranslator;
+use nextalk_desktop_lib::pipeline::stages::traits::{
+    AbstainReason, GlossaryEntry, TokenUsage, Translator, TranslatorEvent, TranslatorStream,
+    ZhFragment,
+};
+
+/// A DeepSeek client pointed at the loopback mock. The key is fabricated;
+/// nothing is read from the environment.
+fn deepseek_client(mock: &Server) -> DeepseekTranslator {
+    let credentials = DeepseekCredentials {
+        api_key: Secret::new("test-deepseek-key"),
+    };
+    // The base URL only: the client appends `/chat/completions` itself.
+    let endpoints = Endpoints::defaults().with_deepseek_http(mock.http_url(""));
+    DeepseekTranslator::new(credentials, endpoints)
+}
+
+fn zh(text: &str, seq: u64) -> ZhFragment {
+    ZhFragment {
+        text: text.to_string(),
+        seq,
+    }
+}
+
+/// Drain a translation to its close, with a timeout so a stuck driver fails
+/// the test instead of hanging the suite.
+async fn drain_translator(stream: &mut TranslatorStream) -> Vec<TranslatorEvent> {
+    let mut events = Vec::new();
+    loop {
+        match tokio::time::timeout(MOCK_TIMEOUT, stream.next()).await {
+            Ok(Some(event)) => events.push(event),
+            Ok(None) => break,
+            Err(_) => panic!("the translation stream never closed"),
+        }
+    }
+    events
+}
+
+/// The English the events spell out, ignoring the accounting and the failures.
+fn translated_text(events: &[TranslatorEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            TranslatorEvent::Fragment { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one failure in the run, panicking if there is none (or more than one).
+fn the_failure(events: &[TranslatorEvent]) -> StageError {
+    let failures: Vec<&StageError> = events
+        .iter()
+        .filter_map(|event| match event {
+            TranslatorEvent::Failed(error) => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failures.len(), 1, "exactly one failure: {events:?}");
+    failures[0].clone()
+}
+
+#[tokio::test]
+async fn deepseek_client_streams_a_structured_fragment_and_marks_the_first_token_once() {
+    let (mock, state) = deepseek_mock(DeepseekMock::default().with_structured_fragment()).await;
+    let marks: Arc<Mutex<Vec<Stage>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut client = deepseek_client(&mock);
+    client.set_marks(MarkHandle::new({
+        let marks = marks.clone();
+        move |stage| marks.lock().unwrap().push(stage)
+    }));
+
+    let mut stream = client
+        .translate(&zh("这条查询耗时 800 毫秒。", 1), &[], 1)
+        .expect("the request is accepted");
+    let events = drain_translator(&mut stream).await;
+
+    assert_eq!(translated_text(&events), "The query was 800 ms.");
+    let last_is_final = events.iter().rev().find_map(|event| match event {
+        TranslatorEvent::Fragment { final_flag, .. } => Some(*final_flag),
+        _ => None,
+    });
+    assert_eq!(last_is_final, Some(true), "the run is closed: {events:?}");
+    for event in &events {
+        if let TranslatorEvent::Fragment {
+            provider,
+            model_version,
+            ..
+        } = event
+        {
+            assert_eq!(provider, "deepseek");
+            assert_eq!(model_version, "deepseek-chat");
+        }
+    }
+    assert!(
+        events.contains(&TranslatorEvent::Usage(TokenUsage {
+            prompt_tokens: 64,
+            completion_tokens: 12,
+        })),
+        "the usage frame is surfaced for D-13 costing: {events:?}"
+    );
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        [Stage::TranslateFirstToken],
+        "exactly one mark, at the first token"
+    );
+
+    let bodies = state.bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 1, "one request per fragment");
+    let body = &bodies[0];
+    assert_eq!(body["model"], "deepseek-chat");
+    assert_eq!(body["temperature"], 0, "translation is not a creative act");
+    assert_eq!(body["messages"][1]["content"], "这条查询耗时 800 毫秒。");
+    assert_eq!(
+        state.authorizations.lock().unwrap().as_slice(),
+        ["Bearer test-deepseek-key"]
+    );
+}
+
+#[tokio::test]
+async fn deepseek_client_keeps_a_token_split_across_tcp_chunks() {
+    // Failure case 0001 on the path a real translation takes: the event
+    // boundary and the JSON payload both straddle the chunk edge.
+    let (mock, _state) = deepseek_mock(DeepseekMock::default().with_split_structured_fragment())
+        .await;
+    let mut client = deepseek_client(&mock);
+
+    let mut stream = client
+        .translate(&zh("单次响应超过 800 毫秒。", 1), &[], 1)
+        .expect("the request is accepted");
+    let events = drain_translator(&mut stream).await;
+
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, TranslatorEvent::Failed(_))),
+        "no failure: {events:?}"
+    );
+    let text = translated_text(&events);
+    assert!(text.contains("800"), "the number survived: {text}");
+    assert_eq!(text, "The query was 800 ms.");
+    assert!(!text.contains("  "), "no double space: {text:?}");
+}
+
+#[tokio::test]
+async fn deepseek_client_carries_the_previous_translation_as_context_and_no_more() {
+    let (mock, state) = deepseek_mock(DeepseekMock::default().with_structured_fragment()).await;
+    let mut client = deepseek_client(&mock);
+    let glossary = vec![GlossaryEntry {
+        zh: "慢查询日志".to_string(),
+        en: "slow query log".to_string(),
+    }];
+
+    for (seq, text) in [(1u64, "第一条。"), (2, "第二条。")] {
+        let mut stream = client
+            .translate(&zh(text, seq), &glossary, 1)
+            .expect("the request is accepted");
+        drain_translator(&mut stream).await;
+    }
+
+    let bodies = state.bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    let first = bodies[0]["messages"].as_array().expect("messages");
+    assert_eq!(first.len(), 2, "system + the fragment itself");
+    assert!(first[0]["content"]
+        .as_str()
+        .expect("system text")
+        .contains("慢查询日志 → slow query log"));
+
+    let second = bodies[1]["messages"].as_array().expect("messages");
+    assert_eq!(second.len(), 3, "system + previous English + this fragment");
+    assert_eq!(second[1]["role"], "assistant");
+    assert_eq!(second[1]["content"], "The query was 800 ms.");
+    assert_eq!(second[2]["role"], "user");
+    assert_eq!(second[2]["content"], "第二条。");
+}
+
+#[tokio::test]
+async fn deepseek_client_refuses_a_reasoning_model_before_it_reaches_the_wire() {
+    let (mock, state) = deepseek_mock(DeepseekMock::default().with_structured_fragment()).await;
+    let mut client = deepseek_client(&mock).with_model("deepseek-reasoner");
+
+    let error = client
+        .translate(&zh("思考会拖垮 1.5 秒预算。", 1), &[], 1)
+        .expect_err("a thinking model is refused");
+    assert_eq!(error.retry_class, RetryClass::Terminal, "{error}");
+    assert!(error.to_string().contains("deepseek-reasoner"), "{error}");
+    assert!(
+        state.bodies.lock().unwrap().is_empty(),
+        "nothing was sent to the vendor"
+    );
+    assert!(state.authorizations.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn deepseek_client_maps_an_abstain_to_the_shared_vocabulary() {
+    let (mock, _state) = deepseek_mock(DeepseekMock::default().with_abstain()).await;
+    let mut client = deepseek_client(&mock);
+
+    let mut stream = client
+        .translate(&zh("（静音）", 1), &[], 1)
+        .expect("the request is accepted");
+    let events = drain_translator(&mut stream).await;
+
+    assert!(
+        events.contains(&TranslatorEvent::Abstained {
+            reason: AbstainReason::SilentAudio
+        }),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, TranslatorEvent::Fragment { .. })),
+        "an abstain is not a fragment: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn deepseek_client_surfaces_a_malformed_event_as_a_retryable_failure() {
+    let (mock, _state) = deepseek_mock(DeepseekMock::default().with_malformed_event()).await;
+    let mut client = deepseek_client(&mock);
+
+    let mut stream = client
+        .translate(&zh("半截事件。", 1), &[], 1)
+        .expect("the request is accepted");
+    let events = drain_translator(&mut stream).await;
+
+    let failure = the_failure(&events);
+    assert_eq!(failure.retry_class, RetryClass::Retryable, "{failure}");
+    assert_eq!(failure.provider, "deepseek");
+    assert_eq!(failure.kind, ErrorKind::Protocol);
+    assert!(
+        translated_text(&events).is_empty(),
+        "garbage never becomes a fragment: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn deepseek_client_surfaces_a_truncated_body_as_a_retryable_failure() {
+    let (mock, _state) = deepseek_mock(DeepseekMock::default().with_truncated_event()).await;
+    let mut client = deepseek_client(&mock);
+
+    let mut stream = client
+        .translate(&zh("连接被掐断。", 1), &[], 1)
+        .expect("the request is accepted");
+    let events = drain_translator(&mut stream).await;
+
+    let failure = the_failure(&events);
+    assert_eq!(failure.retry_class, RetryClass::Retryable, "{failure}");
+    assert!(
+        translated_text(&events).is_empty(),
+        "a half answer is not a translation: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn deepseek_client_classifies_http_failures_with_the_shared_table() {
+    let (rate_limited, _state) = deepseek_mock(DeepseekMock::default().with_status(429)).await;
+    let mut client = deepseek_client(&rate_limited);
+    let mut stream = client
+        .translate(&zh("限流。", 1), &[], 1)
+        .expect("the request is accepted");
+    let failure = the_failure(&drain_translator(&mut stream).await);
+    assert_eq!(failure.retry_class, RetryClass::Retryable, "{failure}");
+    assert!(failure.to_string().contains("429"), "{failure}");
+
+    let (unauthorized, _state) = deepseek_mock(DeepseekMock::default().with_status(401)).await;
+    let mut client = deepseek_client(&unauthorized);
+    let mut stream = client
+        .translate(&zh("密钥过期。", 1), &[], 1)
+        .expect("the request is accepted");
+    let failure = the_failure(&drain_translator(&mut stream).await);
+    assert_eq!(failure.retry_class, RetryClass::Client, "{failure}");
+    assert_eq!(failure.kind, ErrorKind::Auth);
 }
 
 // ---------------------------------------------------------------------------

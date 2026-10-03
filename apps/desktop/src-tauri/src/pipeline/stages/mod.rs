@@ -23,6 +23,7 @@
 
 pub mod config;
 pub mod deepgram;
+pub mod deepseek;
 pub mod error;
 pub mod traits;
 pub mod xfyun;
