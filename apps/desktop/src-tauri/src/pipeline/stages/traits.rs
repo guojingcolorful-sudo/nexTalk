@@ -206,6 +206,12 @@ impl SttPartial {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SttEvent {
     Partial(SttPartial),
+    /// The vendor detected speech onset (Deepgram's `SpeechStarted`). Only the
+    /// interviewer line emits it, and 02-03's barge-in detection consumes it —
+    /// which is why it is a first-class event and not a swallowed log line.
+    SpeechStarted {
+        at_ms: u64,
+    },
     /// The session ended with a classified failure. The stream may still end
     /// cleanly (channel closed) after this.
     Failed(StageError),
@@ -246,12 +252,16 @@ impl SttStream {
     }
 
     /// The plan's `next_partial` shape: `None` once the session is over
-    /// (cleanly or not). Use [`SttStream::next_event`] when the classification
-    /// matters — D-09 retries on it.
+    /// (cleanly or not). Side signals ([`SttEvent::SpeechStarted`]) are skipped,
+    /// not treated as the end. Use [`SttStream::next_event`] when the
+    /// classification matters — D-09 retries on it.
     pub async fn next_partial(&mut self) -> Option<SttPartial> {
-        match self.events.recv().await? {
-            SttEvent::Partial(partial) => Some(partial),
-            SttEvent::Failed(_) => None,
+        loop {
+            match self.events.recv().await? {
+                SttEvent::Partial(partial) => return Some(partial),
+                SttEvent::SpeechStarted { .. } => continue,
+                SttEvent::Failed(_) => return None,
+            }
         }
     }
 

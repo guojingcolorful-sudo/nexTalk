@@ -468,10 +468,10 @@ async fn deepgram_session(mut socket: WebSocket, state: Arc<DeepgramState>) {
         }
     }
 
-    let deadline = state
-        .cfg
-        .require_keepalive_within_ms
-        .map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
+    // The window slides: any frame the client sends refreshes it, which is
+    // what "no audio received for 10 s" means for the real service.
+    let window = state.cfg.require_keepalive_within_ms;
+    let mut deadline = window.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
     loop {
         let next = match deadline {
             Some(deadline) => match tokio::time::timeout_at(deadline, socket.next()).await {
@@ -492,6 +492,7 @@ async fn deepgram_session(mut socket: WebSocket, state: Arc<DeepgramState>) {
             None => socket.next().await,
         };
         let Some(Ok(message)) = next else { return };
+        deadline = window.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
         match message {
             Message::Text(text) => state.texts.lock().unwrap().push(text.to_string()),
             Message::Binary(_) => {
@@ -912,6 +913,7 @@ async fn xfyun_client_streams_a_transcript_and_marks_the_first_partial() {
         .iter()
         .map(|event| match event {
             SttEvent::Partial(partial) => partial.clone(),
+            SttEvent::SpeechStarted { .. } => panic!("the 讯飞 line never reports speech onset"),
             SttEvent::Failed(error) => panic!("session failed: {error}"),
         })
         .collect();
@@ -1199,6 +1201,22 @@ async fn deepgram_client_classifies_the_net_0001_close_as_a_retryable_silent_tim
         rendered.contains("silent") || rendered.contains("silence"),
         "the message must name the silent timeout: {rendered}"
     );
+}
+
+#[tokio::test]
+async fn deepgram_client_skips_a_malformed_frame_without_losing_the_next_run() {
+    // A side channel must not die on one unreadable frame: the parser skips it
+    // and the next real run still commits.
+    let (mock, _state) = deepgram_mock(DeepgramMock::default().with_malformed_frame()).await;
+    let mut client = deepgram_client(&mock, None);
+    let mut stream = client.start(1).expect("the handshake builds");
+
+    let partial = match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::Partial(partial)) => partial,
+        other => panic!("expected the run after the garbage frame, got {other:?}"),
+    };
+    assert_eq!(partial.text, "garbage");
+    assert!(partial.committed);
 }
 
 // ---------------------------------------------------------------------------
