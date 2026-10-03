@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from '../App';
-import { isAiThinking, nextLanguagePref } from './TeleprompterPage';
+import { isAiThinking, nextLanguagePref, toAiTabItems } from './TeleprompterPage';
 
 /**
  * 01-04 Task 1 gate: the phone surface renders the locked copy, the tab
@@ -176,9 +176,7 @@ describe('TeleprompterPage', () => {
     first.unmount();
     render(<App />);
 
-    expect(screen.getByRole('tab', { name: 'AI 辅助' }).getAttribute('aria-selected')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: 'AI 辅助' }).getAttribute('aria-selected')).toBe('true');
   });
 
   test('keeps AI cards mounted across tab switches — revealed content never re-reveals (UAT-13)', () => {
@@ -239,6 +237,36 @@ describe('TeleprompterPage', () => {
     expect(aiPanel.getByText(SUBTITLE.en)).toBeTruthy();
     expect(aiPanel.getByText(SUBTITLE.zh)).toBeTruthy();
     expect(aiPanel.getByText('数据库优化')).toBeTruthy();
+  });
+
+  test('keeps ONE question card while the question streams in partials (UAT-16 streaming)', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+      // A streaming source refines the SAME question id as it hears more: the
+      // seq rises with every partial and the final closes the question. The
+      // record must follow the newest payload in place.
+      socket.emit({ ...SUBTITLE, seq: 1, zh: '你的数据库', en: 'Your database', final: false });
+      socket.emit({
+        ...SUBTITLE,
+        seq: 2,
+        zh: '你的数据库查询在负载下',
+        en: 'Your database queries under load',
+        final: false,
+      });
+      socket.emit({ ...SUBTITLE, seq: 3 }); // the completed question
+      screen.getByRole('tab', { name: 'AI 辅助' }).click();
+    });
+
+    // One record for the question, refined by the newest payload. Appending a
+    // card per partial both stacks duplicates and hands React the same id as
+    // the render key several times over.
+    const aiPanel = within(document.getElementById('panel-ai') as HTMLElement);
+    expect(aiPanel.getAllByText('面试官提问')).toHaveLength(1);
+    expect(aiPanel.getByText(SUBTITLE.en)).toBeTruthy();
+    expect(aiPanel.queryByText('Your database')).toBeNull();
   });
 
   test('renders a validated subtitle frame and drops malformed ones', () => {
@@ -364,6 +392,47 @@ describe('nextLanguagePref', () => {
     expect(nextLanguagePref('all-zh')).toBe('all-en');
     expect(nextLanguagePref('all-en')).toBe('bilingual');
     expect(nextLanguagePref('bilingual')).toBe('all-zh');
+  });
+});
+
+describe('toAiTabItems (UAT-16 record building)', () => {
+  const question = (id: string, seq: number, en: string) => ({
+    t: 'subtitle' as const,
+    id,
+    speaker: 'interviewer' as const,
+    seq,
+    zh: '问题',
+    en,
+    final: true,
+  });
+  const strategy = (id: string, roundId: string) => ({
+    t: 'strategy' as const,
+    id,
+    roundId,
+    title: '策略',
+    bullets: [],
+  });
+
+  test('keeps one record per id, refined in place, in arrival order', () => {
+    const items = toAiTabItems([
+      question('r1-q', 1, 'first partial'),
+      question('r1-q', 2, 'refined partial'),
+      question('r1-q', 3, 'the completed question'),
+      strategy('s-r1', 'r1'),
+      question('r2-q', 4, 'the next question'),
+    ]);
+
+    expect(items.map((item) => item.id)).toEqual(['r1-q', 's-r1', 'r2-q']);
+    expect(items[0]).toMatchObject({ kind: 'question', en: 'the completed question' });
+  });
+
+  test('records only interviewer questions and strategies', () => {
+    const items = toAiTabItems([
+      { t: 'status', session: 'listening' },
+      { t: 'subtitle', id: 'r1-a', speaker: 'user', seq: 1, zh: '回答', en: 'answer', final: true },
+    ]);
+
+    expect(items).toHaveLength(0);
   });
 });
 

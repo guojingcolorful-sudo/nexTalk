@@ -91,6 +91,44 @@ export function isAiThinking(events: ServerEvent[]): boolean {
   return lastStrategyRound !== lastQuestionRound;
 }
 
+/**
+ * The AI tab's records, in arrival order: one card per interviewer question and
+ * one per strategy. A streaming source refines the SAME id as it hears more
+ * (the seq rises with every partial until the final), so a repeat of an id
+ * replaces its record in place instead of appending a second card — appending
+ * both stacks duplicates and hands React the same id as the render key several
+ * times over, which drops and duplicates children unpredictably.
+ */
+export function toAiTabItems(events: readonly ServerEvent[]): AiTabItem[] {
+  const items: AiTabItem[] = [];
+  const indexById = new Map<string, number>();
+  for (const event of events) {
+    let item: AiTabItem | null = null;
+    if (event.t === 'subtitle' && event.speaker === 'interviewer') {
+      item = { kind: 'question', id: event.id, zh: event.zh, en: event.en };
+    } else if (event.t === 'strategy') {
+      item = {
+        kind: 'strategy',
+        id: event.id,
+        title: event.title,
+        bullets: event.bullets,
+        roundId: event.roundId,
+        answerZh: event.answerZh,
+        answerEn: event.answerEn,
+      };
+    }
+    if (item === null) continue;
+    const recorded = indexById.get(item.id);
+    if (recorded === undefined) {
+      indexById.set(item.id, items.length);
+      items.push(item);
+    } else {
+      items[recorded] = item;
+    }
+  }
+  return items;
+}
+
 const NEXT_LANGUAGE: Record<LanguagePref, LanguagePref> = {
   'all-zh': 'all-en',
   'all-en': 'bilingual',
@@ -115,8 +153,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
 
   // SYNC-04: the 开始提词 tap is the gesture the wake lock needs on a plain
   // http:// LAN origin, so the hook is engaged from the same handler.
-  const { isWakeActive, activate: activateWakeLock, deactivate: deactivateWakeLock } =
-    useWakeLock({ onFallbackEngaged: () => setToast('已启用防休眠回退模式') });
+  const {
+    isWakeActive,
+    activate: activateWakeLock,
+    deactivate: deactivateWakeLock,
+  } = useWakeLock({ onFallbackEngaged: () => setToast('已启用防休眠回退模式') });
 
   const subtitles = useMemo(
     () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
@@ -125,25 +166,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // UAT-16: the AI tab records the interviewer's questions in real time,
   // interleaved with the strategy cards in arrival order — the same timeline
   // the desktop AI pane shows.
-  const aiTabItems = useMemo<AiTabItem[]>(() => {
-    const items: AiTabItem[] = [];
-    for (const event of events) {
-      if (event.t === 'subtitle' && event.speaker === 'interviewer') {
-        items.push({ kind: 'question', id: event.id, zh: event.zh, en: event.en });
-      } else if (event.t === 'strategy') {
-        items.push({
-          kind: 'strategy',
-          id: event.id,
-          title: event.title,
-          bullets: event.bullets,
-          roundId: event.roundId,
-          answerZh: event.answerZh,
-          answerEn: event.answerEn,
-        });
-      }
-    }
-    return items;
-  }, [events]);
+  const aiTabItems = useMemo<AiTabItem[]>(() => toAiTabItems(events), [events]);
   const generating = useMemo(() => isGenerating(events), [events]);
   // UAT-12: the AI tab shows the thinking state while the newest question
   // awaits its strategy card.
@@ -296,10 +319,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
               />
             ) : (
               aiTabItems.map((item, index) => (
-                <div
-                  key={item.id}
-                  ref={index === aiTabItems.length - 1 ? aiItemAnchorRef : null}
-                >
+                <div key={item.id} ref={index === aiTabItems.length - 1 ? aiItemAnchorRef : null}>
                   {item.kind === 'question' ? (
                     <QuestionCard zh={item.zh} en={item.en} />
                   ) : (
