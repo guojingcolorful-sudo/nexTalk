@@ -1026,6 +1026,182 @@ async fn xfyun_client_classifies_an_idle_disconnect_as_retryable() {
 }
 
 // ---------------------------------------------------------------------------
+// Deepgram client against the mock (T2.3)
+// ---------------------------------------------------------------------------
+
+use nextalk_desktop_lib::pipeline::stages::config::DeepgramCredentials;
+use nextalk_desktop_lib::pipeline::stages::deepgram::{DeepgramStt, KEEPALIVE_FRAME};
+use nextalk_desktop_lib::pipeline::stages::traits::ConfidenceSource;
+
+/// A Deepgram client pointed at the loopback mock. The API key is fabricated;
+/// nothing is read from the environment.
+fn deepgram_client(mock: &Server, keepalive_ms: Option<u64>) -> DeepgramStt {
+    let credentials = DeepgramCredentials {
+        api_key: Secret::new("test-deepgram-key"),
+    };
+    let endpoints = Endpoints::defaults().with_deepgram_ws(mock.ws_url("/v1/listen"));
+    let mut client = DeepgramStt::new(credentials, endpoints);
+    if let Some(ms) = keepalive_ms {
+        client = client.with_keepalive_interval_ms(ms);
+    }
+    client
+}
+
+/// Wait for one event, failing loudly instead of hanging the suite.
+async fn next_event_within(
+    stream: &mut nextalk_desktop_lib::pipeline::stages::traits::SttStream,
+    ms: u64,
+) -> Option<SttEvent> {
+    match tokio::time::timeout(Duration::from_millis(ms), stream.next_event()).await {
+        Ok(event) => event,
+        Err(_) => panic!("no event within {ms} ms"),
+    }
+}
+
+#[tokio::test]
+async fn deepgram_client_commits_on_speech_final_and_never_marks_the_user_path() {
+    let (mock, _state) = deepgram_mock(DeepgramMock::default()).await;
+    let marks: Arc<Mutex<Vec<Stage>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut client = deepgram_client(&mock, None);
+    client.set_marks(MarkHandle::new({
+        let marks = marks.clone();
+        move |stage| marks.lock().unwrap().push(stage)
+    }));
+    let mut stream = client.start(1).expect("the handshake builds");
+
+    // Test 8: SpeechStarted is exposed to the caller (02-03's barge-in input).
+    match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::SpeechStarted { at_ms }) => assert_eq!(at_ms, 420),
+        other => panic!("expected SpeechStarted first, got {other:?}"),
+    }
+
+    // Test 4: `is_final` without `speech_final` is buffered, not committed.
+    let buffered = match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::Partial(partial)) => partial,
+        other => panic!("expected the buffered run, got {other:?}"),
+    };
+    assert_eq!(buffered.text, "Could you walk");
+    assert!(buffered.is_final, "the vendor closed the run");
+    assert!(!buffered.committed, "but the utterance is still open");
+    assert_eq!(buffered.confidence, Some(0.98));
+
+    let committed = match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::Partial(partial)) => partial,
+        other => panic!("expected the flushed utterance, got {other:?}"),
+    };
+    assert_eq!(committed.text, "Could you walk me through the steps");
+    assert!(committed.committed && committed.is_final);
+    assert_eq!(committed.confidence, Some(0.94));
+    assert_eq!(
+        committed.confidence_source,
+        ConfidenceSource::Vendor,
+        "Deepgram does return a score"
+    );
+
+    // Test 9: the version in the partial is the one the service ran.
+    assert!(
+        committed.model_version.contains("nova-3")
+            && committed.model_version.contains("2026-01-15"),
+        "{}",
+        committed.model_version
+    );
+    assert_eq!(client.model_version(), "nova-3 2026-01-15 chirp-3");
+
+    // Decision 6: the interviewer line never fires the user path's boundary.
+    assert!(
+        marks.lock().unwrap().is_empty(),
+        "the rig's waterfall must not see the interviewer line"
+    );
+}
+
+#[tokio::test]
+async fn deepgram_client_flushes_on_utterance_end_without_speech_final() {
+    // Test 5: some sessions never send `speech_final`; the `UtteranceEnd`
+    // fallback must still commit the tail.
+    let (mock, _state) = deepgram_mock(DeepgramMock::default().with_utterance_end_only()).await;
+    let mut client = deepgram_client(&mock, None);
+    let mut stream = client.start(1).expect("the handshake builds");
+
+    let buffered = match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::Partial(partial)) => partial,
+        other => panic!("expected the buffered run, got {other:?}"),
+    };
+    assert!(!buffered.committed);
+
+    let flushed = match next_event_within(&mut stream, 500).await {
+        Some(SttEvent::Partial(partial)) => partial,
+        other => panic!("expected the UtteranceEnd flush, got {other:?}"),
+    };
+    assert_eq!(flushed.text, "just an is_final");
+    assert!(
+        flushed.committed,
+        "UtteranceEnd is the fallback commit path"
+    );
+}
+
+#[tokio::test]
+async fn deepgram_client_sends_keepalive_on_the_named_cadence() {
+    // Test 6: no audio is pushed at all — the heartbeat alone must hold the
+    // session open past the vendor's silence window.
+    let (mock, state) = deepgram_mock(DeepgramMock {
+        greeting: Vec::new(),
+        require_keepalive_within_ms: Some(400),
+        ..DeepgramMock::default()
+    })
+    .await;
+    let mut client = deepgram_client(&mock, Some(100));
+    let mut stream = client.start(1).expect("the handshake builds");
+
+    tokio::time::sleep(Duration::from_millis(450)).await;
+
+    let texts = state.texts.lock().unwrap().clone();
+    assert!(
+        texts.len() >= 3,
+        "expected a heartbeat every 100 ms, saw {texts:?}"
+    );
+    for text in &texts {
+        assert_eq!(text, KEEPALIVE_FRAME, "the frame is the exact literal");
+    }
+    assert_eq!(
+        state.sessions.load(Ordering::SeqCst),
+        1,
+        "the heartbeat kept the session open"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), stream.next_event())
+            .await
+            .is_err(),
+        "a live session must not report a failure"
+    );
+}
+
+#[tokio::test]
+async fn deepgram_client_classifies_the_net_0001_close_as_a_retryable_silent_timeout() {
+    // Test 7: the client's heartbeat is slower than the window, so the vendor
+    // hangs up with NET-0001 — a stale link, never a successful end of stream.
+    let (mock, _state) = deepgram_mock(DeepgramMock {
+        greeting: Vec::new(),
+        require_keepalive_within_ms: Some(150),
+        ..DeepgramMock::default()
+    })
+    .await;
+    let mut client = deepgram_client(&mock, Some(5_000));
+    let mut stream = client.start(1).expect("the handshake builds");
+
+    let failure = match next_event_within(&mut stream, 2_000).await {
+        Some(SttEvent::Failed(error)) => error,
+        other => panic!("expected the NET-0001 failure, got {other:?}"),
+    };
+    assert_eq!(failure.retry_class, RetryClass::Retryable, "{failure}");
+    let rendered = failure.to_string();
+    assert!(rendered.contains("NET-0001"), "{rendered}");
+    assert!(
+        rendered.contains("silent") || rendered.contains("silence"),
+        "the message must name the silent timeout: {rendered}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // harness tests
 // ---------------------------------------------------------------------------
 

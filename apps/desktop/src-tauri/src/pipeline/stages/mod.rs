@@ -22,6 +22,7 @@
 //! allocation per hop inside the 2 s budget.
 
 pub mod config;
+pub mod deepgram;
 pub mod error;
 pub mod traits;
 pub mod xfyun;
