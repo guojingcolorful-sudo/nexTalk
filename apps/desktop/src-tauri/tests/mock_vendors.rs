@@ -1524,6 +1524,239 @@ async fn deepseek_client_classifies_http_failures_with_the_shared_table() {
 }
 
 // ---------------------------------------------------------------------------
+// 火山 client against the mock (T2.5)
+// ---------------------------------------------------------------------------
+
+use nextalk_desktop_lib::pipeline::stages::config::VolcCredentials;
+use nextalk_desktop_lib::pipeline::stages::traits::{
+    AudioChunk, SpeakerId, TtsEvent, TtsSink, TtsStream, TtsUsage, VoiceRef,
+};
+use nextalk_desktop_lib::pipeline::stages::volc_tts::VolcTts;
+
+const VOLC_PATH: &str = "/api/v3/tts/unidirectional/stream";
+
+/// The clone the user's profile resolves to (02-04), shaped like a real id.
+fn clone_voice() -> VoiceRef {
+    VoiceRef::Clone(SpeakerId::new("S_9k337yqg2"))
+}
+
+/// Credentials shaped like the real ones. The token is fabricated; nothing is
+/// read from the environment.
+fn volc_credentials() -> VolcCredentials {
+    VolcCredentials {
+        app_id: "appid-test".to_string(),
+        access_token: Secret::new("test-volc-token"),
+        resource_id: "seed-icl-2.0".to_string(),
+        preset_voice: None,
+        clone_speaker: None,
+    }
+}
+
+/// A 火山 client pointed at the loopback mock.
+fn volc_client(mock: &Server) -> VolcTts {
+    let endpoints = Endpoints::defaults().with_volc_ws(mock.ws_url(VOLC_PATH));
+    VolcTts::new(volc_credentials(), endpoints)
+}
+
+/// Drain a synthesis to its close, with a timeout so a stuck driver fails the
+/// test instead of hanging the suite.
+async fn drain_tts(stream: &mut TtsStream) -> Vec<TtsEvent> {
+    let mut events = Vec::new();
+    loop {
+        match tokio::time::timeout(MOCK_TIMEOUT, stream.next()).await {
+            Ok(Some(event)) => events.push(event),
+            Ok(None) => break,
+            Err(_) => panic!("the synthesis stream never closed"),
+        }
+    }
+    events
+}
+
+/// The audio the run produced, in order.
+fn chunks_of(events: &[TtsEvent]) -> Vec<&AudioChunk> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            TtsEvent::Audio(chunk) => Some(chunk),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one failure in the run, panicking if there is none (or more than one).
+fn tts_failure(events: &[TtsEvent]) -> StageError {
+    let failures: Vec<&StageError> = events
+        .iter()
+        .filter_map(|event| match event {
+            TtsEvent::Failed(error) => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failures.len(), 1, "exactly one failure: {events:?}");
+    failures[0].clone()
+}
+
+#[tokio::test]
+async fn volc_client_streams_pcm_and_finishes_with_the_usage_frame() {
+    let (mock, state) = volc_mock(VolcMock::default()).await;
+    let marks: Arc<Mutex<Vec<Stage>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut client = volc_client(&mock);
+    client.set_marks(MarkHandle::new({
+        let marks = marks.clone();
+        move |stage| marks.lock().unwrap().push(stage)
+    }));
+
+    let mut stream = client
+        .synthesize("The query took 800 ms.", &clone_voice(), 1)
+        .expect("the request is accepted");
+    let events = drain_tts(&mut stream).await;
+
+    let chunks = chunks_of(&events);
+    assert_eq!(chunks.len(), 2, "{events:?}");
+    assert_eq!(chunks[0].sample_rate_hz, 24_000, "24 kHz mono");
+    assert_eq!(chunks[0].samples(), 240, "480 bytes of PCM16 → 240 samples");
+    assert_eq!(chunks[0].duration_ms(), 10);
+    assert!(chunks[0].pcm.iter().all(|sample| *sample == 0.0));
+
+    assert!(
+        events.contains(&TtsEvent::Finished {
+            usage: Some(TtsUsage {
+                characters: 42,
+                text_words: 11,
+            }),
+        }),
+        "the accounting frame is surfaced for D-13: {events:?}"
+    );
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        [Stage::TtsFirstAudio],
+        "exactly one mark, at the first audio byte"
+    );
+
+    assert_eq!(client.provider(), "volc");
+    assert_eq!(client.model_version(), "seed-icl-2.0");
+
+    let requests = state.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "one request per fragment");
+    let params = &requests[0]["req_params"];
+    assert_eq!(params["text"], "The query took 800 ms.");
+    assert_eq!(params["speaker"], "S_9k337yqg2");
+    assert_eq!(params["audio_params"]["format"], "pcm");
+    assert_eq!(params["audio_params"]["sample_rate"], json!(24_000));
+    // The cross-lingual path, sent explicitly rather than left to a default.
+    assert_eq!(params["audio_params"]["explicit_language"], "en");
+    assert_eq!(params["audio_params"]["tone_fidelity"], json!(false));
+    assert_eq!(requests[0]["user"]["uid"], "appid-test");
+
+    let headers = state.headers.lock().unwrap();
+    assert_eq!(headers[0]["x-api-key"], "test-volc-token");
+    assert_eq!(headers[0]["x-api-resource-id"], "seed-icl-2.0");
+    assert_eq!(headers[0]["x-api-request-id"].len(), 36, "a UUID");
+}
+
+#[tokio::test]
+async fn volc_client_switches_the_resource_header_with_the_voice() {
+    let (mock, state) = volc_mock(VolcMock::default()).await;
+
+    let mut clone_client = volc_client(&mock);
+    let mut stream = clone_client
+        .synthesize("Hello.", &clone_voice(), 1)
+        .expect("the request is accepted");
+    let _ = drain_tts(&mut stream).await;
+
+    let mut preset_client = volc_client(&mock);
+    let preset = VoiceRef::Preset("zh_female_vv_uranus_bigtts".to_string());
+    let mut stream = preset_client
+        .synthesize("Hello.", &preset, 2)
+        .expect("the request is accepted");
+    let _ = drain_tts(&mut stream).await;
+
+    assert_eq!(clone_client.model_version(), "seed-icl-2.0");
+    assert_eq!(preset_client.model_version(), "seed-tts-2.0");
+
+    let headers = state.headers.lock().unwrap();
+    assert_eq!(headers.len(), 2, "one handshake per synthesis");
+    assert_eq!(headers[0]["x-api-resource-id"], "seed-icl-2.0");
+    assert_eq!(headers[1]["x-api-resource-id"], "seed-tts-2.0");
+    assert_ne!(
+        headers[0]["x-api-request-id"], headers[1]["x-api-request-id"],
+        "a fresh request id per connection"
+    );
+
+    let requests = state.requests.lock().unwrap();
+    assert_eq!(
+        requests[1]["req_params"]["speaker"],
+        "zh_female_vv_uranus_bigtts"
+    );
+}
+
+#[tokio::test]
+async fn volc_client_reports_an_error_frame_as_a_terminal_failure() {
+    let (mock, _state) =
+        volc_mock(VolcMock::default().with_error(45_000_001, "invalid speaker")).await;
+    let mut client = volc_client(&mock);
+
+    let mut stream = client
+        .synthesize("Hello.", &clone_voice(), 1)
+        .expect("the request is accepted");
+    let events = drain_tts(&mut stream).await;
+
+    let failure = tts_failure(&events);
+    assert_eq!(failure.provider, "volc");
+    assert_eq!(failure.kind, ErrorKind::Vendor);
+    assert_eq!(failure.retry_class, RetryClass::Terminal, "{failure}");
+    assert!(failure.to_string().contains("45000001"), "{failure}");
+    assert!(failure.to_string().contains("invalid speaker"), "{failure}");
+    assert!(
+        chunks_of(&events).is_empty(),
+        "no audio on the error path: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn volc_client_rejects_a_non_success_finish_code() {
+    let (mock, _state) = volc_mock(VolcMock::default().with_finish_status(45_001_109)).await;
+    let mut client = volc_client(&mock);
+
+    let mut stream = client
+        .synthesize("Hello.", &clone_voice(), 1)
+        .expect("the request is accepted");
+    let events = drain_tts(&mut stream).await;
+
+    let failure = tts_failure(&events);
+    assert_eq!(failure.retry_class, RetryClass::Terminal, "{failure}");
+    assert!(failure.to_string().contains("45001109"), "{failure}");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, TtsEvent::Finished { .. })),
+        "a rejected session never reports Finished: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn volc_client_classifies_a_rejected_handshake_and_leaks_nothing() {
+    let (mock, _state) = volc_mock(VolcMock::default()).await;
+    // A path the vendor does not serve: the mock answers 404 before the
+    // upgrade, which is the handshake failure this test classifies.
+    let endpoints = Endpoints::defaults().with_volc_ws(mock.ws_url("/v2/tts"));
+    let mut client = VolcTts::new(volc_credentials(), endpoints);
+
+    let mut stream = client
+        .synthesize("Hello.", &clone_voice(), 1)
+        .expect("the request is accepted");
+    let events = drain_tts(&mut stream).await;
+
+    let failure = tts_failure(&events);
+    assert_eq!(failure.kind, ErrorKind::Http);
+    assert_eq!(failure.retry_class, RetryClass::Client, "{failure}");
+    assert!(failure.to_string().contains("404"), "{failure}");
+
+    let rendered = format!("{failure} {failure:?} {client:?}");
+    assert!(!rendered.contains("test-volc-token"), "{rendered}");
+}
+
+// ---------------------------------------------------------------------------
 // harness tests
 // ---------------------------------------------------------------------------
 

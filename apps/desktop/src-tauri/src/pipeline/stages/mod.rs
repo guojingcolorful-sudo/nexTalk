@@ -26,6 +26,7 @@ pub mod deepgram;
 pub mod deepseek;
 pub mod error;
 pub mod traits;
+pub mod volc_tts;
 pub mod xfyun;
 
 pub use config::{
