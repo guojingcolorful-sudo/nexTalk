@@ -1,5 +1,7 @@
 # Project Research Summary
 
+> **⚠️ Superseded（2026-09-30）:** 本文中「策略卡 misfire 用 dismiss / 手动兜底缓解」的表述已被零交互决策取代——实时面试 / 会议中不能做任何操作（GOV-25：错卡无害 + 回答时自动差异记录，裁决在复盘）。本文件保留作研究过程记录。
+
 **Project:** 极言 NexTalk — real-time AI cross-language interview copilot (CN→EN voice translation via user's cloned voice + AI interview strategy, macOS Tauri desktop + phone H5 teleprompter)
 **Domain:** Real-time speech-to-speech translation / AI interview assistance (desktop app, virtual audio driver, cloud cascaded streaming pipeline)
 **Researched:** 2026-08-26

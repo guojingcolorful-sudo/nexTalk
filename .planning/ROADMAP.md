@@ -129,11 +129,11 @@ Plans:
 
 - [ ] 04-01: Real orderOut hiding via Cmd+Shift+H + accessory activation policy + permission pre-grant checklist (Screen Recording/Mic/Accessibility at first launch)
 - [ ] 04-02: Stealth verification: actual Zoom/Teams full-screen share recordings show zero NexTalk pixels (incl. Dock/tray/tooltips)
-- [ ] 04-03: Glossary management wiring: term table UI (Phase 1 page) → STT/MT term protection in the Phase 2 pipeline stages
+- [ ] 04-03: Glossary management wiring: term table UI (Phase 1 page) → STT/MT term protection in the Phase 2 pipeline stages; term schema per approved draft (拼音指纹/逐字锁定/命中次数/启用状态/来源)
 
 ### Phase 5: AI Interview Assistant
 
-**Goal**: After the interviewer finishes a question, the copilot automatically produces resume-grounded streaming strategy cards in ~1.5s — no manual trigger, and misfires are cheap to dismiss
+**Goal**: After the interviewer finishes a question, the copilot automatically produces resume-grounded streaming strategy cards in ~1.5s — no manual trigger, and misfires are inert (zero realtime interaction; deltas are logged for review, GOV-25)
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: COPT-01, COPT-02, COPT-03, COPT-04
@@ -142,18 +142,18 @@ Plans:
   1. Before the interview, the user imports a resume (PDF/Word) and a question bank; both are pre-indexed and ready before the interview starts
   2. Question-end is auto-detected (dual silence budgets 550ms/1300ms + LLM completeness): on ≥20 real-interview replays, misfire <5% and truncation <3%
   3. Within ~1.5s of question end, streaming strategy cards appear in the desktop right pane and phone bottom pane — bullets grounded in resume experience, question bank, and live web search, rendered progressively (not full-text ghostwriting)
-  4. User can dismiss a misfired strategy card instantly; the main translation flow is unaffected
+  4. Misfired cards are inert: zero realtime interaction (no dismiss — hands/attention are on the interview). Wrong cards cost nothing: outline-only progressive rendering, decoupled from the translation flow; the system silently logs prediction-vs-answer deltas (GOV-25) for later review
 
 **Plans**: 4 plans
 
 Plans:
 
 - [ ] 05-01: Question-end detection (VAD → endpoint → LLM completeness, two silence budgets, hard max cap) + replay/eval harness (≥20 real interviews)
-- [ ] 05-02: Resume (PDF/Word) + question bank import, pre-indexing, embedded RAG-lite KB
-- [ ] 05-03: Strategy generation: streaming bullet outline + reference phrasing in user's own words, ~1.5s, optional Brave web search
-- [ ] 05-04: Strategy cards to desktop right pane + phone bottom pane + dismiss/retry on misfire
+- [ ] 05-02: Resume (PDF/Word) + question bank import, pre-indexing, embedded RAG-lite KB（本地轻量 RAG + 混合检索，分块/向量化细节规划时定）
+- [ ] 05-03: Strategy generation: intent classification (问题类型/目标实体/期望形态, structured single-task, top-2 parallel retrieval on low confidence) + intent-as-tag prompt skeleton + strategy-card confidence (意图判断置信 × 证据覆盖度 × 引用校验, 低置信红章 passive badge) + streaming bullet outline + reference phrasing in user's own words, ~1.5s, optional Brave web search
+- [ ] 05-04: Strategy cards to desktop right pane + phone bottom pane (passive feed, zero interaction) + answer-time diff logging (prediction vs actual, GOV-25)
 
-**Research notes**: Endpointing eval methodology (replay corpus construction), PDF/Word parsing pipeline, parameter tuning per interviewer speaking style.
+**Research notes**: Endpointing eval methodology (replay corpus construction), PDF/Word parsing pipeline, parameter tuning per interviewer speaking style; intent-classification eval set (labeled replay corpus, 意图误判 root-cause category in the failure-case library); answer-time diff logging (zero-interaction feedback via the Phase 2 user-path STT — no new capture channel), deviation taxonomy (意图理解偏差 / 个人风格偏差 / 证据缺失 / 时机偏差). Adopted 2026-09-30: top-2 parallel retrieval on low classification confidence; intent-as-structured-label prompt skeleton (system instruction + intent tags + evidence entries + current question); hallucination-injection eval set; interview-domain-only intent taxonomy for v1 (meeting/general domains post-v1); personal-style profile deferred to v2 (v1 = diff log + review comparison only).
 
 ### Phase 6: Recording + Review Assets
 
@@ -166,7 +166,7 @@ Plans:
   1. Recording defaults OFF; first enablement shows a blocking consent gate with copy-pasteable disclosure; no recording without consent
   2. The session is recorded locally on two tracks (user / interviewer, Opus); delete removes all data on demand
   3. User exports a bilingual timestamped transcript in SRT, Markdown, or Word
-  4. User generates a review report with Action Items, sentiment, key concerns, and per-question replay
+  4. User generates a review report with Action Items, sentiment, key concerns, per-question replay, and a prediction-vs-actual diff view with deviation labeling (GOV-25)
 
 **Plans**: 4 plans
 
@@ -175,7 +175,7 @@ Plans:
 - [ ] 06-01: Consent gate (default OFF, disclosure copy, per-session consent record, delete-on-demand)
 - [ ] 06-02: Dual-track local recording (user/interviewer tracks, Opus, timestamp-aligned) + delete-on-demand
 - [ ] 06-03: Bilingual transcript export (SRT/Markdown/Word with timestamps)
-- [ ] 06-04: Review report generation (Action Items, sentiment, key concerns, per-question replay)
+- [ ] 06-04: Review report generation (Action Items, sentiment, key concerns, per-question replay) + prediction-vs-actual diff view with deviation labeling (GOV-25)
 
 **Research notes**: Consent/legal research per target market (CA §632-class all-party states, PIPL) must be scheduled before this phase ships.
 

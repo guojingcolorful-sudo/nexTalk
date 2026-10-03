@@ -1,5 +1,7 @@
 # Pitfalls Research
 
+> **⚠️ Superseded（2026-09-30）:** 本文中「策略卡 misfire 用明显 dismiss / retry 按钮缓解」的表述已被零交互决策取代——实时面试 / 会议中不能做任何操作（GOV-25：错卡无害 + 回答时自动差异记录，裁决在复盘）。本文件保留作研究过程记录。
+
 **Domain:** Real-time AI voice translation / interview copilot (virtual audio, voice cloning, stealth teleprompter)
 **Researched:** 2026-08-26
 **Confidence:** HIGH for latency/VAD/consent/driver-signing findings (multiple authoritative sources); MEDIUM for macOS 12.7-specific capture behavior and voice-clone performance specifics (platform behavior shifts by OS version, and clone quality is vendor/model dependent)
