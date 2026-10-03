@@ -134,6 +134,7 @@ struct Sub<'a> {
     seq: u64,
     zh: Option<&'a str>,
     en: Option<&'a str>,
+    final_flag: bool,
 }
 
 fn sub(event: &ServerEvent) -> Sub<'_> {
@@ -144,6 +145,7 @@ fn sub(event: &ServerEvent) -> Sub<'_> {
             seq,
             zh,
             en,
+            final_flag,
             ..
         } => Sub {
             id,
@@ -151,6 +153,7 @@ fn sub(event: &ServerEvent) -> Sub<'_> {
             seq: *seq,
             zh: zh.as_deref(),
             en: en.as_deref(),
+            final_flag: *final_flag,
         },
         other => panic!("expected a subtitle, got {other:?}"),
     }
@@ -212,21 +215,30 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     );
 
     let r1_subtitles = subtitles_of(&played);
-    assert_eq!(r1_subtitles.len(), 2, "question + answer");
+    assert_eq!(r1_subtitles.len(), 4, "streamed question frames + answer");
     let question = &r1_subtitles[0];
     assert_eq!(question.id, "r1-q");
     assert_eq!(question.speaker, Speaker::Interviewer);
     assert_eq!(question.seq, 1);
-    assert_eq!(question.en, Some(ROUNDS[0].interviewer_en));
-    assert_eq!(question.zh, Some(ROUNDS[0].interviewer_zh));
+    assert!(
+        !question.final_flag,
+        "the question opens as a streaming partial"
+    );
 
-    let answer = &r1_subtitles[1];
+    let question_final = &r1_subtitles[2];
+    assert_eq!(question_final.id, "r1-q");
+    assert_eq!(question_final.seq, 3);
+    assert_eq!(question_final.en, Some(ROUNDS[0].interviewer_en));
+    assert_eq!(question_final.zh, Some(ROUNDS[0].interviewer_zh));
+    assert!(question_final.final_flag);
+
+    let answer = &r1_subtitles[3];
     assert_eq!(answer.id, "r1-a");
     assert_eq!(answer.speaker, Speaker::User);
-    assert_eq!(answer.seq, 2);
+    assert_eq!(answer.seq, 4);
     assert_eq!(answer.zh, Some(ROUNDS[0].user_zh));
     assert!(
-        matches!(&played[2], ServerEvent::Strategy { title, .. } if title == "数据库优化"),
+        matches!(&played[4], ServerEvent::Strategy { title, .. } if title == "数据库优化"),
         "the strategy card follows the question: {played:#?}"
     );
 
@@ -247,10 +259,21 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         ("r1-q", 1),
         "the phone sees the r1 question in the same order and numbering"
     );
+    // The question streams live: partial (seq 2) then final (seq 3).
+    let question_growth = read_subtitle(&mut phone, "the r1 question growth").await;
+    let question_growth = sub(&question_growth);
+    assert_eq!((question_growth.id, question_growth.seq), ("r1-q", 2));
+    assert!(!question_growth.final_flag, "the middle frame is a partial");
+    let question_final = read_subtitle(&mut phone, "the r1 question final").await;
+    let question_final = sub(&question_final);
+    assert_eq!((question_final.id, question_final.seq), ("r1-q", 3));
+    assert!(question_final.final_flag, "the last frame is the final");
+    assert_eq!(question_final.zh, Some(ROUNDS[0].interviewer_zh));
+
     let answer_frame = read_subtitle(&mut phone, "the r1 answer").await;
     let answer_frame = sub(&answer_frame);
     assert_eq!(answer_frame.id, "r1-a");
-    assert_eq!(answer_frame.seq, 2);
+    assert_eq!(answer_frame.seq, 4);
 
     // SYNC-03 round-trip: the phone's mode is applied AND published back
     // through the same server event, so the desktop webviews observe it.
@@ -300,8 +323,12 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         "the new round opens one milestone in"
     );
     assert_eq!(r2_subtitles[0].id, "r2-q");
+    assert!(
+        !r2_subtitles[0].final_flag,
+        "the reopened question streams as a partial"
+    );
     assert_eq!(
-        r2_subtitles[0].seq, 3,
+        r2_subtitles[0].seq, 5,
         "numbering continues across the cut — a dropped round never reuses a seq"
     );
     assert_eq!(
@@ -328,7 +355,7 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         .expect("重听 applies while the answer is generating");
 
     let mut replay = Vec::new();
-    while replay.len() < 3 {
+    while replay.len() < 5 {
         let event = read_event(&mut phone).await;
         let is_replay = matches!(
             &event,
@@ -342,11 +369,11 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     let replayed = subtitles_of(&replay);
     assert_eq!(
         replayed.len(),
-        2,
-        "question + answer, strategy between them"
+        4,
+        "question frames ×3 + answer, strategy between them"
     );
     assert_eq!(replayed[0].id, "r2-q-r1", "a replay needs a fresh id");
-    assert_eq!(replayed[1].id, "r2-a-r1");
+    assert_eq!(replayed[3].id, "r2-a-r1");
     assert!(
         replayed.iter().all(|item| item.seq > r2_subtitles[0].seq),
         "replayed subtitles must not reuse a seq the phone already saw: {replayed:#?}"
@@ -484,7 +511,7 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
         .collect();
     assert_eq!(
         seqs,
-        vec![1, 2],
+        vec![1, 2, 3, 4],
         "the whole new session must reach a phone whose cursor went stale"
     );
 

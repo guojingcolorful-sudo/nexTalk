@@ -59,29 +59,88 @@ impl TimeSource for RealClock {
     }
 }
 
+/// Step between the interviewer question's streamed frames (2026-10-03): the
+/// question opens the round at `question_at_ms` as a partial, grows one second
+/// later, and finalizes after another second — every round's strategy still
+/// lands after the question has been fully read aloud (the offsets stay
+/// strictly inside the [question, strategy] window).
+const QUESTION_PARTIAL_STEP_MS: u64 = 1_000;
+
+/// Deterministic partial of the question text for a streaming frame.
+/// `part` is 1..=3 (1 = first third, 3 = the full text): Chinese is cut on
+/// character boundaries, English on word boundaries — the frames always grow,
+/// never reflow.
+fn question_text(zh: &str, en: &str, part: u32) -> (String, String) {
+    fn zh_cut(text: &str, part: u32) -> String {
+        if part >= 3 {
+            return text.to_string();
+        }
+        let count = text.chars().count();
+        let keep = (count * part as usize).div_ceil(3);
+        text.chars().take(keep).collect()
+    }
+    fn en_cut(text: &str, part: u32) -> String {
+        if part >= 3 {
+            return text.to_string();
+        }
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let keep = (words.len() * part as usize).div_ceil(3);
+        words[..keep.min(words.len())].join(" ")
+    }
+    (zh_cut(zh, part), en_cut(en, part))
+}
+
 /// One round's milestones that have matured by `local_ms` (round-relative), in
 /// emission order: the listening status and the interviewer's question open the
 /// round; the strategy card, the user's answer and the generating status follow
 /// at their offsets.
 ///
-/// Subtitle events carry a *round-relative rank* in `seq` (1 = question,
-/// 2 = answer) — the callers renumber: [`script_state`] folds the rank into the
-/// session-long sequence, [`SimSource`] overwrites it with its own counter.
+/// Subtitle events carry a *round-relative rank* in `seq` (1..=3 = streamed
+/// question frames, 4 = answer) — the callers renumber: [`script_state`] folds
+/// the rank into the session-long sequence, [`SimSource`] overwrites it with
+/// its own counter.
 fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
     let round = &script::ROUNDS[round_index];
-    let mut events = Vec::with_capacity(5);
+    let mut events = Vec::with_capacity(7);
 
     events.push(ServerEvent::Status {
         session: SessionStatus::Listening,
     });
-    // UAT-11: the question opens the round after the lead-in — the session
-    // never starts mid-sentence, and the strategy lands only after the
-    // question has been fully read aloud.
-    if local_ms >= round.timing.question_at_ms {
+    // UAT-11 + 2026-10-03: the question opens the round after the lead-in and
+    // streams as three growing frames (partial → partial → final) so the
+    // subtitle feed and the AI 辅助 tab follow the interviewer live, like real
+    // STT. Each frame is its own matured milestone — the callers' emitted
+    // cursor advances one entry per frame. The strategy still lands only after
+    // the question has been fully read aloud (question_at_ms + 2×step <
+    // strategy_at_ms in every round).
+    let question_at = round.timing.question_at_ms;
+    if local_ms >= question_at {
+        let (zh, en) = question_text(round.interviewer_zh, round.interviewer_en, 1);
         events.push(ServerEvent::Subtitle {
             id: script::question_id(round_index),
             speaker: Speaker::Interviewer,
             seq: 1,
+            zh: Some(zh),
+            en: Some(en),
+            final_flag: false,
+        });
+    }
+    if local_ms >= question_at + QUESTION_PARTIAL_STEP_MS {
+        let (zh, en) = question_text(round.interviewer_zh, round.interviewer_en, 2);
+        events.push(ServerEvent::Subtitle {
+            id: script::question_id(round_index),
+            speaker: Speaker::Interviewer,
+            seq: 2,
+            zh: Some(zh),
+            en: Some(en),
+            final_flag: false,
+        });
+    }
+    if local_ms >= question_at + QUESTION_PARTIAL_STEP_MS * 2 {
+        events.push(ServerEvent::Subtitle {
+            id: script::question_id(round_index),
+            speaker: Speaker::Interviewer,
+            seq: 3,
             zh: Some(round.interviewer_zh.to_string()),
             en: Some(round.interviewer_en.to_string()),
             final_flag: true,
@@ -108,7 +167,7 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
         events.push(ServerEvent::Subtitle {
             id: script::answer_id(round_index),
             speaker: Speaker::User,
-            seq: 2,
+            seq: 4,
             zh: Some(round.user_zh.to_string()),
             // The English line is what the cloned voice speaks (D-03): the
             // bubble renders it as the user's translation from 01-05 onwards.
@@ -127,7 +186,7 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
 }
 
 /// Pure evaluator: every script event whose offset is `<= elapsed_ms`, in
-/// emission order, with session-long subtitle sequence numbers (1..=8 for the
+/// emission order, with session-long subtitle sequence numbers (1..=16 for the
 /// canonical run). No clock, no I/O — deterministic for a given input.
 pub fn script_state(elapsed_ms: u64) -> Vec<ServerEvent> {
     let mut events = Vec::new();
@@ -139,7 +198,7 @@ pub fn script_state(elapsed_ms: u64) -> Vec<ServerEvent> {
         }
         for mut event in round_events(index, elapsed_ms - round_start_ms) {
             if let ServerEvent::Subtitle { seq, .. } = &mut event {
-                *seq += (index as u64) * 2;
+                *seq += (index as u64) * 4;
             }
             events.push(event);
         }

@@ -543,13 +543,13 @@ mod tests {
     fn a_cursor_above_this_session_replays_it_from_the_start() {
         let state = SessionState::new(8787);
         state.start_session().expect("start");
-        play_first_round(&state); // the new session's highest seq is 2
+        play_first_round(&state); // the new session's highest seq is 4
 
         // A client that does not track the epoch resumes with the previous
-        // session's high-water mark (8): the stale cursor must not slice the
+        // session's high-water mark (16): the stale cursor must not slice the
         // new session away.
-        let replay = state.replay_after_subtitle_seq(8);
-        assert_eq!(subtitle_seqs(&replay), vec![1, 2]);
+        let replay = state.replay_after_subtitle_seq(16);
+        assert_eq!(subtitle_seqs(&replay), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -561,15 +561,15 @@ mod tests {
         let second = state.start_session().expect("restart");
         play_first_round(&state);
 
-        // The cursor (2) is indistinguishable from a fresh one — the epoch is
+        // The cursor (4) is indistinguishable from a fresh one — the epoch is
         // what tells the server this client sat out the restart entirely.
-        let replay = state.resume_events(2, Some(first));
+        let replay = state.resume_events(4, Some(first));
         assert_eq!(
             replay.first(),
             Some(&session_started(second)),
             "the replay crosses the restart: marker first"
         );
-        assert_eq!(subtitle_seqs(&replay), vec![1, 2]);
+        assert_eq!(subtitle_seqs(&replay), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -581,12 +581,12 @@ mod tests {
         let replay = state.resume_events(1, Some(epoch));
         assert_eq!(
             subtitle_seqs(&replay),
-            vec![2],
+            vec![2, 3, 4],
             "a current-epoch cursor keeps the ordinary tail semantics"
         );
         // Epoch-less clients (older H5) fall back to the seq cursor.
         assert_eq!(
-            subtitle_seqs(&state.resume_events(2, None)),
+            subtitle_seqs(&state.resume_events(4, None)),
             Vec::<u64>::new()
         );
     }

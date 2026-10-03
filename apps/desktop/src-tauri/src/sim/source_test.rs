@@ -142,23 +142,41 @@ fn all_four_rounds_play_in_order_and_statuses_transition_once_per_phase() {
     let rounds = script::ROUNDS.len();
     assert_eq!(rounds, 4, "the demo interview is four rounds long");
 
-    // One question + one answer per round, numbered 1..=8 with no gaps.
-    assert_eq!(seqs(&events), (1..=8).collect::<Vec<u64>>());
-    assert_eq!(subtitles(&events).len(), rounds * 2);
+    // One streamed question (three growing frames) + one answer per round,
+    // numbered 1..=16 with no gaps.
+    assert_eq!(seqs(&events), (1..=16).collect::<Vec<u64>>());
+    assert_eq!(subtitles(&events).len(), rounds * 4);
     assert_eq!(strategies(&events).len(), rounds);
 
     // Round 1 content is followed by r2..r4 — the script is not an r1 loop.
     for (index, round) in script::ROUNDS.iter().enumerate() {
-        let question = subtitle_at(&events, index * 2);
-        let answer = subtitle_at(&events, index * 2 + 1);
-        assert_eq!(subtitle_id(question), format!("{}-q", round.id));
+        let question_partial = subtitle_at(&events, index * 4);
+        let question_final = subtitle_at(&events, index * 4 + 2);
+        let answer = subtitle_at(&events, index * 4 + 3);
+        assert_eq!(subtitle_id(question_partial), format!("{}-q", round.id));
+        assert_eq!(subtitle_id(question_final), format!("{}-q", round.id));
         assert_eq!(subtitle_id(answer), format!("{}-a", round.id));
 
-        let ServerEvent::Subtitle { en, speaker, .. } = question else {
-            panic!("expected the r{index} question subtitle");
+        let ServerEvent::Subtitle {
+            en,
+            final_flag,
+            speaker,
+            ..
+        } = question_final
+        else {
+            panic!("expected the r{index} question final subtitle");
         };
         assert_eq!(en.as_deref(), Some(round.interviewer_en));
+        assert!(*final_flag, "the third question frame is the final");
         assert!(matches!(speaker, Speaker::Interviewer));
+
+        let ServerEvent::Subtitle {
+            final_flag, ..
+        } = question_partial
+        else {
+            panic!("expected the r{index} question partial subtitle");
+        };
+        assert!(!*final_flag, "the first question frame streams as a partial");
 
         let ServerEvent::Subtitle { zh, .. } = answer else {
             panic!("expected the r{index} answer subtitle");
@@ -222,21 +240,35 @@ fn round_one_content_is_byte_exact() {
         ["慢查询日志定位", "拆连表查询", "Redis 缓存层"]
     );
 
-    // The same content reaches the wire on the round-1 events.
+    // The same content reaches the wire on the round-1 events: the question
+    // streams as three growing frames (partial → partial → final), the full
+    // text lands on the final frame.
     let events = script_state(script::ROUNDS[0].timing.end_at_ms);
     let ServerEvent::Subtitle {
         zh, en, final_flag, ..
     } = subtitle_at(&events, 0)
     else {
-        panic!("expected the r1 question subtitle");
+        panic!("expected the r1 question first partial");
+    };
+    assert!(!*final_flag, "the question opens as a streaming partial");
+    assert!(
+        en.as_deref().is_some_and(|text| text.len() < r1.interviewer_en.len()),
+        "the first partial is shorter than the full question"
+    );
+
+    let ServerEvent::Subtitle {
+        zh, en, final_flag, ..
+    } = subtitle_at(&events, 2)
+    else {
+        panic!("expected the r1 question final frame");
     };
     assert_eq!(en.as_deref(), Some(r1.interviewer_en));
     assert_eq!(zh.as_deref(), Some(r1.interviewer_zh));
-    assert!(*final_flag, "scripted subtitles are already final");
+    assert!(*final_flag, "the third question frame is the final");
 
     let ServerEvent::Subtitle {
         zh, en, speaker, ..
-    } = subtitle_at(&events, 1)
+    } = subtitle_at(&events, 3)
     else {
         panic!("expected the r1 answer subtitle");
     };
@@ -303,7 +335,7 @@ fn interrupt_cuts_the_answer_and_opens_the_next_round_one_second_later() {
 
     // Drive r1 into its generating phase (the answer is on screen).
     let played = sim.poll(r1.generating_at_ms);
-    assert_eq!(subtitle_id(subtitle_at(&played, 1)), "r1-a");
+    assert_eq!(subtitle_id(subtitle_at(&played, 3)), "r1-a");
     assert_eq!(sim.round_index(), 0);
     assert!(!sim.ended());
 
@@ -343,7 +375,7 @@ fn interrupt_cuts_the_answer_and_opens_the_next_round_one_second_later() {
     let mut all = played;
     all.extend(resumed);
     all.extend(opened);
-    assert_eq!(seqs(&all), vec![1, 2, 3]);
+    assert_eq!(seqs(&all), vec![1, 2, 3, 4, 5]);
 }
 
 #[test]
@@ -392,12 +424,12 @@ fn repeat_replays_the_current_round_with_fresh_seq_and_ids() {
     // back — content only, because re-firing the round's statuses would drag the
     // UI back from generating to listening mid-answer.
     let replay = sim.repeat();
-    assert_eq!(replay.len(), 3, "question + strategy + answer");
+    assert_eq!(replay.len(), 5, "question frames ×3 + strategy + answer");
     assert_eq!(strategies(&replay).len(), 1);
     assert_eq!(statuses(&replay), Vec::<SessionStatus>::new());
 
     let replay_seqs = seqs(&replay);
-    assert_eq!(replay_seqs.len(), 2);
+    assert_eq!(replay_seqs.len(), 4);
     for seq in &replay_seqs {
         assert!(
             !played_seqs.contains(seq),
