@@ -24,6 +24,7 @@
 pub mod config;
 pub mod error;
 pub mod traits;
+pub mod xfyun;
 
 pub use config::{
     DeepgramCredentials, DeepseekCredentials, Endpoint, Endpoints, RoutingConfig, Secret,
