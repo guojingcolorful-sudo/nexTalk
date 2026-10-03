@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ConsolePage from './pages/ConsolePage';
+import DiagnosticsPage from './pages/DiagnosticsPage';
 import DualPanePage from './pages/DualPanePage';
 import GlossaryPage from './pages/GlossaryPage';
 import RecordingsPage from './pages/RecordingsPage';
@@ -14,6 +15,7 @@ import VoiceEnrollmentPage from './pages/VoiceEnrollmentPage';
  *
  * Six missing pages live inside the console window: 引导向导 / 音色注册 /
  * 术语表 / 简历导入 / 录音资产 / 复盘报告 — all real pages, no PageStub left.
+ * 诊断面板 joined them in 02-01 (延迟瀑布; 02-03 hangs the cost panel there).
  */
 export default function App() {
   return (
@@ -26,6 +28,7 @@ export default function App() {
       <Route path="/resume" element={<ResumeImportPage />} />
       <Route path="/recordings" element={<RecordingsPage />} />
       <Route path="/review" element={<ReviewPage />} />
+      <Route path="/diagnostics" element={<DiagnosticsPage />} />
       <Route path="*" element={<Navigate to="/console" replace />} />
     </Routes>
   );
