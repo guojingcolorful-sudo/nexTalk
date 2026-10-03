@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 executing (2026-10-03)
-last_updated: "2026-09-30T04:51:45.000Z"
-last_activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空）
+stopped_at: Phase 2 executing — 02-01 complete (2026-10-03)
+last_updated: "2026-10-03T14:19:23.000Z"
+last_activity: 2026-10-03 -- Completed 02-01-PLAN.md: latency measurement rig (five streaming boundaries + ≤2000ms hard gate), diagnostics panel, CI lanes
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 28
-  completed_plans: 5
-  percent: 18
+  completed_plans: 6
+  percent: 21
 ---
 
 # Project State
@@ -21,34 +21,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-26)
 
 **Core value:** 让用户以母语思考、以本人音色讲出地道英文——端到端延迟 ≤ 2 秒
-**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (pre-planning: vendor experiments)
+**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (wave 1 done: latency rig gates everything downstream)
 
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 0 of 5 in current phase (02-01 executing)
-Status: Phase 2 executing — plans approved (5 plans / 5 waves), experiments complete (domestic path verified)
-Last activity: 2026-09-30 -- Completed quick task 20260930-stop-keeps-stream: 停止后双栏保留字幕与策略（撤销 246baae 的 ended 清空，仅 session_started 清空重来）
+Plan: 1 of 5 in current phase (02-01 complete; 02-02 next)
+Status: Phase 2 executing — latency rig landed (budget gate + diagnostics panel + CI lanes); the real provider stages are next
+Last activity: 2026-10-03 -- Completed 02-01-PLAN.md: 五边界流式瀑布 + ≤2000ms 硬断言 + 冷/热分离 + 聚合器有界环；/diagnostics 面板；CI 四车道（含 rig 冒烟车道）
 
-Progress: [██░░░░░░░░] 18% (5/28 plans, Phase 1/7 done)
+Progress: [██░░░░░░░░] 21% (6/28 plans, Phase 1/7 done)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 5
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h active
+- Total plans completed: 6
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
+| 2. Real Cloud Pipeline + Audio Core | 1 | 5 | ~4d wall (02-01 spans an idle gap) |
 
 **Recent Trend:**
 
-- 01-05 simulation session + vendor framework (2026-09-11): 4 commits (1 RED + 1 GREEN), 29 cargo tests (27 lib + 2 integration) + 29 playwright specs + 71 vitest green, build 129.39 kB gz JS / 5.37 kB gz CSS, 6 auto-fixed deviations, 1 decision forced by Tauri 2.11 (no app-command ACL namespace)
+- 02-01 latency rig (2026-10-03): 5 commits (2 RED + 2 GREEN + 1 chore), 50 cargo tests (43 lib + 3 rig + 4 integration; 1 live variant `#[ignore]`d) + 35 vitest (8 files) + 33 playwright green, build 420.93 kB JS / 133.45 kB gz, 2 auto-fixed deviations + 4 documented design/scope decisions (overlap-aware constructor, CI build step, requirement numbering reconciliation, no literal workspace flag in ci.yml)
 - 01-04 phone teleprompter (2026-09-11): 4 commits (1 RED + 1 GREEN), 27 vitest + 5 new playwright specs (10/10 with --repeat-each=2, 26/26 full suite) green, build 93.30 kB gz JS / 4.48 kB gz CSS, 8 auto-fixed deviations
 - 01-03 desktop surface (2026-09-10): 5 commits (1 RED + 1 GREEN), 11 vitest + 19 desktop e2e (21 total across projects) green, build 128.70 kB gz JS / 5.37 kB gz CSS, 7 auto-fixed deviations
 - 01-02 walking skeleton (2026-09-09): 5 commits, 17 cargo + 3 vitest + 2 e2e tests green, 7 auto-fixed deviations
@@ -62,6 +63,12 @@ Progress: [██░░░░░░░░] 18% (5/28 plans, Phase 1/7 done)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [02-01]: The five `Stage` boundaries are **streaming TTFB** instants (first partial / first token / first audio frame / first consumed PCM), not whole-request latencies — so the vendor numbers (讯飞 0.7s / 翻译 0.223s / 火山 1.3s) enter the rig only as per-stage *service durations*. `Waterfall::from_marks` derives durations as adjacent boundary gaps (serial reading, `serial_sum == e2e`); `Waterfall::from_marks_with_durations` takes the stages' own durations so the naive 2223ms sum can be compared against a ≤2000ms stopwatch. Without both, research correction 2 is unassertable
+- [02-01]: Overlap is a *measured* quantity (`overlap_ms = serial_sum_ms - e2e_ms`), never an assumption — the rig prints it and the live variant refuses to pass without real stages
+- [02-01]: Clock injection reuses `crate::sim::source::TimeSource` (Phase 1 contract); no second clock trait. `cold` comes from the session-start path, never from an elapsed-time heuristic (T-02-02)
+- [02-01]: Aggregation keeps cold and warm in separate bounded rings (`MAX_TRACKED_SEGMENTS = 512`) and reports nearest-rank p50/p95 — cold-start numbers can never be averaged into the warm budget claim
+- [02-01]: Requirement numbering reconciliation — ROADMAP success criterion AUDI-04 ("延迟测量装置") is REQUIREMENTS.md **AUDI-06** (marked complete by this plan); REQUIREMENTS.md AUDI-04 is the cascade pipeline itself (partial-render/final-speak gate) and stays open for 02-02/02-03
+- [02-01]: The diagnostics panel reads a `latency` Tauri event that Rust does not emit yet — until 02-02 wires the stage marks, a real run shows 暂无测量数据; the browser/jsdom preview fixture appears ONLY when the IPC bridge is absent and is labelled 预览数据 on screen
 - [01-05]: Tauri 2.11 has NO ACL namespace for app-defined commands (`gen/schemas/acl-manifests.json` lists only `core*`), so T-01-06 is enforced in the commands themselves — `interrupt`/`repeat` return Err unless the session is `generating`, `start_session` returns Err while one is live; `capabilities/default.json` was deliberately left untouched
 - [01-05]: One event model, two transports holds end-to-end — the SimSource only appends to `SessionState.timeline`; the Tauri `session` emit and the WS broadcast are two projections of the same list, so console/dual/phone cannot drift
 - [01-05]: `phone_count` is desktop-only telemetry on a Tauri event, never a WS ServerEvent — the locked 01-01 protocol union gained nothing for the client counter
@@ -134,6 +141,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-11T06:15:49.000Z
-Stopped at: Completed 01-05-PLAN.md (4-round SimSource engine, live demo wiring across all surfaces, vendor experiment framework) — Phase 1 has no plans left to execute
-Resume file: .planning/phases/01-foundation-simulation-mode/01-05-SUMMARY.md
+Last session: 2026-10-03T14:19:23.000Z
+Stopped at: Completed 02-01-PLAN.md (five-boundary latency waterfall, ≤2000ms hard gate with stage attribution, cold/warm separation, /diagnostics panel, CI four-lane workflow) — wave 1 of Phase 2 done, 02-02 (real provider stages) is next
+Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-01-SUMMARY.md

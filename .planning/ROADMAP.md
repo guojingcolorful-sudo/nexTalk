@@ -79,7 +79,7 @@ Plans:
 
 Plans:
 
-- [ ] 02-01: Latency rig: e2e stopwatch + per-stage waterfall timing (gate for all downstream work)
+- [x] 02-01: Latency rig: e2e stopwatch + per-stage waterfall timing (gate for all downstream work) — 2026-10-03: five streaming-TTFB boundaries, `Waterfall::from_marks_with_durations` proves overlap (2223ms serial sum passes a ≤2000ms stopwatch), OverBudget attributes the stage, cold/warm kept in separate bounded rings, /diagnostics panel, 4-lane CI with the rig as a hard-failing gate
 - [ ] 02-02: Real providers wired (Gemini Live text modality / Deepgram Nova-3 / Gemini Flash-Lite / MiniMax) as streaming stages with typed contracts
 - [ ] 02-03: Stability gate (preview vs commit), sentence aggregation, barge-in queue, jitter buffer, provider pre-warming
 - [ ] 02-04: Voice clone enrollment (1-3 min recording → clone) + stock voice fallback
@@ -228,7 +228,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Simulation Mode | 5/5 | Complete | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10), 01-04 (2026-09-11), 01-05 (2026-09-11) |
-| 2. Real Cloud Pipeline + Audio Core | 0/5 | Not started | - |
+| 2. Real Cloud Pipeline + Audio Core | 1/5 | Executing | 02-01 (2026-10-03) |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |
 | 5. AI Interview Assistant | 0/4 | Not started | - |
