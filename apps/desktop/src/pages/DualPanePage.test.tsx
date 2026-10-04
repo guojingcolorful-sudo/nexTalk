@@ -177,4 +177,24 @@ describe('DualPanePage stop control', () => {
     expect(within(subtitles).queryByText(QUESTION_EVENT.en)).toBeNull();
     expect(screen.getByText('AI 策略将自动生成')).toBeTruthy();
   });
+
+  it('refines a word-streamed question in place: one bubble, one context node', async () => {
+    await renderDualPane();
+
+    act(() => {
+      emit('session_status', { session: 'listening' });
+      emit('session', { ...QUESTION_EVENT, en: 'Could you', seq: 1, final: false });
+      emit('session', { ...QUESTION_EVENT, en: 'Could you walk me', seq: 2, final: false });
+      emit('session', QUESTION_EVENT);
+    });
+
+    const subtitles = screen.getByRole('region', { name: '实时字幕' });
+    // One bubble carrying the final text — not three stacked word frames.
+    expect(within(subtitles).getAllByText(QUESTION_EVENT.en)).toHaveLength(1);
+    expect(within(subtitles).queryByText('Could you walk me')).toBeNull();
+
+    const aiPane = screen.getByRole('region', { name: 'AI 辅助' });
+    // One context node for the same question, refined in place too.
+    expect(within(aiPane).getAllByText(QUESTION_EVENT.en)).toHaveLength(1);
+  });
 });

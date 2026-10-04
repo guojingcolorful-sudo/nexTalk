@@ -159,10 +159,15 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
     deactivate: deactivateWakeLock,
   } = useWakeLock({ onFallbackEngaged: () => setToast('已启用防休眠回退模式') });
 
-  const subtitles = useMemo(
-    () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
-    [events],
-  );
+  // Word-level streaming (2026-10-04): one bubble per speaker line — repeated
+  // frames with the same id refine it in place, mirroring the desktop.
+  const subtitles = useMemo(() => {
+    const byId = new Map<string, SubtitleEvent>();
+    for (const event of events) {
+      if (event.t === 'subtitle') byId.set(event.id, event);
+    }
+    return [...byId.values()];
+  }, [events]);
   // UAT-16: the AI tab records the interviewer's questions in real time,
   // interleaved with the strategy cards in arrival order — the same timeline
   // the desktop AI pane shows.
@@ -287,7 +292,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
             ) : (
               subtitles.map((subtitle, index) => (
                 <div
-                  key={`${subtitle.id}-${subtitle.seq}`}
+                  key={subtitle.id}
                   ref={subtitle.id === anchorId ? anchorRef : null}
                 >
                   <ChatBubble
@@ -295,7 +300,7 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                     zh={subtitle.zh}
                     en={subtitle.en}
                     language={languagePref}
-                    instant={index < subtitles.length - 1}
+                    instant={index < subtitles.length - 1 || !subtitle.final}
                   />
                 </div>
               ))

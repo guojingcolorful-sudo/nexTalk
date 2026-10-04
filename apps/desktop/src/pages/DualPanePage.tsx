@@ -43,10 +43,15 @@ export default function DualPanePage() {
   const { events, status, languageMode } = useTauriEvents();
   const [confirmStop, setConfirmStop] = useState(false);
 
-  const subtitles = useMemo(
-    () => events.filter((event): event is SubtitleEvent => event.t === 'subtitle'),
-    [events],
-  );
+  // Word-level streaming (2026-10-04): one bubble per speaker line — repeated
+  // frames with the same id refine it in place, mirroring the phone.
+  const subtitles = useMemo(() => {
+    const byId = new Map<string, SubtitleEvent>();
+    for (const event of events) {
+      if (event.t === 'subtitle') byId.set(event.id, event);
+    }
+    return [...byId.values()];
+  }, [events]);
   const timelineItems = useMemo(() => toTimelineItems(events), [events]);
   // UAT-12: the AI pane shows the thinking state for as long as the newest
   // question has no strategy card yet.
@@ -119,7 +124,7 @@ export default function DualPanePage() {
                   zh={subtitle.zh}
                   en={subtitle.en}
                   mode={languageMode}
-                  instant={index < subtitles.length - 1}
+                  instant={index < subtitles.length - 1 || !subtitle.final}
                 />
               </div>
             ))}

@@ -124,10 +124,26 @@ export function isAiThinking(events: readonly ServerEvent[]): boolean {
  */
 export function toTimelineItems(events: readonly ServerEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
+  // Word-level streaming (2026-10-04): one context node per interviewer
+  // sentence — repeated frames with the same id refine it in place, like the
+  // phone's AI tab.
+  const contextIndex = new Map<string, number>();
   for (const event of events) {
     if (event.t === 'subtitle') {
       if (event.speaker === 'interviewer') {
-        items.push({ kind: 'context', id: event.id, en: event.en, zh: event.zh });
+        const refined = {
+          kind: 'context' as const,
+          id: event.id,
+          en: event.en,
+          zh: event.zh,
+        };
+        const recorded = contextIndex.get(event.id);
+        if (recorded === undefined) {
+          contextIndex.set(event.id, items.length);
+          items.push(refined);
+        } else {
+          items[recorded] = refined;
+        }
       }
     } else if (event.t === 'strategy') {
       items.push({

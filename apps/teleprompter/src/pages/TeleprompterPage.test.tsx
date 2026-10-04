@@ -284,6 +284,25 @@ describe('TeleprompterPage', () => {
     expect(subsPanel.queryByText('不应渲染')).toBeNull();
   });
 
+  test('refines a word-streamed question in place: one bubble, growing text', () => {
+    render(<App />);
+    const socket = currentSocket();
+
+    act(() => {
+      socket.accept();
+      // seq must climb per frame — the wire dedupes on it (the sim numbers
+      // word-level frames 1..=W the same way).
+      socket.emit({ ...SUBTITLE, en: 'Could you', seq: 1, final: false });
+      socket.emit({ ...SUBTITLE, en: 'Could you walk me', seq: 2, final: false });
+      socket.emit({ ...SUBTITLE, seq: 3, final: true });
+    });
+
+    const subsPanel = within(document.getElementById('panel-subs') as HTMLElement);
+    // One bubble carrying the final text — not three stacked word frames.
+    expect(subsPanel.getAllByText(SUBTITLE.en)).toHaveLength(1);
+    expect(subsPanel.queryByText('Could you walk me')).toBeNull();
+  });
+
   test('the bubble filters to the session language mode (UAT-4)', () => {
     render(<App />);
     const socket = currentSocket();
