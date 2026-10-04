@@ -267,8 +267,36 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
                                     Ok(epoch) => {
                                         spawn_scheduler(state.clone(), epoch, RealClock::new());
                                         if let Some(app) = &ctx.app {
-                                            if let Some(window) = app.get_webview_window("dual") {
-                                                let _ = window.show();
+                                            match app.get_webview_window("dual") {
+                                                Some(window) => {
+                                                    let _ = window.show();
+                                                }
+                                                None => {
+                                                    // The dual window was destroyed via its
+                                                    // 关闭 control (WR-08): recreate it so a
+                                                    // phone-initiated start never dead-ends.
+                                                    // Mirrors ConsolePage's openDualPane.
+                                                    let config =
+                                                        tauri::WebviewWindowBuilder::new(
+                                                            app,
+                                                            "dual",
+                                                            tauri::WebviewUrl::App(
+                                                                "index.html#/dual".into(),
+                                                            ),
+                                                        )
+                                                        .inner_size(860.0, 680.0)
+                                                        .resizable(false)
+                                                        .maximizable(false)
+                                                        .decorations(false)
+                                                        .transparent(true)
+                                                        .visible(true)
+                                                        .center();
+                                                    if let Err(err) = config.build() {
+                                                        eprintln!(
+                                                            "[lan] failed to recreate the dual window: {err}"
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }

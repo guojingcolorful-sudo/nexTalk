@@ -160,13 +160,19 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   } = useWakeLock({ onFallbackEngaged: () => setToast('已启用防休眠回退模式') });
 
   // Word-level streaming (2026-10-04): one bubble per speaker line — repeated
-  // frames with the same id refine it in place, mirroring the desktop.
-  const subtitles = useMemo(() => {
+  // frames with the same id refine it in place, mirroring the desktop. A line
+  // that streamed partials never re-types its final (the typewriter belongs to
+  // lines that arrived whole, like the user's answer).
+  const { subtitles, streamedIds } = useMemo(() => {
     const byId = new Map<string, SubtitleEvent>();
+    const streamed = new Set<string>();
     for (const event of events) {
-      if (event.t === 'subtitle') byId.set(event.id, event);
+      if (event.t === 'subtitle') {
+        byId.set(event.id, event);
+        if (!event.final) streamed.add(event.id);
+      }
     }
-    return [...byId.values()];
+    return { subtitles: [...byId.values()], streamedIds: streamed };
   }, [events]);
   // UAT-16: the AI tab records the interviewer's questions in real time,
   // interleaved with the strategy cards in arrival order — the same timeline
@@ -300,7 +306,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                     zh={subtitle.zh}
                     en={subtitle.en}
                     language={languagePref}
-                    instant={index < subtitles.length - 1 || !subtitle.final}
+                    instant={
+                      index < subtitles.length - 1 ||
+                      !subtitle.final ||
+                      streamedIds.has(subtitle.id)
+                    }
                   />
                 </div>
               ))

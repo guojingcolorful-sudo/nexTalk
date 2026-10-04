@@ -44,13 +44,19 @@ export default function DualPanePage() {
   const [confirmStop, setConfirmStop] = useState(false);
 
   // Word-level streaming (2026-10-04): one bubble per speaker line — repeated
-  // frames with the same id refine it in place, mirroring the phone.
-  const subtitles = useMemo(() => {
+  // frames with the same id refine it in place, mirroring the phone. A line
+  // that streamed partials never re-types its final (the typewriter belongs to
+  // lines that arrived whole, like the user's answer).
+  const { subtitles, streamedIds } = useMemo(() => {
     const byId = new Map<string, SubtitleEvent>();
+    const streamed = new Set<string>();
     for (const event of events) {
-      if (event.t === 'subtitle') byId.set(event.id, event);
+      if (event.t === 'subtitle') {
+        byId.set(event.id, event);
+        if (!event.final) streamed.add(event.id);
+      }
     }
-    return [...byId.values()];
+    return { subtitles: [...byId.values()], streamedIds: streamed };
   }, [events]);
   const timelineItems = useMemo(() => toTimelineItems(events), [events]);
   // UAT-12: the AI pane shows the thinking state for as long as the newest
@@ -124,7 +130,11 @@ export default function DualPanePage() {
                   zh={subtitle.zh}
                   en={subtitle.en}
                   mode={languageMode}
-                  instant={index < subtitles.length - 1 || !subtitle.final}
+                  instant={
+                    index < subtitles.length - 1 ||
+                    !subtitle.final ||
+                    streamedIds.has(subtitle.id)
+                  }
                 />
               </div>
             ))}
