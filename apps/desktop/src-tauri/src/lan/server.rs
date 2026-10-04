@@ -60,6 +60,59 @@ pub enum SessionStatus {
     Ended,
 }
 
+/// STT confidence of one segment (D-07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfidenceLevel {
+    High,
+    Medium,
+    Low,
+}
+
+/// Who produced a segment's `confidence` (D-07).
+///
+/// The pipeline's internal `ConfidenceSource` has a third value,
+/// `ProxyUnavailable` — on the wire that is the *absence* of the field, so a
+/// proxy estimate can never masquerade as a vendor one (T-02-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfidenceSource {
+    Vendor,
+    Proxy,
+}
+
+/// Why the pipeline left a segment untranslated (D-08 abstain channel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AbstainReason {
+    SilentAudio,
+    Unrecognized,
+}
+
+/// One glossary term matched inside a segment. Shipped empty in Phase 2; the
+/// term base fills it in Phase 4.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TermHit {
+    pub zh: String,
+    pub en: String,
+}
+
+/// Per-segment provenance (D-07): what produced this subtitle, and how sure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubtitleTrace {
+    /// Milliseconds from segment capture start to its first audio byte.
+    pub segment_start_ms: u64,
+    pub term_hits: Vec<TermHit>,
+    pub provider: String,
+    pub model_version: String,
+    pub confidence_source: ConfidenceSource,
+    /// Aggregatable vendor error code (D-19), when the segment carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
 /// Serde mirror of `packages/protocol` `ServerEvent`.
 ///
 /// Wire-shape invariants (mirrored by `isServerEvent` on the TS side):
@@ -88,6 +141,23 @@ pub enum ServerEvent {
         en: Option<String>,
         #[serde(rename = "final")]
         final_flag: bool,
+        /// Absent when the vendor returned none — never a fabricated value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confidence: Option<ConfidenceLevel>,
+        /// Absent on Phase-1 shaped events, which this union still accepts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trace: Option<SubtitleTrace>,
+    },
+    /// The pipeline refused to translate this segment (D-08): silence, or
+    /// speech nothing recognisable came out of. The phone renders the reason
+    /// instead of an empty subtitle card.
+    #[serde(rename_all = "camelCase")]
+    Abstained {
+        id: String,
+        speaker: Speaker,
+        seq: u64,
+        reason: AbstainReason,
+        segment_start_ms: u64,
     },
     #[serde(rename_all = "camelCase")]
     Strategy {
@@ -276,21 +346,20 @@ async fn client_loop(socket: WebSocket, ctx: LanContext) {
                                                     // 关闭 control (WR-08): recreate it so a
                                                     // phone-initiated start never dead-ends.
                                                     // Mirrors ConsolePage's openDualPane.
-                                                    let config =
-                                                        tauri::WebviewWindowBuilder::new(
-                                                            app,
-                                                            "dual",
-                                                            tauri::WebviewUrl::App(
-                                                                "index.html#/dual".into(),
-                                                            ),
-                                                        )
-                                                        .inner_size(860.0, 680.0)
-                                                        .resizable(false)
-                                                        .maximizable(false)
-                                                        .decorations(false)
-                                                        .transparent(true)
-                                                        .visible(true)
-                                                        .center();
+                                                    let config = tauri::WebviewWindowBuilder::new(
+                                                        app,
+                                                        "dual",
+                                                        tauri::WebviewUrl::App(
+                                                            "index.html#/dual".into(),
+                                                        ),
+                                                    )
+                                                    .inner_size(860.0, 680.0)
+                                                    .resizable(false)
+                                                    .maximizable(false)
+                                                    .decorations(false)
+                                                    .transparent(true)
+                                                    .visible(true)
+                                                    .center();
                                                     if let Err(err) = config.build() {
                                                         eprintln!(
                                                             "[lan] failed to recreate the dual window: {err}"
@@ -402,6 +471,8 @@ pub(crate) mod test_events {
                     .into(),
             ),
             final_flag: true,
+            confidence: None,
+            trace: None,
         }
     }
 
@@ -413,6 +484,8 @@ pub(crate) mod test_events {
             zh: Some("首先，我们分析了慢查询日志，发现主要瓶颈在商品详情页的连表查询上。".into()),
             en: None,
             final_flag: true,
+            confidence: None,
+            trace: None,
         }
     }
 
@@ -574,6 +647,8 @@ mod tests {
                 zh: Some(format!("第 {seq} 行")),
                 en: None,
                 final_flag: true,
+                confidence: None,
+                trace: None,
             });
         }
         (state, rx)
@@ -697,6 +772,8 @@ mod tests {
             zh: Some("答案".into()),
             en: None,
             final_flag: true,
+            confidence: None,
+            trace: None,
         };
         let json = serde_json::to_value(&no_en).expect("serialize subtitle");
         assert!(
@@ -778,9 +855,10 @@ mod tests {
         // Backward compatibility (Test 6): a Phase-1 shaped subtitle — no
         // confidence, no trace — still parses, and an unknown field is still
         // rejected, nested ones included.
-        let legacy: ServerEvent =
-            serde_json::from_str(r#"{"t":"subtitle","id":"r1-q","speaker":"interviewer","seq":1,"final":true}"#)
-                .expect("a Phase-1 subtitle still parses");
+        let legacy: ServerEvent = serde_json::from_str(
+            r#"{"t":"subtitle","id":"r1-q","speaker":"interviewer","seq":1,"final":true}"#,
+        )
+        .expect("a Phase-1 subtitle still parses");
         let ServerEvent::Subtitle {
             confidence, trace, ..
         } = &legacy

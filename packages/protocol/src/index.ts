@@ -17,6 +17,42 @@ export type LanguagePref = 'all-zh' | 'all-en' | 'bilingual';
 
 export type Speaker = 'interviewer' | 'user';
 
+/** STT confidence for one segment (D-07). */
+export type ConfidenceLevel = 'high' | 'medium' | 'low';
+
+/**
+ * Who produced a segment's `confidence`. A vendor value and a local proxy
+ * estimate are never interchangeable: 讯飞 iat returns no confidence at all
+ * (research correction 3), so a proxy value posing as a vendor one would
+ * silently misreport the STT's real quality (threat T-02-09).
+ */
+export type ConfidenceSource = 'vendor' | 'proxy';
+
+/** Why the pipeline left a segment untranslated (D-08 abstain channel). */
+export type AbstainReason = 'silent_audio' | 'unrecognized';
+
+/**
+ * One glossary term matched inside a segment. Defined now so the wire shape is
+ * fixed before anything fills it: Phase 2 always sends an empty list, Phase 4
+ * populates it from the term base.
+ */
+export type TermHit = {
+  zh: string;
+  en: string;
+};
+
+/** Per-segment provenance (D-07): what produced this subtitle, and how sure. */
+export type SubtitleTrace = {
+  /** Milliseconds from the segment's capture start to its first audio byte. */
+  segmentStartMs: number;
+  termHits: TermHit[];
+  provider: string;
+  modelVersion: string;
+  confidenceSource: ConfidenceSource;
+  /** Aggregatable vendor error code (D-19), when the segment carries one. */
+  errorCode?: string;
+};
+
 export type ServerEvent =
   | {
       /**
@@ -37,6 +73,23 @@ export type ServerEvent =
       zh?: string;
       en?: string;
       final: boolean;
+      /** Absent when the vendor returned none — never a fabricated value. */
+      confidence?: ConfidenceLevel;
+      /** Absent on Phase-1 shaped events, which this union still accepts. */
+      trace?: SubtitleTrace;
+    }
+  | {
+      /**
+       * The pipeline refused to translate this segment (D-08): silence, or
+       * speech nothing recognisable came out of. The phone renders the reason
+       * instead of an empty subtitle card.
+       */
+      t: 'abstained';
+      id: string;
+      speaker: Speaker;
+      seq: number;
+      reason: AbstainReason;
+      segmentStartMs: number;
     }
   | {
       t: 'strategy';
@@ -96,6 +149,9 @@ export type ClientMessage =
 const LANGUAGE_PREFS: readonly string[] = ['all-zh', 'all-en', 'bilingual'];
 const SPEAKERS: readonly string[] = ['interviewer', 'user'];
 const SESSION_STATES: readonly string[] = ['idle', 'listening', 'generating', 'ended'];
+const CONFIDENCE_LEVELS: readonly string[] = ['high', 'medium', 'low'];
+const CONFIDENCE_SOURCES: readonly string[] = ['vendor', 'proxy'];
+const ABSTAIN_REASONS: readonly string[] = ['silent_audio', 'unrecognized'];
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -103,6 +159,28 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 
 function isString(x: unknown): x is string {
   return typeof x === 'string';
+}
+
+function isFiniteNumber(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x);
+}
+
+function isTermHit(x: unknown): x is TermHit {
+  return isRecord(x) && isString(x.zh) && isString(x.en);
+}
+
+function isSubtitleTrace(x: unknown): x is SubtitleTrace {
+  if (!isRecord(x)) return false;
+  return (
+    isFiniteNumber(x.segmentStartMs) &&
+    Array.isArray(x.termHits) &&
+    x.termHits.every(isTermHit) &&
+    isString(x.provider) &&
+    isString(x.modelVersion) &&
+    isString(x.confidenceSource) &&
+    CONFIDENCE_SOURCES.includes(x.confidenceSource) &&
+    (x.errorCode === undefined || isString(x.errorCode))
+  );
 }
 
 /**
@@ -121,11 +199,23 @@ export function isServerEvent(x: unknown): x is ServerEvent {
         isString(x.id) &&
         isString(x.speaker) &&
         SPEAKERS.includes(x.speaker) &&
-        typeof x.seq === 'number' &&
-        Number.isFinite(x.seq) &&
+        isFiniteNumber(x.seq) &&
         typeof x.final === 'boolean' &&
         (x.zh === undefined || isString(x.zh)) &&
-        (x.en === undefined || isString(x.en))
+        (x.en === undefined || isString(x.en)) &&
+        (x.confidence === undefined ||
+          (isString(x.confidence) && CONFIDENCE_LEVELS.includes(x.confidence))) &&
+        (x.trace === undefined || isSubtitleTrace(x.trace))
+      );
+    case 'abstained':
+      return (
+        isString(x.id) &&
+        isString(x.speaker) &&
+        SPEAKERS.includes(x.speaker) &&
+        isFiniteNumber(x.seq) &&
+        isString(x.reason) &&
+        ABSTAIN_REASONS.includes(x.reason) &&
+        isFiniteNumber(x.segmentStartMs)
       );
     case 'strategy':
       return (

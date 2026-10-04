@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nextalk_desktop_lib::lan::server::{
-    router, teleprompter_dist_path, AbstainReason, ConfidenceLevel, ConfidenceSource,
-    LanguagePref, ServerEvent, SessionStatus, Speaker, SubtitleTrace, TermHit,
+    router, teleprompter_dist_path, AbstainReason, ConfidenceLevel, ConfidenceSource, LanguagePref,
+    ServerEvent, SessionStatus, Speaker, SubtitleTrace, TermHit,
 };
 use nextalk_desktop_lib::sim::script::ROUNDS;
 use nextalk_desktop_lib::sim::source::INTERRUPT_LEAD_MS;
@@ -605,7 +605,11 @@ async fn the_provenance_fields_and_the_abstain_channel_reach_the_phone() {
     ));
     assert!(matches!(
         replay.iter().rev().nth(1),
-        Some(ServerEvent::Subtitle { confidence: Some(ConfidenceLevel::Low), trace: Some(_), .. })
+        Some(ServerEvent::Subtitle {
+            confidence: Some(ConfidenceLevel::Low),
+            trace: Some(_),
+            ..
+        })
     ));
 }
 

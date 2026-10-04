@@ -133,6 +133,8 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
             zh: Some(zh),
             en: Some(en),
             final_flag,
+            confidence: None,
+            trace: None,
         });
     }
 
@@ -162,6 +164,8 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
             // bubble renders it as the user's translation from 01-05 onwards.
             en: Some(round.user_en.to_string()),
             final_flag: true,
+            confidence: None,
+            trace: None,
         });
     }
 
