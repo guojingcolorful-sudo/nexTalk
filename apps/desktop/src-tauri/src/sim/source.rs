@@ -59,36 +59,39 @@ impl TimeSource for RealClock {
     }
 }
 
-/// Number of streamed frames per question (2026-10-03): `QUESTION_FRAMES`
-/// includes the final — the question grows every
-/// [`QUESTION_PARTIAL_STEP_MS`] from `question_at_ms` until it completes,
-/// close to word-level streaming. The offsets stay strictly inside the
-/// [question, strategy] window of every round.
-const QUESTION_FRAMES: u32 = 6;
-const QUESTION_PARTIAL_STEP_MS: u64 = 700;
+/// Step between the interviewer question's streamed frames (2026-10-03):
+/// one word per frame — the question grows every
+/// [`QUESTION_PARTIAL_STEP_MS`] from `question_at_ms` until the last word
+/// completes it. The longest scripted question (16 words × 250ms = 4.0s) still
+/// stays inside every round's [question, strategy] window.
+const QUESTION_PARTIAL_STEP_MS: u64 = 250;
+
+/// Word count of a question — the streaming frame count (the final IS the
+/// last word's frame).
+fn question_frames(en: &str) -> u32 {
+    en.split_whitespace().count().max(1) as u32
+}
 
 /// Deterministic partial of the question text for a streaming frame.
-/// `part` is 1..=QUESTION_FRAMES (the last = the full text): Chinese is cut on
-/// character boundaries, English on word boundaries — the frames always grow,
-/// never reflow.
+/// `part` is 1..=word_count (the last = the full text): English grows one word
+/// per frame, Chinese grows proportionally on character boundaries — the
+/// frames always grow, never reflow.
 fn question_text(zh: &str, en: &str, part: u32) -> (String, String) {
-    fn zh_cut(text: &str, part: u32) -> String {
-        if part >= QUESTION_FRAMES {
-            return text.to_string();
-        }
-        let count = text.chars().count();
-        let keep = (count * part as usize).div_ceil(QUESTION_FRAMES as usize);
-        text.chars().take(keep).collect()
-    }
-    fn en_cut(text: &str, part: u32) -> String {
-        if part >= QUESTION_FRAMES {
-            return text.to_string();
-        }
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let keep = (words.len() * part as usize).div_ceil(QUESTION_FRAMES as usize);
-        words[..keep.min(words.len())].join(" ")
-    }
-    (zh_cut(zh, part), en_cut(en, part))
+    let words: Vec<&str> = en.split_whitespace().collect();
+    let frames = words.len().max(1) as u32;
+    let en_text = if part >= frames {
+        en.to_string()
+    } else {
+        words[..part as usize].join(" ")
+    };
+    let zh_text = if part >= frames {
+        zh.to_string()
+    } else {
+        let count = zh.chars().count();
+        let keep = (count * part as usize).div_ceil(frames as usize);
+        zh.chars().take(keep).collect()
+    };
+    (zh_text, en_text)
 }
 
 /// One round's milestones that have matured by `local_ms` (round-relative), in
@@ -108,20 +111,20 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
         session: SessionStatus::Listening,
     });
     // UAT-11 + 2026-10-03: the question opens the round after the lead-in and
-    // streams as growing frames (partial → … → final, every
-    // QUESTION_PARTIAL_STEP_MS) so the subtitle feed and the AI 辅助 tab follow
-    // the interviewer word by word, like real STT. Each frame is its own
-    // matured milestone — the callers' emitted cursor advances one entry per
-    // frame. The strategy still lands only after the question has been fully
-    // read aloud (question_at_ms + (FRAMES-1)×step < strategy_at_ms in every
-    // round).
+    // streams word by word (one frame per word, every
+    // QUESTION_PARTIAL_STEP_MS; the last word's frame is the final) so the
+    // subtitle feed and the AI 辅助 tab follow the interviewer at word-level
+    // granularity, like real STT. Each frame is its own matured milestone —
+    // the callers' emitted cursor advances one entry per frame. The strategy
+    // still lands only after the question has been fully read aloud.
     let question_at = round.timing.question_at_ms;
-    for part in 1..=QUESTION_FRAMES {
+    let frames = question_frames(round.interviewer_en);
+    for part in 1..=frames {
         let frame_at = question_at + QUESTION_PARTIAL_STEP_MS * (part - 1) as u64;
         if local_ms < frame_at {
             break;
         }
-        let final_flag = part == QUESTION_FRAMES;
+        let final_flag = part == frames;
         let (zh, en) = question_text(round.interviewer_zh, round.interviewer_en, part);
         events.push(ServerEvent::Subtitle {
             id: script::question_id(round_index),
@@ -153,7 +156,7 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
         events.push(ServerEvent::Subtitle {
             id: script::answer_id(round_index),
             speaker: Speaker::User,
-            seq: QUESTION_FRAMES as u64 + 1,
+            seq: question_frames(round.interviewer_en) as u64 + 1,
             zh: Some(round.user_zh.to_string()),
             // The English line is what the cloned voice speaks (D-03): the
             // bubble renders it as the user's translation from 01-05 onwards.
@@ -172,23 +175,27 @@ fn round_events(round_index: usize, local_ms: u64) -> Vec<ServerEvent> {
 }
 
 /// Pure evaluator: every script event whose offset is `<= elapsed_ms`, in
-/// emission order, with session-long subtitle sequence numbers (1..=28 for the
-/// canonical run). No clock, no I/O — deterministic for a given input.
+/// emission order, with session-long subtitle sequence numbers (1..=56 for the
+/// canonical run — word-level streaming means per-round counts vary with the
+/// question's word count). No clock, no I/O — deterministic for a given input.
 pub fn script_state(elapsed_ms: u64) -> Vec<ServerEvent> {
     let mut events = Vec::new();
     let mut round_start_ms = 0u64;
+    let mut seq_offset = 0u64;
 
     for (index, round) in script::ROUNDS.iter().enumerate() {
         if elapsed_ms < round_start_ms {
             break;
         }
+        let rank_max = question_frames(round.interviewer_en) as u64 + 1;
         for mut event in round_events(index, elapsed_ms - round_start_ms) {
             if let ServerEvent::Subtitle { seq, .. } = &mut event {
-                *seq += (index as u64) * (QUESTION_FRAMES as u64 + 1);
+                *seq += seq_offset;
             }
             events.push(event);
         }
         round_start_ms += round.timing.end_at_ms;
+        seq_offset += rank_max;
     }
 
     if elapsed_ms >= round_start_ms {

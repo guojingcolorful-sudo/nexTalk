@@ -109,13 +109,16 @@ async fn read_raw(ws: &mut Client) -> serde_json::Value {
 
 /// Reads frames until the `session_started` marker for `epoch` arrives.
 async fn read_session_marker(ws: &mut Client, epoch: u64) -> serde_json::Value {
-    for _ in 0..16 {
+    // Word-level streaming produces up to 17 leftover frames ahead of the next
+    // session's marker — the bounded scan must outlast the longest buffered
+    // tail (the 5s guard on each read still fails fast on a truly dead stream).
+    for _ in 0..64 {
         let frame = read_raw(ws).await;
         if frame["t"] == "session_started" && frame["epoch"] == epoch {
             return frame;
         }
     }
-    panic!("no session_started marker for epoch {epoch} within 16 frames");
+    panic!("no session_started marker for epoch {epoch} within 64 frames");
 }
 
 /// Reads the next subtitle frame off the stream (skipping statuses/strategies).
@@ -215,7 +218,11 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     );
 
     let r1_subtitles = subtitles_of(&played);
-    assert_eq!(r1_subtitles.len(), 7, "streamed question frames + answer");
+    assert_eq!(
+        r1_subtitles.len(),
+        15,
+        "word-level question frames + answer"
+    );
     let question = &r1_subtitles[0];
     assert_eq!(question.id, "r1-q");
     assert_eq!(question.speaker, Speaker::Interviewer);
@@ -225,20 +232,20 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         "the question opens as a streaming partial"
     );
 
-    let question_final = &r1_subtitles[5];
+    let question_final = &r1_subtitles[13];
     assert_eq!(question_final.id, "r1-q");
-    assert_eq!(question_final.seq, 6);
+    assert_eq!(question_final.seq, 14);
     assert_eq!(question_final.en, Some(ROUNDS[0].interviewer_en));
     assert_eq!(question_final.zh, Some(ROUNDS[0].interviewer_zh));
     assert!(question_final.final_flag);
 
-    let answer = &r1_subtitles[6];
+    let answer = &r1_subtitles[14];
     assert_eq!(answer.id, "r1-a");
     assert_eq!(answer.speaker, Speaker::User);
-    assert_eq!(answer.seq, 7);
+    assert_eq!(answer.seq, 15);
     assert_eq!(answer.zh, Some(ROUNDS[0].user_zh));
     assert!(
-        matches!(&played[7], ServerEvent::Strategy { title, .. } if title == "数据库优化"),
+        matches!(&played[15], ServerEvent::Strategy { title, .. } if title == "数据库优化"),
         "the strategy card follows the question: {played:#?}"
     );
 
@@ -259,17 +266,18 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         ("r1-q", 1),
         "the phone sees the r1 question in the same order and numbering"
     );
-    // The question streams live: five more partials, then the final (seq 6).
-    for expected in 2..=6u64 {
+    // The question streams live word by word: thirteen more frames, the last
+    // of which (seq 14) is the final carrying the full text.
+    for expected in 2..=14u64 {
         let frame = read_subtitle(&mut phone, "the r1 question growth").await;
         let frame = sub(&frame);
         assert_eq!((frame.id, frame.seq), ("r1-q", expected));
         assert_eq!(
             frame.final_flag,
-            expected == 6,
+            expected == 14,
             "only the last frame is the final"
         );
-        if expected == 6 {
+        if expected == 14 {
             assert_eq!(frame.zh, Some(ROUNDS[0].interviewer_zh));
         }
     }
@@ -277,7 +285,7 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     let answer_frame = read_subtitle(&mut phone, "the r1 answer").await;
     let answer_frame = sub(&answer_frame);
     assert_eq!(answer_frame.id, "r1-a");
-    assert_eq!(answer_frame.seq, 7);
+    assert_eq!(answer_frame.seq, 15);
 
     // SYNC-03 round-trip: the phone's mode is applied AND published back
     // through the same server event, so the desktop webviews observe it.
@@ -332,7 +340,7 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         "the reopened question streams as a partial"
     );
     assert_eq!(
-        r2_subtitles[0].seq, 8,
+        r2_subtitles[0].seq, 16,
         "numbering continues across the cut — a dropped round never reuses a seq"
     );
     assert_eq!(
@@ -359,7 +367,9 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
         .expect("重听 applies while the answer is generating");
 
     let mut replay = Vec::new();
-    while replay.len() < 8 {
+    // The replay replays r2: its question frames (one per word) + strategy + answer.
+    let replay_total = ROUNDS[1].interviewer_en.split_whitespace().count() + 2;
+    while replay.len() < replay_total {
         let event = read_event(&mut phone).await;
         let is_replay = matches!(
             &event,
@@ -373,11 +383,11 @@ async fn full_demo_session_reaches_the_phone_and_applies_the_language_control() 
     let replayed = subtitles_of(&replay);
     assert_eq!(
         replayed.len(),
-        7,
-        "question frames ×6 + answer, strategy between them"
+        13,
+        "word-level question frames (12) + answer, strategy between them"
     );
     assert_eq!(replayed[0].id, "r2-q-r1", "a replay needs a fresh id");
-    assert_eq!(replayed[6].id, "r2-a-r1");
+    assert_eq!(replayed[12].id, "r2-a-r1");
     assert!(
         replayed.iter().all(|item| item.seq > r2_subtitles[0].seq),
         "replayed subtitles must not reuse a seq the phone already saw: {replayed:#?}"
@@ -515,7 +525,7 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
         .collect();
     assert_eq!(
         seqs,
-        vec![1, 2, 3, 4, 5, 6, 7],
+        (1..=15).collect::<Vec<u64>>(),
         "the whole new session must reach a phone whose cursor went stale"
     );
 
