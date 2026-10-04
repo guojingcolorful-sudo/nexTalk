@@ -146,6 +146,111 @@ describe('session identity marker (restart signal)', () => {
   });
 });
 
+describe('D-07 provenance fields (confidence + trace)', () => {
+  const trace = {
+    segmentStartMs: 1240,
+    termHits: [{ zh: '慢查询', en: 'slow query' }],
+    provider: 'xfyun',
+    modelVersion: 'iat',
+    confidenceSource: 'proxy' as const,
+  };
+  const subtitle = {
+    t: 'subtitle' as const,
+    id: 's1',
+    speaker: 'interviewer' as const,
+    seq: 1,
+    en: 'Why is this query slow?',
+    final: true,
+  };
+
+  it('accepts a subtitle carrying confidence and a full trace', () => {
+    expect(isServerEvent({ ...subtitle, confidence: 'low', trace })).toBe(true);
+  });
+
+  it('accepts every ConfidenceLevel value', () => {
+    for (const confidence of ['high', 'medium', 'low']) {
+      expect(isServerEvent({ ...subtitle, confidence })).toBe(true);
+    }
+  });
+
+  it('accepts a trace with an empty termHits list (Phase 2 sends none)', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, termHits: [] } })).toBe(true);
+  });
+
+  it('accepts a trace carrying an aggregatable error code (D-19)', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, errorCode: '45000001' } })).toBe(true);
+  });
+
+  it('rejects a confidence outside the union', () => {
+    expect(isServerEvent({ ...subtitle, confidence: 'maybe' })).toBe(false);
+  });
+
+  it('rejects a trace missing modelVersion', () => {
+    const { modelVersion: _omitted, ...incomplete } = trace;
+    expect(isServerEvent({ ...subtitle, trace: incomplete })).toBe(false);
+  });
+
+  it('rejects a trace with an unknown confidenceSource', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, confidenceSource: 'guessed' } })).toBe(false);
+  });
+
+  it('rejects a trace whose termHits are not {zh,en} records', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, termHits: 'slow query' } })).toBe(false);
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, termHits: [{ zh: '慢查询' }] } })).toBe(false);
+  });
+
+  it('rejects a non-string errorCode', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, errorCode: 45000001 } })).toBe(false);
+  });
+
+  it('rejects a non-finite segmentStartMs', () => {
+    expect(isServerEvent({ ...subtitle, trace: { ...trace, segmentStartMs: NaN } })).toBe(false);
+  });
+
+  it('still accepts a Phase-1 shaped subtitle without confidence or trace', () => {
+    expect(isServerEvent(subtitle)).toBe(true);
+  });
+});
+
+describe('D-08 abstain channel', () => {
+  const abstained = {
+    t: 'abstained' as const,
+    id: 's9',
+    speaker: 'user' as const,
+    seq: 4,
+    segmentStartMs: 2100,
+  };
+
+  it('accepts an abstained event for every reason', () => {
+    for (const reason of ['silent_audio', 'unrecognized']) {
+      expect(isServerEvent({ ...abstained, reason })).toBe(true);
+    }
+  });
+
+  it('rejects a reason outside the union', () => {
+    expect(isServerEvent({ ...abstained, reason: 'bored' })).toBe(false);
+  });
+
+  it('rejects an abstained event missing segmentStartMs', () => {
+    const { segmentStartMs: _omitted, ...incomplete } = abstained;
+    expect(isServerEvent({ ...incomplete, reason: 'silent_audio' })).toBe(false);
+  });
+
+  it('rejects a non-finite segmentStartMs', () => {
+    expect(isServerEvent({ ...abstained, reason: 'silent_audio', segmentStartMs: Infinity })).toBe(false);
+  });
+
+  it('rejects an abstained event with a speaker outside the union', () => {
+    expect(isServerEvent({ ...abstained, reason: 'silent_audio', speaker: 'recruiter' })).toBe(false);
+  });
+
+  it('accepts an abstained event inside a timeline replay', () => {
+    expect(
+      isServerEvent({ t: 'timeline', events: [{ ...abstained, reason: 'unrecognized' }] }),
+    ).toBe(true);
+  });
+});
+
 describe('language mode variant (SYNC-03 applied-mode observation)', () => {
   it('accepts every LanguagePref value', () => {
     for (const language of ['all-zh', 'all-en', 'bilingual'] as const) {

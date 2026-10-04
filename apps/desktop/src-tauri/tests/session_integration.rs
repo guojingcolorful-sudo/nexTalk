@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nextalk_desktop_lib::lan::server::{
-    router, teleprompter_dist_path, LanguagePref, ServerEvent, SessionStatus, Speaker,
+    router, teleprompter_dist_path, AbstainReason, ConfidenceLevel, ConfidenceSource,
+    LanguagePref, ServerEvent, SessionStatus, Speaker, SubtitleTrace, TermHit,
 };
 use nextalk_desktop_lib::sim::script::ROUNDS;
 use nextalk_desktop_lib::sim::source::INTERRUPT_LEAD_MS;
@@ -534,6 +535,78 @@ async fn a_restarted_session_announces_itself_and_recovers_a_stale_phone() {
         2,
         "both phones stay paired"
     );
+}
+
+/// T2.7: the D-07 provenance fields and the D-08 abstain channel cross the real
+/// LAN transport with the exact camelCase spelling the phone's `isServerEvent`
+/// gate reads (the TS half of this test is
+/// `packages/protocol/src/index.test.ts`).
+#[tokio::test]
+async fn the_provenance_fields_and_the_abstain_channel_reach_the_phone() {
+    let (base, state) = spawn_server().await;
+    let token = state.pairing_token();
+    let mut phone = connect(&base, &token).await;
+    pair(&mut phone).await;
+
+    // What 02-03 will publish once the real cascade is wired: a subtitle with
+    // its vendor attribution, then the segment the pipeline refused to speak.
+    state.publish(ServerEvent::Subtitle {
+        id: "live-q".into(),
+        speaker: Speaker::Interviewer,
+        seq: 1,
+        zh: Some("这条查询为什么慢？".into()),
+        en: Some("Why is this query slow?".into()),
+        final_flag: true,
+        confidence: Some(ConfidenceLevel::Low),
+        trace: Some(SubtitleTrace {
+            segment_start_ms: 1240,
+            term_hits: vec![TermHit {
+                zh: "慢查询".into(),
+                en: "slow query".into(),
+            }],
+            provider: "xfyun".into(),
+            model_version: "iat".into(),
+            confidence_source: ConfidenceSource::Proxy,
+            error_code: None,
+        }),
+    });
+    state.publish(ServerEvent::Abstained {
+        id: "live-a".into(),
+        speaker: Speaker::User,
+        seq: 2,
+        reason: AbstainReason::SilentAudio,
+        segment_start_ms: 2100,
+    });
+
+    let subtitle = read_raw(&mut phone).await;
+    assert_eq!(subtitle["t"], "subtitle");
+    assert_eq!(subtitle["confidence"], "low");
+    assert_eq!(subtitle["trace"]["segmentStartMs"], 1240);
+    assert_eq!(subtitle["trace"]["termHits"][0]["en"], "slow query");
+    assert_eq!(subtitle["trace"]["confidenceSource"], "proxy");
+    assert_eq!(subtitle["trace"]["provider"], "xfyun");
+    assert!(
+        subtitle["trace"].get("errorCode").is_none(),
+        "absent means absent on the wire too: {subtitle}"
+    );
+
+    let abstained = read_raw(&mut phone).await;
+    assert_eq!(abstained["t"], "abstained");
+    assert_eq!(abstained["id"], "live-a");
+    assert_eq!(abstained["reason"], "silent_audio");
+    assert_eq!(abstained["segmentStartMs"], 2100);
+
+    // Both survive into the timeline, so a phone that reconnects receives the
+    // same shapes on resume.
+    let replay = state.timeline();
+    assert!(matches!(
+        replay.last(),
+        Some(ServerEvent::Abstained { seq: 2, .. })
+    ));
+    assert!(matches!(
+        replay.iter().rev().nth(1),
+        Some(ServerEvent::Subtitle { confidence: Some(ConfidenceLevel::Low), trace: Some(_), .. })
+    ));
 }
 
 #[tokio::test]

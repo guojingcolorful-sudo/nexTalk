@@ -728,4 +728,103 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn wire_shapes_carry_the_d07_provenance_fields() {
+        // The exact camelCase spelling `isServerEvent` reads on the TS side
+        // (packages/protocol/src/index.test.ts asserts the mirror).
+        let traced: ServerEvent = serde_json::from_str(
+            r#"{"t":"subtitle","id":"r2-q","speaker":"interviewer","seq":3,"en":"q","final":false,
+                "confidence":"low",
+                "trace":{"segmentStartMs":1240,"termHits":[{"zh":"慢查询","en":"slow query"}],
+                         "provider":"xfyun","modelVersion":"iat","confidenceSource":"proxy"}}"#,
+        )
+        .expect("traced subtitle wire shape");
+        let ServerEvent::Subtitle {
+            confidence, trace, ..
+        } = &traced
+        else {
+            panic!("a traced subtitle must parse as a subtitle: {traced:?}");
+        };
+        assert_eq!(*confidence, Some(ConfidenceLevel::Low));
+        let trace = trace.as_ref().expect("the trace survives the parse");
+        assert_eq!(trace.segment_start_ms, 1240);
+        assert_eq!(trace.provider, "xfyun");
+        assert_eq!(trace.model_version, "iat");
+        assert_eq!(trace.confidence_source, ConfidenceSource::Proxy);
+        assert_eq!(
+            trace.term_hits,
+            [TermHit {
+                zh: "慢查询".into(),
+                en: "slow query".into(),
+            }]
+        );
+
+        let json = serde_json::to_value(&traced).expect("serialize traced subtitle");
+        assert_eq!(json["confidence"], "low");
+        assert_eq!(json["trace"]["segmentStartMs"], 1240);
+        assert!(
+            json["trace"].get("segment_start_ms").is_none(),
+            "the rename must not drift: {json}"
+        );
+        assert_eq!(json["trace"]["modelVersion"], "iat");
+        assert_eq!(json["trace"]["termHits"][0]["zh"], "慢查询");
+        assert_eq!(json["trace"]["confidenceSource"], "proxy");
+        assert!(
+            json["trace"].get("errorCode").is_none(),
+            "an absent error code must not serialize as null: {json}"
+        );
+
+        // Backward compatibility (Test 6): a Phase-1 shaped subtitle — no
+        // confidence, no trace — still parses, and an unknown field is still
+        // rejected, nested ones included.
+        let legacy: ServerEvent =
+            serde_json::from_str(r#"{"t":"subtitle","id":"r1-q","speaker":"interviewer","seq":1,"final":true}"#)
+                .expect("a Phase-1 subtitle still parses");
+        let ServerEvent::Subtitle {
+            confidence, trace, ..
+        } = &legacy
+        else {
+            panic!("a legacy subtitle must parse as a subtitle: {legacy:?}");
+        };
+        assert_eq!((confidence, trace), (&None, &None));
+        assert!(serde_json::from_str::<ServerEvent>(
+            r#"{"t":"subtitle","id":"x","speaker":"user","seq":1,"final":true,"mystery":1}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ServerEvent>(
+            r#"{"t":"subtitle","id":"x","speaker":"user","seq":1,"final":true,
+                "trace":{"segmentStartMs":1,"termHits":[],"provider":"p","modelVersion":"m",
+                         "confidenceSource":"vendor","mystery":1}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ServerEvent>(
+            r#"{"t":"subtitle","id":"x","speaker":"user","seq":1,"final":true,"confidence":"maybe"}"#
+        )
+        .is_err());
+
+        // The abstain channel (D-08) is a first-class event with its own shape.
+        let abstained = ServerEvent::Abstained {
+            id: "r2-a".into(),
+            speaker: Speaker::User,
+            seq: 4,
+            reason: AbstainReason::SilentAudio,
+            segment_start_ms: 2100,
+        };
+        assert_eq!(
+            serde_json::to_value(&abstained).expect("serialize abstained"),
+            serde_json::json!({
+                "t": "abstained",
+                "id": "r2-a",
+                "speaker": "user",
+                "seq": 4,
+                "reason": "silent_audio",
+                "segmentStartMs": 2100
+            })
+        );
+        assert!(serde_json::from_str::<ServerEvent>(
+            r#"{"t":"abstained","id":"x","speaker":"user","seq":1,"reason":"bored","segmentStartMs":1}"#
+        )
+        .is_err());
+    }
 }
