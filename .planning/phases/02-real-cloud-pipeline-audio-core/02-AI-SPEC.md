@@ -38,7 +38,7 @@ NexTalk 的实时语音翻译链：用户以中文说话，系统经云端 STT �
 | 自然度 | 语调自然、无机器腔、无中断感 | 每句都有明显停顿、合成腔重、抢话 | 面试官注意力被技术干扰 | 用户系统论文档 + 延迟预算 |
 | 术语准确性 | 专业术语（如 "slow query log"）与简历一致 | 术语硬译/错译（如把「连表查询」译成 join query 之外的怪译） | 技术能力误判 | 用户设计文档（RAG 强制检索原则） |
 | 数字一致性 | 「800 毫秒」↔ "800 ms" 全链路一致 | 数字、数量级被 STT/翻译改掉 | 资历与成果误述 | D-04 确定性校验 |
-| 可信表达 | 无把握时用户能感知（低置信标记），不会误信 | 错误译文无任何警示，用户照读 | 面试翻车 | 用户设计文档（弃权原则） |
+| 可信表达 | 无把握时用户能感知：翻译链靠弃权标记与数字校验，策略卡靠低置信红章（Phase 5） | 错误译文无任何警示，用户照读 | 面试翻车 | 用户设计文档（弃权原则）+ GOV-01/02 修订 |
 | 连续性 | 全程无静默断档 | 供应商故障导致失语数秒 | 面试节奏崩坏 | D-09..D-12 容错链路 |
 
 ### Known Failure Modes in This Domain
@@ -186,8 +186,9 @@ apps/desktop/src-tauri/src/
 #[serde(tag = "t", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TranslatorOutput {
     Fragment { text: String, final_flag: bool },
-    Abstained { reason: AbstainReason },   // D-03：无声弃权
-    LowConfidence { text: String, score: f32 }, // D-02：低置信标记
+    // D-03：无声弃权。翻译链不做置信标记（GOV-01/02 2026-09-30 修订）——
+    // 置信数据仅以 trace.confidenceSource 形式进入 JSONL 溯源，不驱动 UI。
+    Abstained { reason: AbstainReason },
 }
 // 解析失败/字段违规 → 按 D-09 片段级重试，而非宽容降级
 ```
@@ -254,7 +255,7 @@ pnpm -r test && pnpm exec playwright test && cargo test --workspace
 
 **案例结构：** 每个失败案例 = 输入（音频片段/原文）+ 错误输出 + 期望输出 + **根因分类**（术语缺失 / 模型幻觉 / 音频质量 / 数字漂移 / 其他）+ 来源（低置信事件 / 用户反馈 / 人工抽检）。
 
-**入库源（自动）：** JSONL 溯源流（D-05）中三类事件自动成为候选案例：低置信标记、abstained 弃权、数字一致性校验失败（D-04）。候选经根因标注后转正入库。
+**入库源（自动）：** JSONL 溯源流（D-05）中自动候选：abstained 弃权、数字一致性校验失败（D-04）两类（翻译链）；策略卡低置信自 Phase 5 起加入（GOV-01/02 修订）。候选经根因标注后转正入库。
 
 **回归评测机制：**
 - 每次修复与发布前，全量案例库回归：正确案例必须继续通过；失败案例在修复时转正为回归测试——「每一只逃出来的 bug 都要变成笼子上的新栅栏」。
