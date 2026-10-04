@@ -41,6 +41,7 @@ pub use traits::{
     SttStream, SttUpstream, TokenUsage, Translator, TranslatorEvent, TranslatorStream, TtsEvent,
     TtsSink, TtsStream, TtsUsage, VoiceRef, ZhFragment, AUDIO_QUEUE_FRAMES, EVENT_QUEUE_ITEMS,
 };
+pub use volc_tts::VolcTts;
 pub use xfyun::XfyunStt;
 
 // ---------------------------------------------------------------------------
@@ -162,7 +163,8 @@ impl Translator for VendorTranslator {
 #[derive(Debug, Clone)]
 pub enum VendorTts {
     Scripted(ScriptedTts),
-    // T2.5 adds `Volc(VolcTts)`.
+    /// 火山 `seed-icl-2.0` — the production synthesis line (T2.5).
+    Volc(VolcTts),
 }
 
 impl From<ScriptedTts> for VendorTts {
@@ -171,22 +173,31 @@ impl From<ScriptedTts> for VendorTts {
     }
 }
 
+impl From<VolcTts> for VendorTts {
+    fn from(sink: VolcTts) -> Self {
+        Self::Volc(sink)
+    }
+}
+
 impl TtsSink for VendorTts {
     fn provider(&self) -> &'static str {
         match self {
             VendorTts::Scripted(sink) => sink.provider(),
+            VendorTts::Volc(sink) => sink.provider(),
         }
     }
 
     fn model_version(&self) -> String {
         match self {
             VendorTts::Scripted(sink) => sink.model_version(),
+            VendorTts::Volc(sink) => sink.model_version(),
         }
     }
 
     fn set_marks(&mut self, marks: MarkHandle) {
         match self {
             VendorTts::Scripted(sink) => sink.set_marks(marks),
+            VendorTts::Volc(sink) => sink.set_marks(marks),
         }
     }
 
@@ -198,6 +209,7 @@ impl TtsSink for VendorTts {
     ) -> Result<TtsStream, StageError> {
         match self {
             VendorTts::Scripted(sink) => sink.synthesize(text, voice, epoch),
+            VendorTts::Volc(sink) => sink.synthesize(text, voice, epoch),
         }
     }
 }
@@ -256,5 +268,22 @@ mod tests {
         let voice = VoiceRef::Preset("zh_female_vv_uranus_bigtts".to_string());
         let mut audio = tts.synthesize("Hello.", &voice, 1).expect("synthesises");
         assert!(audio.next_audio().await.is_some());
+
+        // The 火山 variant routes through the same contract (T2.5); no socket
+        // is opened, so no mock is needed here.
+        let volc: VendorTts = VolcTts::new(
+            VolcCredentials {
+                app_id: "appid-test".to_string(),
+                access_token: Secret::new("test-token"),
+                resource_id: VolcCredentials::DEFAULT_RESOURCE_ID.to_string(),
+                preset_voice: None,
+                clone_speaker: None,
+            },
+            Endpoints::defaults(),
+        )
+        .into();
+        assert_eq!(volc.provider(), "volc");
+        assert_eq!(volc.model_version(), "seed-icl-2.0");
+        assert!(matches!(volc, VendorTts::Volc(_)));
     }
 }

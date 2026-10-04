@@ -33,11 +33,22 @@
 //! `format` is `pcm`, not the experiment script's `mp3`: the cascade consumes
 //! PCM directly (24 kHz mono, the rate 02-05's playout chain resamples from).
 
-use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
 
-use super::config::VolcCredentials;
-use super::error::{ErrorKind, StageError};
-use super::traits::{TtsUsage, VoiceRef};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::Message;
+
+use crate::pipeline::budget::Stage;
+
+use super::config::{Endpoint, Endpoints, VolcCredentials};
+use super::error::{ErrorKind, RetryClass, StageError};
+use super::traits::{
+    AudioChunk, MarkHandle, TtsEvent, TtsSink, TtsStream, TtsUsage, VoiceRef, EVENT_QUEUE_ITEMS,
+};
 
 // ---------------------------------------------------------------------------
 // protocol constants
@@ -82,6 +93,402 @@ pub const HEADER_REQUEST_ID: &str = "X-Api-Request-Id";
 
 const PROVIDER: &str = "volc";
 
+// ---------------------------------------------------------------------------
+// the request
+// ---------------------------------------------------------------------------
+
+/// Which resource serves this voice: a clone rides the ICL resource, a preset
+/// the plain TTS one. The wrong id is a handshake rejection, not a quality
+/// difference.
+pub fn resource_id_for(voice: &VoiceRef) -> &'static str {
+    match voice {
+        VoiceRef::Clone(_) => RESOURCE_CLONE,
+        VoiceRef::Preset(_) => RESOURCE_PRESET,
+    }
+}
+
+/// The vendor-side speaker name for this voice (`S_xxx` for a clone).
+pub fn speaker_of(voice: &VoiceRef) -> &str {
+    match voice {
+        VoiceRef::Clone(speaker) => speaker.as_str(),
+        VoiceRef::Preset(name) => name,
+    }
+}
+
+/// The one JSON body a synthesis request carries.
+///
+/// `uid` is the account id — 火山 uses it for attribution; no user identifier
+/// leaves this process. `explicit_language` and `tone_fidelity` are always
+/// sent: the cross-lingual path must never depend on a server default (see the
+/// module docs for the risk that path carries).
+pub fn request_body(uid: &str, text: &str, speaker: &str) -> Value {
+    json!({
+        "user": { "uid": uid },
+        "req_params": {
+            "text": text,
+            "speaker": speaker,
+            "audio_params": {
+                "format": AUDIO_FORMAT,
+                "sample_rate": SAMPLE_RATE_HZ,
+                "explicit_language": EXPLICIT_LANGUAGE,
+                "tone_fidelity": TONE_FIDELITY,
+            }
+        }
+    })
+}
+
+/// `[0x11, 0x10, 0x10, 0x00] + u32be(len) + JSON` — the request frame.
+pub fn request_frame(uid: &str, text: &str, speaker: &str) -> Vec<u8> {
+    let payload = request_body(uid, text, speaker).to_string();
+    let mut frame = Vec::with_capacity(FRAME_HEADER.len() + 4 + payload.len());
+    frame.extend_from_slice(&FRAME_HEADER);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload.as_bytes());
+    frame
+}
+
+/// The three handshake headers, with a **fresh request id per connection**:
+/// 火山 correlates support traces by it, so a reused id would make two
+/// connections indistinguishable in their logs.
+pub fn handshake_headers(
+    credentials: &VolcCredentials,
+    voice: &VoiceRef,
+) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            HEADER_API_KEY,
+            credentials.access_token.expose().to_string(),
+        ),
+        (HEADER_RESOURCE_ID, resource_id_for(voice).to_string()),
+        (HEADER_REQUEST_ID, uuid::Uuid::new_v4().to_string()),
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// the response
+// ---------------------------------------------------------------------------
+
+/// One frame from the server. The type is the high nibble of byte 1:
+/// `0b1111` error, `0b1011` audio, `0b1001` JSON.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServerFrame {
+    /// A session-level error frame carrying its own code.
+    Error { code: u32, message: String },
+    /// Raw little-endian PCM16 audio.
+    Audio { event: u32, pcm16_le: Vec<u8> },
+    /// Any JSON frame. `body` is `None` when the payload is empty or does not
+    /// parse — the experiment script's `catch { json = null }`.
+    Json { event: u32, body: Option<Value> },
+}
+
+/// Parse one binary frame.
+///
+/// Every length is bounds-checked: a truncated frame is a retryable protocol
+/// failure, never a panic. (The experiment script would throw here; a stage
+/// client may not — an uncaught throw inside the driver would kill the stage
+/// silently.)
+pub fn parse_frame(data: &[u8]) -> Result<ServerFrame, StageError> {
+    let msg_type = data
+        .get(1)
+        .map(|byte| (byte >> 4) & 0x0f)
+        .ok_or_else(|| truncated("frame header"))?;
+
+    if msg_type == MSG_TYPE_ERROR {
+        let code = read_u32(data, 4)?;
+        let size = read_u32(data, 8)? as usize;
+        let end = 12usize
+            .checked_add(size)
+            .ok_or_else(|| truncated("error message"))?;
+        let message = data
+            .get(12..end)
+            .ok_or_else(|| truncated("error message"))?;
+        return Ok(ServerFrame::Error {
+            code,
+            message: String::from_utf8_lossy(message).into_owned(),
+        });
+    }
+
+    let event = read_u32(data, 4)?;
+    let sid_len = read_u32(data, 8)? as usize;
+    let payload_len_at = 12usize
+        .checked_add(sid_len)
+        .ok_or_else(|| truncated("session id"))?;
+    let payload_len = read_u32(data, payload_len_at)? as usize;
+    let payload_start = payload_len_at
+        .checked_add(4)
+        .ok_or_else(|| truncated("payload length"))?;
+    let payload_end = payload_start
+        .checked_add(payload_len)
+        .ok_or_else(|| truncated("payload length"))?;
+    let payload = data
+        .get(payload_start..payload_end)
+        .ok_or_else(|| truncated("payload"))?;
+
+    match msg_type {
+        MSG_TYPE_AUDIO => Ok(ServerFrame::Audio {
+            event,
+            pcm16_le: payload.to_vec(),
+        }),
+        _ => Ok(ServerFrame::Json {
+            event,
+            body: serde_json::from_slice(payload).ok(),
+        }),
+    }
+}
+
+/// The finished frame's `status_code`: `20000000` is the only success. Anything
+/// else means the audio the caller already received is not the whole answer,
+/// so the request failed as a whole.
+pub fn session_status(status_code: u32) -> Result<(), StageError> {
+    if status_code == STATUS_SUCCESS {
+        return Ok(());
+    }
+    Err(StageError::vendor(
+        PROVIDER,
+        ErrorKind::Vendor,
+        format!("the session ended with status_code {status_code}"),
+    ))
+}
+
+/// The accounting frame (D-13), `None` when the vendor sent none. A missing
+/// `text_words` counts as zero rather than dropping the whole frame — the
+/// characters are the part the cost model needs.
+pub fn usage_from(body: &Value) -> Option<TtsUsage> {
+    let usage = body.get("usage")?;
+    let number = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0) as u32;
+    Some(TtsUsage {
+        characters: number("characters"),
+        text_words: number("text_words"),
+    })
+}
+
+fn truncated(what: &str) -> StageError {
+    StageError::protocol(
+        PROVIDER,
+        format!("truncated frame: the {what} is cut short"),
+    )
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Result<u32, StageError> {
+    let end = offset.checked_add(4).ok_or_else(|| truncated("length"))?;
+    let bytes = data.get(offset..end).ok_or_else(|| truncated("length"))?;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+// ---------------------------------------------------------------------------
+// the client
+// ---------------------------------------------------------------------------
+
+/// 火山 Seed-ICL 2.0 streaming synthesis.
+#[derive(Debug, Clone)]
+pub struct VolcTts {
+    credentials: VolcCredentials,
+    endpoints: Endpoints,
+    /// The resource the most recent request used. A preset and a clone are
+    /// served by different resources, so the trace (D-16) must report the one
+    /// that actually produced the audio.
+    last_resource: Arc<Mutex<String>>,
+    marks: MarkHandle,
+}
+
+impl VolcTts {
+    pub fn new(credentials: VolcCredentials, endpoints: Endpoints) -> Self {
+        let last_resource = credentials.resource_id.clone();
+        Self {
+            credentials,
+            endpoints,
+            last_resource: Arc::new(Mutex::new(last_resource)),
+            marks: MarkHandle::disabled(),
+        }
+    }
+
+    pub fn from_env() -> Result<Self, StageError> {
+        Ok(Self::new(
+            VolcCredentials::from_env()?,
+            Endpoints::from_env(),
+        ))
+    }
+
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, StageError> {
+        let credentials = VolcCredentials::from_lookup(&lookup)?;
+        Ok(Self::new(credentials, Endpoints::from_lookup(lookup)))
+    }
+
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoints.volc_ws
+    }
+
+    fn set_last_resource(&self, resource: &str) {
+        *self
+            .last_resource
+            .lock()
+            .expect("the resource lock is never poisoned") = resource.to_string();
+    }
+}
+
+impl TtsSink for VolcTts {
+    fn provider(&self) -> &'static str {
+        PROVIDER
+    }
+
+    fn model_version(&self) -> String {
+        self.last_resource
+            .lock()
+            .expect("the resource lock is never poisoned")
+            .clone()
+    }
+
+    fn set_marks(&mut self, marks: MarkHandle) {
+        self.marks = marks;
+    }
+
+    fn synthesize(
+        &mut self,
+        text: &str,
+        voice: &VoiceRef,
+        _epoch: u64,
+    ) -> Result<TtsStream, StageError> {
+        let resource = resource_id_for(voice);
+        self.set_last_resource(resource);
+
+        let (sender, events) = mpsc::channel(EVENT_QUEUE_ITEMS);
+        tokio::spawn(run_session(RunContext {
+            url: self.endpoint().url().to_string(),
+            headers: handshake_headers(&self.credentials, voice),
+            frame: request_frame(&self.credentials.app_id, text, speaker_of(voice)),
+            marks: self.marks.clone(),
+            sender,
+        }));
+        Ok(TtsStream::new(events))
+    }
+}
+
+/// Everything one synthesis session needs. The credential travels as a header
+/// value, never in the URL, so a `StageError` cannot pick it up.
+struct RunContext {
+    url: String,
+    headers: Vec<(&'static str, String)>,
+    frame: Vec<u8>,
+    marks: MarkHandle,
+    sender: mpsc::Sender<TtsEvent>,
+}
+
+async fn run_session(context: RunContext) {
+    if let Err(error) = stream_session(&context).await {
+        // A send failure means the caller is gone; nothing left to report to.
+        let _ = context.sender.try_send(TtsEvent::Failed(error));
+    }
+}
+
+async fn stream_session(context: &RunContext) -> Result<(), StageError> {
+    let mut request = context.url.clone().into_client_request().map_err(|error| {
+        StageError::new(
+            PROVIDER,
+            ErrorKind::Config,
+            RetryClass::Terminal,
+            format!("the synthesis URL is not a valid request: {error}"),
+        )
+    })?;
+    for (name, value) in &context.headers {
+        let value = HeaderValue::from_str(value).map_err(|_| {
+            StageError::new(
+                PROVIDER,
+                ErrorKind::Config,
+                RetryClass::Client,
+                "a handshake header value contains invalid characters",
+            )
+        })?;
+        request.headers_mut().insert(*name, value);
+    }
+
+    let mut socket = match tokio_tungstenite::connect_async(request).await {
+        Ok((socket, _response)) => socket,
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            return Err(
+                StageError::http(PROVIDER, response.status().as_u16()).with_endpoint(&context.url)
+            )
+        }
+        Err(error) => {
+            return Err(
+                StageError::transport(PROVIDER, format!("connect failed: {error}"))
+                    .with_endpoint(&context.url),
+            )
+        }
+    };
+
+    socket
+        .send(Message::Binary(context.frame.clone().into()))
+        .await
+        .map_err(|error| StageError::transport(PROVIDER, format!("send failed: {error}")))?;
+
+    let mut marked = false;
+    while let Some(message) = socket.next().await {
+        let message = message
+            .map_err(|error| StageError::transport(PROVIDER, format!("socket error: {error}")))?;
+        let Message::Binary(bytes) = message else {
+            continue;
+        };
+        match parse_frame(&bytes)? {
+            ServerFrame::Error { code, message } => {
+                return Err(StageError::vendor(
+                    PROVIDER,
+                    ErrorKind::Vendor,
+                    format!("error frame {code}: {message}"),
+                ))
+            }
+            ServerFrame::Audio { event, pcm16_le } if event == EVT_TTS_RESPONSE => {
+                if !marked {
+                    context.marks.mark(Stage::TtsFirstAudio);
+                    marked = true;
+                }
+                let chunk = AudioChunk::from_pcm16_le(&pcm16_le, SAMPLE_RATE_HZ);
+                send(&context.sender, TtsEvent::Audio(chunk))?;
+            }
+            // Other audio events are not this stage's business (the experiment
+            // script logs and ignores them).
+            ServerFrame::Audio { .. } => {}
+            ServerFrame::Json {
+                event: EVT_SESSION_FINISHED,
+                body,
+            } => {
+                let Some(body) = body else {
+                    return Err(StageError::protocol(
+                        PROVIDER,
+                        "the finished frame carried no body",
+                    ));
+                };
+                let status = body
+                    .get("status_code")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default() as u32;
+                session_status(status)?;
+                send(
+                    &context.sender,
+                    TtsEvent::Finished {
+                        usage: usage_from(&body),
+                    },
+                )?;
+                // The server closes after this frame; dropping the socket here
+                // saves the close handshake from the 2 s budget.
+                return Ok(());
+            }
+            // Session-level JSON events carry nothing this stage consumes.
+            ServerFrame::Json { .. } => {}
+        }
+    }
+
+    Err(StageError::transport(
+        PROVIDER,
+        "the socket closed before SESSION_FINISHED",
+    ))
+}
+
+fn send(sender: &mpsc::Sender<TtsEvent>, event: TtsEvent) -> Result<(), StageError> {
+    sender
+        .try_send(event)
+        .map_err(|_| StageError::transport(PROVIDER, "the caller stopped reading the audio"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::config::{Endpoints, Secret};
@@ -118,7 +525,11 @@ mod tests {
         // Test 1: `msgType = (data[1] >> 4) & 0x0f` picks 0b1011 out of 0xB0.
         let pcm = [0x01u8, 0x02, 0x03, 0x04];
         let frame = server_frame(MSG_TYPE_AUDIO, EVT_TTS_RESPONSE, &pcm);
-        assert_eq!(frame[1] >> 4 & 0x0f, MSG_TYPE_AUDIO, "the nibble is the type");
+        assert_eq!(
+            frame[1] >> 4 & 0x0f,
+            MSG_TYPE_AUDIO,
+            "the nibble is the type"
+        );
         match parse_frame(&frame).expect("audio frame") {
             ServerFrame::Audio { event, pcm16_le } => {
                 assert_eq!(event, EVT_TTS_RESPONSE);
@@ -131,7 +542,11 @@ mod tests {
     #[test]
     fn a_json_frame_parses_to_its_body() {
         let body = json!({ "status_code": STATUS_SUCCESS, "usage": { "characters": 42 } });
-        let frame = server_frame(MSG_TYPE_JSON, EVT_SESSION_FINISHED, body.to_string().as_bytes());
+        let frame = server_frame(
+            MSG_TYPE_JSON,
+            EVT_SESSION_FINISHED,
+            body.to_string().as_bytes(),
+        );
         match parse_frame(&frame).expect("json frame") {
             ServerFrame::Json { event, body } => {
                 assert_eq!(event, EVT_SESSION_FINISHED);
@@ -185,7 +600,10 @@ mod tests {
         for cut in [1usize, 3, 5, frame.len() - 1] {
             let error = parse_frame(&frame[..cut]).expect_err("truncated");
             assert_eq!(error.provider, PROVIDER);
-            assert_eq!(error.retry_class, super::super::error::RetryClass::Retryable);
+            assert_eq!(
+                error.retry_class,
+                super::super::error::RetryClass::Retryable
+            );
         }
     }
 
