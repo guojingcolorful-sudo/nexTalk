@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 executing — 02-01 complete (2026-10-03)
-last_updated: "2026-10-03T14:19:23.000Z"
-last_activity: 2026-10-03 -- Completed 02-01-PLAN.md: latency measurement rig (five streaming boundaries + ≤2000ms hard gate), diagnostics panel, CI lanes
+stopped_at: Phase 2 executing — 02-02 complete (2026-10-04)
+last_updated: "2026-10-04T08:40:00.000Z"
+last_activity: 2026-10-04 -- Completed 02-02-PLAN.md: four real vendor streaming clients + offline mocks + D-07 protocol extension on both ends
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 28
-  completed_plans: 6
-  percent: 21
+  completed_plans: 7
+  percent: 25
 ---
 
 # Project State
@@ -26,29 +26,30 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 1 of 5 in current phase (02-01 complete; 02-02 next)
-Status: Phase 2 executing — latency rig landed (budget gate + diagnostics panel + CI lanes); the real provider stages are next
-Last activity: 2026-10-03 -- Completed 02-01-PLAN.md: 五边界流式瀑布 + ≤2000ms 硬断言 + 冷/热分离 + 聚合器有界环；/diagnostics 面板；CI 四车道（含 rig 冒烟车道）
+Plan: 2 of 5 in current phase (02-02 complete; 02-03 next)
+Status: Phase 2 executing — four real vendor clients (讯飞/Deepgram/DeepSeek/火山) behind typed stage contracts with offline mocks; cascade assembly (02-03) is next
+Last activity: 2026-10-04 -- Completed 02-02-PLAN.md: 三阶段契约 + 错误分类 + 固定路由；讯飞 iat（签名/wpgs/轮换）、Deepgram Nova-3（en 锁/KeepAlive）、DeepSeek SSE（\n\n 边界/温度 0/滑窗 ≤2）、火山 ICL 2.0（二进制帧/跨语种参数）；四家 mock 故障注入；D-07 协议双端扩展（confidence/trace/abstained，向后兼容）
 
-Progress: [██░░░░░░░░] 21% (6/28 plans, Phase 1/7 done)
+Progress: [███░░░░░░░] 25% (7/28 plans, Phase 1/7 done)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h active
+- Total plans completed: 7
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
-| 2. Real Cloud Pipeline + Audio Core | 1 | 5 | ~4d wall (02-01 spans an idle gap) |
+| 2. Real Cloud Pipeline + Audio Core | 2 | 5 | ~2d wall avg (both plans span idle gaps) |
 
 **Recent Trend:**
 
+- 02-02 vendor clients (2026-10-04): 12 commits (6 RED + 6 GREEN), cargo 155 tests (116 lib + 31 mock_vendors + 3 rig + 5 session_integration; 1 live variant `#[ignore]`d) + 145 vitest across 4 packages green, root `pnpm build` green, 3 auto-fixed deviations (all Rule 3 blocking) + 1 plan-accuracy note (`wire_shapes` test location), zero keys required
 - 02-01 latency rig (2026-10-03): 5 commits (2 RED + 2 GREEN + 1 chore), 50 cargo tests (43 lib + 3 rig + 4 integration; 1 live variant `#[ignore]`d) + 35 vitest (8 files) + 33 playwright green, build 420.93 kB JS / 133.45 kB gz, 2 auto-fixed deviations + 4 documented design/scope decisions (overlap-aware constructor, CI build step, requirement numbering reconciliation, no literal workspace flag in ci.yml)
 - 01-04 phone teleprompter (2026-09-11): 4 commits (1 RED + 1 GREEN), 27 vitest + 5 new playwright specs (10/10 with --repeat-each=2, 26/26 full suite) green, build 93.30 kB gz JS / 4.48 kB gz CSS, 8 auto-fixed deviations
 - 01-03 desktop surface (2026-09-10): 5 commits (1 RED + 1 GREEN), 11 vitest + 19 desktop e2e (21 total across projects) green, build 128.70 kB gz JS / 5.37 kB gz CSS, 7 auto-fixed deviations
@@ -63,6 +64,13 @@ Progress: [██░░░░░░░░] 21% (6/28 plans, Phase 1/7 done)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [02-02]: Dependency set beyond the three gate-approved packages — base64/thiserror/reqwest/uuid promoted from existing transitive deps to direct (讯飞 wire base64, StageError, SSE streaming, handshake UUID) and tokio-tungstenite gets `native-tls` (macOS Security.framework; rustls would drag in aws-lc-rs' cmake build). sha2 runs the 0.11 generation while 0.10.9 stays in the lockfile for other consumers — normal RustCrypto coexistence
+- [02-02]: 讯飞 — only `data.status == 2` is `committed` (status 0/1 always false, GOV-15's ground floor); the `sc` field is never read (reserved zero), so confidence stays `None` with `ConfidenceSource::ProxyUnavailable` until 02-03's local proxy; wpgs `rpl` rewrites the frames inside `rg` via an ordered `Vec<(sn, text)>`, not string surgery
+- [02-02]: Deepgram — `language=en` hard-locked (`multi` refused outright: it excludes Chinese and returns confident nonsense); `channel` is deliberately parsed untyped because VAD frames send an array while Results sends an object; the interviewer line emits NO `SttFirstPartial` mark (the 02-01 waterfall measures the user path only — asserted, not just commented)
+- [02-02]: DeepSeek — `\n\n` framing happens before any parse (failure case 0001 cannot recur), `take_valid_utf8` holds cross-chunk multi-byte characters, temperature 0 / R1-family refusal / ≤2-sentence window are asserted, and a malformed response is a retryable failure — never an empty translation
+- [02-02]: 火山 — the resource header follows the `VoiceRef` (Clone → `seed-icl-2.0`, Preset → `seed-tts-2.0`); `explicit_language=en` + `tone_fidelity=false` are sent explicitly, and the code documents that the 02-04 T4.0 probe is the arbiter of cross-lingual cloning (the .env.example contradiction is a known open risk, not a hidden assumption)
+- [02-02]: D-07 wire shape — the internal `ConfidenceSource` has three values but the wire union has two: `ProxyUnavailable` means *the field is absent*, so a proxy estimate can never masquerade as a vendor one (T-02-09). New subtitle fields are optional and Phase-1 shaped events still parse
+- [02-02 Requirement numbering]: AUDI-03/AUDI-04 reconciliation — GOV-05/GOV-08/GOV-18 are delivered by this plan (the governance ref doc tracks no checkboxes); the cascade requirement's acceptance (e2e ≤2s + spoken ⊆ committed) stays open because 02-02 only lands its raw materials — assembly is 02-03
 - [02-01]: The five `Stage` boundaries are **streaming TTFB** instants (first partial / first token / first audio frame / first consumed PCM), not whole-request latencies — so the vendor numbers (讯飞 0.7s / 翻译 0.223s / 火山 1.3s) enter the rig only as per-stage *service durations*. `Waterfall::from_marks` derives durations as adjacent boundary gaps (serial reading, `serial_sum == e2e`); `Waterfall::from_marks_with_durations` takes the stages' own durations so the naive 2223ms sum can be compared against a ≤2000ms stopwatch. Without both, research correction 2 is unassertable
 - [02-01]: Overlap is a *measured* quantity (`overlap_ms = serial_sum_ms - e2e_ms`), never an assumption — the rig prints it and the live variant refuses to pass without real stages
 - [02-01]: Clock injection reuses `crate::sim::source::TimeSource` (Phase 1 contract); no second clock trait. `cold` comes from the session-start path, never from an elapsed-time heuristic (T-02-02)
@@ -141,6 +149,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-10-03T14:19:23.000Z
-Stopped at: Completed 02-01-PLAN.md (five-boundary latency waterfall, ≤2000ms hard gate with stage attribution, cold/warm separation, /diagnostics panel, CI four-lane workflow) — wave 1 of Phase 2 done, 02-02 (real provider stages) is next
-Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-01-SUMMARY.md
+Last session: 2026-10-04T08:40:00.000Z
+Stopped at: Completed 02-02-PLAN.md (four real vendor clients behind typed stage contracts, offline mocks with failure injection, D-07 confidence/trace/abstained extension on both protocol ends) — 02-03 (cascade assembly: preview-vs-commit stability gate, sentence aggregation, barge-in queue, provider pre-warming) is next
+Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-02-SUMMARY.md
