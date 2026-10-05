@@ -14,8 +14,14 @@ const MAX_SECONDS = 180;
 /** The level meter's poll cadence (~10 Hz — cheap over local IPC). */
 const LEVEL_POLL_MS = 100;
 
+interface VoiceProfile {
+  speakerId: string;
+  samplePath: string;
+  status: string;
+}
+
 interface VoiceStatus {
-  profile: unknown | null;
+  profile: VoiceProfile | null;
   voice: { kind: string; name: string };
   warning: string | null;
 }
@@ -59,7 +65,8 @@ function commandMessage(error: unknown, fallback: string): string {
  * hands the saved sample to `train_voice_clone`. The header badge mirrors the
  * resolved voice from `get_voice_profile` — the same `resolve_voice()` the
  * cascade reads, so 我的克隆 is only ever shown when the clone will really
- * speak (T-02-20). Step 4's preview/retrain ships in T4.4.
+ * speak (T-02-20). Step 4 previews both fixed lines (fresh synthesis per
+ * click), retrains from the stored sample, and can delete the profile.
  */
 export default function VoiceEnrollmentPage() {
   const navigate = useNavigate();
@@ -73,6 +80,13 @@ export default function VoiceEnrollmentPage() {
   const [training, setTraining] = useState(false);
   const [trainError, setTrainError] = useState<string | null>(null);
   const [voice, setVoice] = useState<VoiceStatus | null>(null);
+  const [previewing, setPreviewing] = useState<'zh' | 'en' | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [retraining, setRetraining] = useState(false);
+  const [retrainError, setRetrainError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const elapsedRef = useRef(0);
   const phaseRef = useRef<'idle' | 'recording'>('idle');
@@ -209,6 +223,61 @@ export default function VoiceEnrollmentPage() {
       setTraining(false);
     }
   }, [take, training]);
+
+  /** Synthesize one fixed preview line with the voice resolved right now —
+   *  no caching, so a preview after 重新训练 plays the new speaker. */
+  const preview = useCallback(
+    async (kind: 'zh' | 'en') => {
+      if (previewing !== null) return;
+      setPreviewError(null);
+      setPreviewing(kind);
+      try {
+        await invoke('preview_voice', { kind });
+      } catch (error) {
+        setPreviewError(commandMessage(error, '试听播放失败，请稍后重试'));
+      } finally {
+        setPreviewing(null);
+      }
+    },
+    [previewing],
+  );
+
+  /** Re-trains from the stored sample (no re-recording). On failure the old
+   *  profile is untouched — `train_voice_clone` only saves on success. */
+  const retrain = useCallback(async () => {
+    const samplePath = voice?.profile?.samplePath;
+    if (samplePath === undefined || retraining) return;
+    setRetrainError(null);
+    setRetraining(true);
+    try {
+      const status = await invoke<VoiceStatus>('train_voice_clone', {
+        samplePath,
+        transcript: MOCK_VOICE_READING_TEXT,
+      });
+      setVoice(status);
+    } catch (error) {
+      setRetrainError(commandMessage(error, '训练失败，请稍后重试'));
+    } finally {
+      setRetraining(false);
+    }
+  }, [voice, retraining]);
+
+  /** 删除音色档案 — wipes the profile and every take (T-02-16), after a
+   *  second click confirms. */
+  const removeProfile = useCallback(async () => {
+    if (deleting) return;
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await invoke('delete_voice_profile');
+      setVoice(await invoke<VoiceStatus>('get_voice_profile'));
+    } catch (error) {
+      setDeleteError(commandMessage(error, '删除失败，请稍后重试'));
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  }, [deleting]);
 
   const forwardAction = () => {
     if (step === 0) {
@@ -381,7 +450,68 @@ export default function VoiceEnrollmentPage() {
         <div className="space-y-3">
           <h2 className="text-[15px] font-bold text-white">试听</h2>
           <p className="rounded-xl border-4 border-black bg-spaceDark p-3 text-[13px] leading-relaxed text-white">
-            音色注册完成，克隆音色已生效。试听与重训即将接入。
+            音色注册完成，克隆音色已生效。分别试听中英文示例句，确认这是你要的音色。
+          </p>
+          <div className="flex gap-2">
+            <NeobrutalismButton
+              variant="blue"
+              size="sm"
+              disabled={previewing !== null}
+              loading={previewing === 'zh'}
+              loadingLabel="正在播放…"
+              onClick={() => void preview('zh')}
+            >
+              试听中文
+            </NeobrutalismButton>
+            <NeobrutalismButton
+              variant="blue"
+              size="sm"
+              disabled={previewing !== null}
+              loading={previewing === 'en'}
+              loadingLabel="正在播放…"
+              onClick={() => void preview('en')}
+            >
+              试听英文
+            </NeobrutalismButton>
+          </div>
+          {previewError ? <ErrorBanner tone="red" title="试听失败" body={previewError} /> : null}
+          {voice?.profile ? (
+            <div className="flex items-center gap-2">
+              <NeobrutalismButton
+                variant="paper"
+                size="sm"
+                disabled={retraining || deleting}
+                loading={retraining}
+                loadingLabel="正在训练音色…"
+                onClick={() => void retrain()}
+              >
+                重新训练
+              </NeobrutalismButton>
+              {confirmingDelete ? (
+                <NeobrutalismButton
+                  variant="red"
+                  size="sm"
+                  disabled={deleting}
+                  onClick={() => void removeProfile()}
+                >
+                  确认删除？
+                </NeobrutalismButton>
+              ) : (
+                <NeobrutalismButton
+                  variant="ghost"
+                  size="sm"
+                  disabled={retraining || deleting}
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  删除音色档案
+                </NeobrutalismButton>
+              )}
+            </div>
+          ) : null}
+          {retrainError ? <ErrorBanner tone="red" title="训练失败" body={retrainError} /> : null}
+          {deleteError ? <ErrorBanner tone="red" title="删除失败" body={deleteError} /> : null}
+          <p className="text-[12px] leading-relaxed text-gray-400">
+            重新训练会复用刚才的录音重新生成音色；训练失败时保留当前音色，录音只保存在本机。
           </p>
         </div>
       ) : null}

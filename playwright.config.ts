@@ -24,9 +24,9 @@ export default defineConfig({
       // previews must not fight the desktop's production port.
       use: { baseURL: 'http://localhost:8791' },
       // The desktop surface needs the 1420 preview + Tauri IPC mock; running
-      // desktop.spec.ts or demo.spec.ts against the H5 origin would test the
-      // wrong app.
-      testIgnore: ['**/desktop.spec.ts', '**/demo.spec.ts'],
+      // desktop.spec.ts, demo.spec.ts or enrollment.spec.ts against the H5
+      // origin would test the wrong app.
+      testIgnore: ['**/desktop.spec.ts', '**/demo.spec.ts', '**/enrollment.spec.ts'],
     },
   ],
   webServer: [

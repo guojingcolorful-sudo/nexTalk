@@ -20,6 +20,7 @@ pub mod sim;
 pub mod state;
 pub mod trace;
 
+use audio::{play_pcm_blocking, resample};
 use enroll::capture::{
     finish_capture, CaptureBackend, CaptureError, CaptureGuard, CaptureSession, CpalCapture,
 };
@@ -27,7 +28,8 @@ use enroll::register::{
     next_speaker_id, train_voice_clone as run_voice_clone_training, CloneTrainError, CloneTrainer,
 };
 use enroll::voice_store::{preset_from_lookup, VoiceProfile, VoiceStore, VoiceStoreError};
-use pipeline::stages::VoiceRef;
+use pipeline::stages::volc_tts::{EXPLICIT_LANGUAGE, SAMPLE_RATE_HZ};
+use pipeline::stages::{ErrorKind, StageError, TtsEvent, TtsSink, VoiceRef, VolcTts};
 use state::SessionState;
 use trace::jsonl::UsageSummary;
 use trace::{CostReport, MONTHLY_QUOTA_MINUTES};
@@ -247,6 +249,21 @@ impl From<VoiceStoreError> for VoiceCommandErrorDto {
     }
 }
 
+impl From<StageError> for VoiceCommandErrorDto {
+    fn from(error: StageError) -> Self {
+        let message = match error.kind {
+            ErrorKind::Config | ErrorKind::Auth => {
+                "缺少供应商凭据或凭据无效，请检查火山语音配置".to_string()
+            }
+            _ => "试听合成失败，请稍后重试".to_string(),
+        };
+        Self {
+            code: "preview".to_string(),
+            message,
+        }
+    }
+}
+
 impl VoiceCommandErrorDto {
     fn internal(message: impl Into<String>) -> Self {
         Self {
@@ -384,6 +401,87 @@ fn get_voice_profile(app: tauri::AppHandle) -> Result<VoiceStatusDto, VoiceComma
     Ok(voice_status(&VoiceStore::new(&root)))
 }
 
+/// The two fixed preview lines (T4.4) — constants so the ear compares the
+/// same sentences across takes.
+pub const PREVIEW_ZH: &str = "这是我克隆音色的试听，希望能保持自然的语气。";
+pub const PREVIEW_EN: &str = "This is my cloned voice speaking English.";
+
+/// What one preview played, and with which voice — the frontend shows the
+/// playing state and can tell a post-retrain preview from the pre-retrain one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewVoiceDto {
+    voice: VoiceRefDto,
+    bytes: u64,
+    duration_ms: u64,
+}
+
+/// `preview_voice` — synthesize one fixed sentence with the currently resolved
+/// voice and play it through the default output device.
+///
+/// The voice is read at call time (`resolve_voice` semantics, T4.3), so a
+/// preview after a retrain always reflects the newest speaker — nothing is
+/// cached. Playback is the minimal T4.1 helper; 02-05 replaces it with the
+/// full playout chain (see `audio::play_pcm_blocking`).
+#[tauri::command]
+async fn preview_voice(
+    app: tauri::AppHandle,
+    kind: String,
+) -> Result<PreviewVoiceDto, VoiceCommandErrorDto> {
+    let (text, language) = match kind.as_str() {
+        "zh" => (PREVIEW_ZH, None),
+        "en" => (PREVIEW_EN, Some(EXPLICIT_LANGUAGE)),
+        other => {
+            return Err(VoiceCommandErrorDto::internal(format!(
+                "未知的试听语种：{other}"
+            )))
+        }
+    };
+
+    let root = app_root(&app)?;
+    let store = VoiceStore::new(&root);
+    let preset = preset_from_lookup(|name| std::env::var(name).ok());
+    let voice = store.resolve(&preset).voice;
+
+    let mut tts = VolcTts::from_lookup(|name| std::env::var(name).ok())?;
+    if language.is_none() {
+        // The Chinese line rides the vendor's same-language defaults — the
+        // exact params the T4.0 probe sent for its clone-zh reference.
+        tts = tts.same_language();
+    }
+    let mut stream = tts.synthesize(text, &voice, 0)?;
+
+    let mut pcm: Vec<f32> = Vec::new();
+    loop {
+        match stream.next().await {
+            Some(TtsEvent::Audio(chunk)) => pcm.extend_from_slice(&chunk.pcm),
+            Some(TtsEvent::Finished { .. }) => break,
+            Some(TtsEvent::Failed(error)) => return Err(error.into()),
+            None => return Err(VoiceCommandErrorDto::internal("试听合成中断，请稍后重试")),
+        }
+    }
+
+    let samples = resample::f32_to_pcm16(&pcm);
+    let bytes = (samples.len() * 2) as u64;
+    let duration_ms = pcm.len() as u64 * 1_000 / SAMPLE_RATE_HZ as u64;
+    // The preview blocks for the utterance's duration; keep it off the async
+    // worker threads.
+    let played =
+        tauri::async_runtime::spawn_blocking(move || play_pcm_blocking(&samples, SAMPLE_RATE_HZ))
+            .await
+            .map_err(|error| VoiceCommandErrorDto::internal(format!("试听播放失败：{error}")))?;
+    played.map_err(|error| VoiceCommandErrorDto {
+        code: "playback".to_string(),
+        message: error.to_string(),
+    })?;
+
+    Ok(PreviewVoiceDto {
+        voice: VoiceRefDto::of(&voice),
+        bytes,
+        duration_ms,
+    })
+}
+
 /// `delete_voice_profile` — wipe the profile and every enrollment take
 /// (T-02-16). Refused while a take is being recorded: the wipe must not race
 /// the capture that is still writing.
@@ -427,7 +525,8 @@ pub fn run() {
             stop_enrollment_recording,
             train_voice_clone,
             get_voice_profile,
-            delete_voice_profile
+            delete_voice_profile,
+            preview_voice
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);

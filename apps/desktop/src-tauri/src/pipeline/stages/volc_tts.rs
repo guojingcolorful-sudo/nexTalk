@@ -122,24 +122,40 @@ pub fn speaker_of(voice: &VoiceRef) -> &str {
 /// sent: the cross-lingual path must never depend on a server default (see the
 /// module docs for the risk that path carries).
 pub fn request_body(uid: &str, text: &str, speaker: &str) -> Value {
+    request_body_for(uid, text, speaker, Some(EXPLICIT_LANGUAGE))
+}
+
+/// The body with an explicit language choice: `Some(language)` is the
+/// cross-lingual path (`explicit_language` + `tone_fidelity: false`);
+/// `None` omits both keys and leaves the vendor's same-language defaults
+/// alone — the params the T4.0 probe's `clone-zh` reference used.
+pub fn request_body_for(uid: &str, text: &str, speaker: &str, language: Option<&str>) -> Value {
+    let mut audio_params = json!({
+        "format": AUDIO_FORMAT,
+        "sample_rate": SAMPLE_RATE_HZ,
+    });
+    if let Some(language) = language {
+        audio_params["explicit_language"] = json!(language);
+        audio_params["tone_fidelity"] = json!(TONE_FIDELITY);
+    }
     json!({
         "user": { "uid": uid },
         "req_params": {
             "text": text,
             "speaker": speaker,
-            "audio_params": {
-                "format": AUDIO_FORMAT,
-                "sample_rate": SAMPLE_RATE_HZ,
-                "explicit_language": EXPLICIT_LANGUAGE,
-                "tone_fidelity": TONE_FIDELITY,
-            }
+            "audio_params": audio_params,
         }
     })
 }
 
 /// `[0x11, 0x10, 0x10, 0x00] + u32be(len) + JSON` — the request frame.
 pub fn request_frame(uid: &str, text: &str, speaker: &str) -> Vec<u8> {
-    let payload = request_body(uid, text, speaker).to_string();
+    request_frame_for(uid, text, speaker, Some(EXPLICIT_LANGUAGE))
+}
+
+/// The frame for one language choice (see [`request_body_for`]).
+pub fn request_frame_for(uid: &str, text: &str, speaker: &str, language: Option<&str>) -> Vec<u8> {
+    let payload = request_body_for(uid, text, speaker, language).to_string();
     let mut frame = Vec::with_capacity(FRAME_HEADER.len() + 4 + payload.len());
     frame.extend_from_slice(&FRAME_HEADER);
     frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -288,6 +304,10 @@ pub struct VolcTts {
     /// served by different resources, so the trace (D-16) must report the one
     /// that actually produced the audio.
     last_resource: Arc<Mutex<String>>,
+    /// The synthesis language choice. The cascade's text is always English
+    /// (translation output) → the cross-lingual path is the default; the
+    /// enrollment preview's Chinese sample opts out via [`Self::same_language`].
+    language: Option<String>,
     marks: MarkHandle,
 }
 
@@ -298,8 +318,17 @@ impl VolcTts {
             credentials,
             endpoints,
             last_resource: Arc::new(Mutex::new(last_resource)),
+            language: Some(EXPLICIT_LANGUAGE.to_string()),
             marks: MarkHandle::disabled(),
         }
+    }
+
+    /// Synthesize in the voice's own language: no `explicit_language`, no
+    /// `tone_fidelity` — the vendor defaults, exactly what the T4.0 probe sent
+    /// for its `clone-zh` reference take.
+    pub fn same_language(mut self) -> Self {
+        self.language = None;
+        self
     }
 
     pub fn from_env() -> Result<Self, StageError> {
@@ -355,7 +384,12 @@ impl TtsSink for VolcTts {
         tokio::spawn(run_session(RunContext {
             url: self.endpoint().url().to_string(),
             headers: handshake_headers(&self.credentials, voice),
-            frame: request_frame(&self.credentials.app_id, text, speaker_of(voice)),
+            frame: request_frame_for(
+                &self.credentials.app_id,
+                text,
+                speaker_of(voice),
+                self.language.as_deref(),
+            ),
             marks: self.marks.clone(),
             sender,
         }));
@@ -624,6 +658,18 @@ mod tests {
         // The two keys the cross-lingual path depends on must be explicit.
         assert_eq!(params["audio_params"]["explicit_language"], "en");
         assert_eq!(params["audio_params"]["tone_fidelity"], json!(false));
+    }
+
+    #[test]
+    fn the_same_language_body_leaves_the_cross_lingual_keys_out() {
+        // The T4.0 probe's clone-zh reference take used no language params;
+        // the enrollment preview's Chinese sample sends exactly the same.
+        let body = request_body_for("app-1", "这是试听。", "S_9k337yqg2", None);
+        let audio = &body["req_params"]["audio_params"];
+        assert_eq!(audio["format"], "pcm");
+        assert_eq!(audio["sample_rate"], json!(24_000));
+        assert!(audio.get("explicit_language").is_none(), "{audio}");
+        assert!(audio.get("tone_fidelity").is_none(), "{audio}");
     }
 
     #[test]
