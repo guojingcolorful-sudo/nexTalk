@@ -878,6 +878,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The queue is BOUNDED (failure-case 0016 队列无界增长): a full queue
+    /// refuses the record and counts it — the producer never blocks on disk,
+    /// and the loss is visible via `dropped_records()` instead of an unbounded
+    /// backlog growing in memory. On this current-thread runtime the writer
+    /// task cannot drain while the test body runs, so the two-slot queue
+    /// deterministically refuses the third record.
+    #[tokio::test]
+    async fn a_full_queue_drops_counted_records_instead_of_blocking() {
+        let root = tmp_root("bounded");
+        let mut config = TraceWriterConfig::new(&root, "sess-bounded", TS);
+        config.queue_capacity = 2;
+        let writer = TraceWriter::open(config).expect("writer opens");
+
+        let mut accepted = Vec::new();
+        for i in 0..3u64 {
+            let record = TraceRecord::from_event("sess-bounded", TS + i, &traced_final(None))
+                .expect("record");
+            accepted.push(writer.append(record));
+        }
+        assert_eq!(
+            accepted,
+            vec![true, true, false],
+            "a two-slot queue admits exactly two"
+        );
+        assert_eq!(
+            writer.dropped_records(),
+            1,
+            "the refusal is counted, not silent"
+        );
+
+        writer.flush().await.expect("flush");
+        assert_eq!(
+            all_lines(&root).len(),
+            2,
+            "only the queued records landed; the drop never blocked the producer"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Test 4 (D-05 rolling): a session that outgrows the threshold rolls into
     /// `-2`, `-3`, … and no line is lost in the roll.
     #[tokio::test]
