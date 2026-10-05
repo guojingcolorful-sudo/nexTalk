@@ -165,6 +165,18 @@ struct CaptureResultDto {
     bytes: u64,
 }
 
+/// `enrollment_level` — the newest input peak of the running take (0.0–1.0),
+/// polled by the wizard's level meter. `None` means no take is active.
+#[tauri::command]
+fn enrollment_level(
+    state: tauri::State<'_, EnrollmentState>,
+) -> Result<Option<f32>, CaptureErrorDto> {
+    let active = state.active.lock().map_err(|_| poisoned_state())?;
+    Ok(active
+        .as_ref()
+        .map(|enrollment| enrollment.session.level().latest()))
+}
+
 /// `stop_enrollment_recording` — stop the take, run the guard checks, and write
 /// `<app data>/enroll/<sessionId>.wav` (16 kHz mono PCM16, owner-only).
 #[tauri::command]
@@ -411,6 +423,7 @@ pub fn run() {
             stop_session,
             usage_summary,
             start_enrollment_recording,
+            enrollment_level,
             stop_enrollment_recording,
             train_voice_clone,
             get_voice_profile,

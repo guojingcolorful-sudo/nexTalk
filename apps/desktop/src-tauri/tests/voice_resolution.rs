@@ -320,10 +320,14 @@ async fn resolve_voice_never_returns_a_deleted_clone() {
     );
 }
 
-/// Test 6: an unregistered user completes a whole conversation — two
-/// fragments, both spoken, on the preset voice (mock stages).
+/// Test 6: an unregistered user completes a whole conversation — both
+/// fragments of the story close, both translate and speak, and every
+/// synthesis uses the preset voice (mock stages).
+///
+/// The double replays its script on every `start`, so one drive carries the
+/// whole two-fragment conversation; nothing is cached from the previous run.
 #[tokio::test]
-async fn an_unregistered_user_completes_a_full_conversation_on_mock_stages() {
+async fn resolve_voice_runs_a_whole_unregistered_conversation_on_mock_stages() {
     let root = temp_root("full-conversation");
     let stt = ScriptedStt::new(vec![
         committed_final("第一句话"),
@@ -335,23 +339,19 @@ async fn an_unregistered_user_completes_a_full_conversation_on_mock_stages() {
         ScriptedTranslator::one_fragment("a complete sentence"),
     );
 
-    let first = cascade
+    let outcomes = cascade
         .drive_user_track(&SegmentScript {
             epoch: 1,
             frames: speech_frames(0, 400),
         })
         .await
-        .expect("first exchange");
-    let second = cascade
-        .drive_user_track(&SegmentScript {
-            epoch: 2,
-            frames: speech_frames(700, 400),
-        })
-        .await
-        .expect("second exchange");
+        .expect("an unregistered conversation must run end to end");
 
-    assert_eq!(first.len() + second.len(), 2, "two exchanges closed");
-    assert!(first[0].translated && second[0].translated);
+    assert_eq!(outcomes.len(), 2, "both exchanges closed");
+    assert!(
+        outcomes.iter().all(|outcome| outcome.translated),
+        "both exchanges were translated: {outcomes:?}"
+    );
     assert_eq!(playout.played().len(), 2, "both answers were spoken");
     let calls = tts.calls();
     assert_eq!(calls.len(), 2);

@@ -2,17 +2,18 @@
 //!
 //! Flow: [`CaptureSession::begin`] starts a [`CaptureBackend`], the realtime
 //! callback copies each block into a bounded queue ([`CaptureSink`], T-02-19),
-//! [`finish_capture`] stops the backend, drains, drops the first
-//! [`STARTUP_DISCARD_MS`] (device startup click), measures the speech/silence
-//! split with the 02-03 energy VAD, validates against [`CaptureGuard`], and
-//! writes the 16 kHz mono PCM16 WAV under `<root>/enroll/<sessionId>.wav` with
-//! owner-only permissions (T-02-16).
+//! a drain thread consumes that queue continuously (publishing the newest peak
+//! for the level meter), [`finish_capture`] stops the backend, drains, drops
+//! the first [`STARTUP_DISCARD_MS`] (device startup click), measures the
+//! speech/silence split with the 02-03 energy VAD, validates against
+//! [`CaptureGuard`], and writes the 16 kHz mono PCM16 WAV under
+//! `<root>/enroll/<sessionId>.wav` with owner-only permissions (T-02-16).
 //!
 //! The guard's Chinese messages are the UI copy; [`CaptureError::code`] is the
 //! stable machine-readable twin for the frontend.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
 
@@ -500,23 +501,58 @@ impl CaptureBackend for ScriptedCapture {
 // session + finish
 // ---------------------------------------------------------------------------
 
-/// One in-flight (or just-finished) take: the consumer end of the block queue.
+/// A lock-free read of the most recent input peak (`|sample|`, 0.0–1.0), for
+/// the wizard's level meter. Written by the drain thread only — never by the
+/// realtime callback (T-02-19).
+#[derive(Clone, Default)]
+pub struct LevelHandle(Arc<AtomicU32>);
+
+impl LevelHandle {
+    /// The peak of the newest drained block (0.0 before the first block).
+    pub fn latest(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    fn publish(&self, peak: f32) {
+        self.0.store(peak.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// One in-flight (or just-finished) take: the consumer thread draining the
+/// block queue, plus the level the meter reads.
+///
+/// The drain is a thread, not a `try_iter` at stop time: the realtime queue
+/// holds [`CAPTURE_QUEUE_BLOCKS`] blocks (≈ 2.6 s), so a take longer than that
+/// would overflow, count drops, and fail the guard as "too short" — every real
+/// 1–3 minute take must keep the queue moving (T4.3 fix).
 pub struct CaptureSession {
-    receiver: Receiver<Vec<f32>>,
     sample_rate: u32,
+    drain: Option<std::thread::JoinHandle<Vec<f32>>>,
+    level: LevelHandle,
 }
 
 impl CaptureSession {
-    /// Start `backend` and take ownership of its block queue.
+    /// Start `backend`, then start draining its block queue continuously.
     pub fn begin(backend: &mut dyn CaptureBackend) -> Result<Self, CaptureError> {
         let sample_rate = backend.sample_rate();
         if sample_rate == 0 {
             return Err(CaptureError::Device("设备采样率无效".to_string()));
         }
         let receiver = backend.start()?;
+        let level = LevelHandle::default();
+        let thread_level = level.clone();
+        let drain = std::thread::spawn(move || {
+            let mut samples: Vec<f32> = Vec::new();
+            while let Ok(block) = receiver.recv() {
+                thread_level.publish(block.iter().fold(0.0f32, |peak, s| peak.max(s.abs())));
+                samples.extend_from_slice(&block);
+            }
+            samples
+        });
         Ok(Self {
-            receiver,
             sample_rate,
+            drain: Some(drain),
+            level,
         })
     }
 
@@ -524,14 +560,18 @@ impl CaptureSession {
         self.sample_rate
     }
 
-    /// Every block queued so far, in order. Call after the backend stopped; at
-    /// most the one block in flight when the device was torn down is lost.
+    /// The level meter's handle (cheap clone; reads the newest block's peak).
+    pub fn level(&self) -> LevelHandle {
+        self.level.clone()
+    }
+
+    /// Every block the backend produced, in order. Call after the backend
+    /// stopped; the drain thread ends when the queue disconnects.
     pub fn drain_samples(&mut self) -> Vec<f32> {
-        let mut samples = Vec::new();
-        for block in self.receiver.try_iter() {
-            samples.extend_from_slice(&block);
+        match self.drain.take() {
+            Some(drain) => drain.join().unwrap_or_default(),
+            None => Vec::new(),
         }
-        samples
     }
 }
 
@@ -695,6 +735,14 @@ mod tests {
         drop(receiver);
         sink.push(&[0.0]); // disconnected
         assert_eq!(sink.overflows(), 2);
+    }
+
+    #[test]
+    fn the_level_handle_round_trips_a_peak() {
+        let level = LevelHandle::default();
+        assert_eq!(level.latest(), 0.0, "nothing published yet");
+        level.publish(0.42);
+        assert!((level.latest() - 0.42).abs() < 1e-6);
     }
 
     #[test]

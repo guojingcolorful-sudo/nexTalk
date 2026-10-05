@@ -291,6 +291,23 @@ impl VoiceStore {
             }
         }
     }
+
+    /// Just the voice, preset resolved from the environment — the plan's
+    /// `resolve_voice()` convenience over [`VoiceStore::resolve`].
+    pub fn resolve_voice(&self) -> VoiceRef {
+        self.resolve(&preset_from_lookup(|name| std::env::var(name).ok()))
+            .voice
+    }
+}
+
+/// A per-fragment voice source for the cascade (02-04 T4.3).
+///
+/// The returned closure reads the store on **every** call: a training run
+/// that finishes mid-session applies to the next fragment, and a deleted
+/// profile stops speaking at once.
+pub fn voice_resolver(root: impl Into<PathBuf>) -> impl Fn() -> VoiceRef + Send + Sync + 'static {
+    let store = VoiceStore::new(root);
+    move || store.resolve_voice()
 }
 
 /// The preset voice, honouring the `VOLC_TTS_VOICE` override.

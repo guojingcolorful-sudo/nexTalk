@@ -25,7 +25,7 @@
 //!    deadline math stay in `budget.rs` — a stage never guesses them.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -639,12 +639,15 @@ impl Translator for ScriptedTranslator {
     }
 }
 
-/// Deterministic TTS double: emits a fixed number of silent chunks.
+/// Deterministic TTS double: emits a fixed number of silent chunks and
+/// records every `(text, voice)` pair it was asked to synthesise (the voice
+/// resolution suite reads that log).
 #[derive(Debug, Clone)]
 pub struct ScriptedTts {
     chunks: Vec<AudioChunk>,
     usage: Option<TtsUsage>,
     marks: MarkHandle,
+    calls: Arc<Mutex<Vec<(String, VoiceRef)>>>,
 }
 
 impl Default for ScriptedTts {
@@ -653,6 +656,7 @@ impl Default for ScriptedTts {
             chunks: vec![AudioChunk::new(vec![0.0; 240], 24_000)],
             usage: None,
             marks: MarkHandle::disabled(),
+            calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -663,6 +667,15 @@ impl ScriptedTts {
             chunks,
             usage: None,
             marks: MarkHandle::disabled(),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Every `(text, voice)` the cascade handed to `synthesize`, in order.
+    pub fn calls(&self) -> Vec<(String, VoiceRef)> {
+        match self.calls.lock() {
+            Ok(calls) => calls.clone(),
+            Err(_) => Vec::new(),
         }
     }
 }
@@ -682,10 +695,13 @@ impl TtsSink for ScriptedTts {
 
     fn synthesize(
         &mut self,
-        _text: &str,
-        _voice: &VoiceRef,
+        text: &str,
+        voice: &VoiceRef,
         _epoch: u64,
     ) -> Result<TtsStream, StageError> {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push((text.to_string(), voice.clone()));
+        }
         let (events_tx, events_rx) = mpsc::channel(EVENT_QUEUE_ITEMS);
         let chunks = self.chunks.clone();
         let usage = self.usage;

@@ -50,8 +50,18 @@ use crate::pipeline::validate::{
 };
 use crate::sim::source::TimeSource;
 
-/// Preset voice used until 02-04 resolves the user's clone per fragment.
+/// Preset voice used when no per-fragment voice source is attached (02-03's
+/// default; 02-04 T4.3 attaches the real resolver via [`Cascade::with_voice_source`]).
 pub const DEFAULT_VOICE_PRESET: &str = "nextalk-default";
+
+/// Resolves the voice for **each fragment** (02-04 T4.3).
+///
+/// Deliberately a per-call closure rather than a value cached at assembly:
+/// training that finishes mid-session must take effect on the next sentence
+/// (no restart), and a deleted profile must stop speaking immediately.
+/// Production attaches [`crate::enroll::voice_store::voice_resolver`]; the
+/// default keeps the 02-03 preset so no test needs a store.
+pub type VoiceSource = Arc<dyn Fn() -> VoiceRef + Send + Sync>;
 
 // ------------------------------------------------------------------ the gate ---
 
@@ -379,6 +389,9 @@ pub struct Cascade<S: SttSource = VendorStt> {
     /// One circuit per provider (D-10): a sick vendor degrades its own stage
     /// without touching the others.
     breakers: BreakerSet,
+    /// Which voice the next fragment speaks with (02-04 T4.3), asked once per
+    /// fragment — never cached across fragments.
+    voice: VoiceSource,
 }
 
 impl<S: SttSource> fmt::Debug for Cascade<S> {
@@ -443,12 +456,25 @@ impl<S: SttSource> Cascade<S> {
             ledger: CascadeLedger::default(),
             waterfalls: Vec::new(),
             breakers: BreakerSet::new(),
+            voice: Arc::new(|| VoiceRef::Preset(DEFAULT_VOICE_PRESET.to_string())),
         }
     }
 
     pub fn with_config(mut self, config: CascadeConfig) -> Self {
         self.segmenter = Segmenter::with_config(config.segment);
         self.config = config;
+        self
+    }
+
+    /// Attach the per-fragment voice source (02-04 T4.3). Production passes
+    /// [`crate::enroll::voice_store::voice_resolver`] over the app data dir;
+    /// the source is asked once per fragment, so a profile that appears or
+    /// disappears mid-session takes effect on the next sentence.
+    pub fn with_voice_source(
+        mut self,
+        voice: impl Fn() -> VoiceRef + Send + Sync + 'static,
+    ) -> Self {
+        self.voice = Arc::new(voice);
         self
     }
 
@@ -695,7 +721,10 @@ impl<S: SttSource> Cascade<S> {
         // The invariant witness is recorded at the single hand-off point.
         self.ledger.tts_inputs.push(english.clone());
 
-        let voice = VoiceRef::Preset(DEFAULT_VOICE_PRESET.to_string());
+        // 02-04 T4.3: the voice is resolved here — once per fragment, not at
+        // assembly — so training completing mid-session speaks from the next
+        // sentence on.
+        let voice = (self.voice)();
         let mut tts = self.tts.synthesize(&english, &voice, epoch)?;
         outcome.tts_calls = 1;
         while let Some(event) = tts.next().await {

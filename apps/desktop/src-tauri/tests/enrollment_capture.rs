@@ -458,3 +458,100 @@ fn the_sample_lands_under_enroll_with_owner_only_permissions() {
         assert!(!text.contains(needle), "{needle} leaked into the sample");
     }
 }
+
+// ---------------------------------------------------------------------------
+// T4.3 additions — the drain thread and the level meter feed
+// ---------------------------------------------------------------------------
+
+/// A backend that mimics CoreAudio's bounded queue: a four-block channel and a
+/// producer that keeps delivering (a blocked `send` is the device still
+/// providing audio). A scripted [`ScriptedCapture`] sizes its channel to the
+/// whole script, so only this shape exposes the realtime mismatch: the queue
+/// holds ~2.6 s while a real take is 1–3 minutes.
+struct TightQueueBackend {
+    blocks: Vec<Vec<f32>>,
+    sample_rate: u32,
+    producer: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TightQueueBackend {
+    fn new(sample_rate: u32, blocks: Vec<Vec<f32>>) -> Self {
+        Self {
+            blocks,
+            sample_rate,
+            producer: None,
+        }
+    }
+}
+
+impl CaptureBackend for TightQueueBackend {
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn start(&mut self) -> Result<std::sync::mpsc::Receiver<Vec<f32>>, CaptureError> {
+        let (sender, receiver) = sync_channel(4);
+        let blocks = std::mem::take(&mut self.blocks);
+        self.producer = Some(std::thread::spawn(move || {
+            for block in blocks {
+                if sender.send(block).is_err() {
+                    break;
+                }
+            }
+        }));
+        Ok(receiver)
+    }
+
+    fn stop(&mut self) -> Result<(), CaptureError> {
+        // Tear-down does not wait for the producer, like a stopped CoreAudio
+        // stream; the consumer keeps what is already in flight.
+        Ok(())
+    }
+}
+
+/// A take longer than the realtime queue must arrive in full: the session
+/// drains continuously, so every real (≥ 60 s) take passes the guard instead
+/// of losing its tail to the bounded queue.
+#[test]
+fn a_take_longer_than_the_realtime_queue_is_drained_in_full() {
+    let root = temp_root("drained");
+    let mut backend = TightQueueBackend::new(RATE, speech(60));
+    let session = CaptureSession::begin(&mut backend).expect("the stream starts");
+    let level = session.level();
+
+    let result = finish_capture(
+        session,
+        &mut backend,
+        &CaptureGuard::default(),
+        &root,
+        "drained",
+    )
+    .expect("a full 60 s take must pass the guard, not lose its tail");
+
+    let expected = 60.0 - STARTUP_DISCARD_MS as f64 / 1000.0;
+    assert!(
+        (result.duration_s - expected).abs() < 0.2,
+        "reported {} s, expected ≈ {expected} s",
+        result.duration_s
+    );
+    // The meter saw the tone: the newest drained block publishes its peak.
+    assert!((level.latest() - 0.3).abs() < 0.05, "{}", level.latest());
+}
+
+/// Silence publishes a zero level — the meter's resting state.
+#[test]
+fn the_level_handle_reports_silence_as_zero() {
+    let root = temp_root("level-zero");
+    let mut backend = ScriptedCapture::new(RATE, silence(1));
+    let session = CaptureSession::begin(&mut backend).expect("the stream starts");
+    let level = session.level();
+
+    let guard = CaptureGuard {
+        min_secs: 0,
+        max_silence_ratio: 1.0,
+        min_speech_secs: 0,
+        ..CaptureGuard::default()
+    };
+    let _ = finish_capture(session, &mut backend, &guard, &root, "level-zero");
+    assert_eq!(level.latest(), 0.0);
+}
