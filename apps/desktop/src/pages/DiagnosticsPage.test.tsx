@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import DiagnosticsPage from './DiagnosticsPage';
 
@@ -76,6 +76,12 @@ describe('DiagnosticsPage 成本面板', () => {
     invokeMock.mockReset();
     listenMock.mockReset();
     listenMock.mockResolvedValue(() => {});
+  });
+
+  // 本仓库 vitest 未开 globals，RTL 自动 cleanup 不生效——显式清理，避免
+  // 上一个用例的 DOM 泄漏进下一个用例的断言。
+  afterEach(() => {
+    cleanup();
   });
 
   it('renders the three staged costs, the total and the over-budget state', async () => {

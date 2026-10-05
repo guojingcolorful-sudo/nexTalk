@@ -12,6 +12,7 @@
 //! exits on its next tick, which is how stop/restart tears a session down
 //! without any cancellation plumbing.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -22,6 +23,8 @@ use tokio::sync::broadcast;
 use crate::audio::playout::PlayoutQueue;
 use crate::lan::server::{LanguagePref, ServerEvent, SessionStatus};
 use crate::sim::source::SimSource;
+use crate::trace::jsonl::{TraceRecord, TraceWriter, TraceWriterConfig};
+use crate::trace::UsageSummary;
 
 /// Pairing token entropy: 16 bytes = 128 bits → 32 hex chars (T-01-01).
 const TOKEN_BYTES: usize = 16;
@@ -59,6 +62,12 @@ struct SessionStateInner {
     /// Tauri handle used to mirror events onto the desktop webviews. `None` in
     /// cargo tests, where emission is skipped but state still changes.
     app_handle: Option<tauri::AppHandle>,
+    /// The `traces` root (set once from `setup`); tracing is off until then,
+    /// so cargo tests and headless runs write nothing.
+    trace_dir: Option<PathBuf>,
+    /// The live session's single trace writer (T3.7). `None` between sessions
+    /// and whenever [`Self::trace_dir`] is unset.
+    trace_writer: Option<TraceWriter>,
 }
 
 impl SessionState {
@@ -83,6 +92,8 @@ impl SessionState {
                 port,
                 sim: Arc::new(Mutex::new(SimSource::new())),
                 app_handle: None,
+                trace_dir: None,
+                trace_writer: None,
             })),
             broadcast_tx,
             connected_clients: Arc::new(AtomicUsize::new(0)),
@@ -194,16 +205,103 @@ impl SessionState {
     }
 
     /// Appends an event to the timeline and broadcasts it to every subscriber
-    /// (LAN clients, Tauri-side forwards). Broadcast errors are expected when
-    /// no client is connected and are intentionally ignored — the timeline
-    /// remains the source of truth for later replays.
+    /// (LAN clients, Tauri-side forwards). A closed sentence is simultaneously
+    /// handed to the session's trace writer (T3.7) — the timeline and the
+    /// JSONL file are one model, so there is no second instrumentation path
+    /// (D-18/GOV-10). Broadcast errors are expected when no client is
+    /// connected and are intentionally ignored — the timeline remains the
+    /// source of truth for later replays.
     pub fn append_event(&self, event: ServerEvent) {
+        let writer = {
+            let mut inner = self.inner.write().expect("state lock poisoned");
+            inner.timeline.push(event.clone());
+            inner.trace_writer.clone()
+        };
+        if let Some(writer) = writer {
+            if let Some(record) = TraceRecord::from_event(
+                writer.session_id(),
+                crate::trace::unix_millis_now(),
+                &event,
+            ) {
+                writer.append(record);
+            }
+        }
+        let _ = self.broadcast_tx.send(event);
+    }
+
+    /// Sets the trace root — called once from `setup` with the app data dir.
+    /// Until it runs no file is written: tracing is supplementary, never a
+    /// precondition for a session.
+    pub fn set_trace_dir(&self, dir: impl Into<PathBuf>) {
+        self.inner.write().expect("state lock poisoned").trace_dir = Some(dir.into());
+    }
+
+    /// The live session's trace writer (diagnostics and tests). `None` outside
+    /// a session or when tracing is unconfigured.
+    pub fn trace_writer(&self) -> Option<TraceWriter> {
+        self.inner
+            .read()
+            .expect("state lock poisoned")
+            .trace_writer
+            .clone()
+    }
+
+    /// The current month's usage, read from the JSONL traces on demand
+    /// (T3.7/D-13) — there is no counter that could drift from the files.
+    pub fn usage_summary(&self) -> UsageSummary {
+        let dir = self
+            .inner
+            .read()
+            .expect("state lock poisoned")
+            .trace_dir
+            .clone();
+        match dir {
+            Some(dir) => {
+                UsageSummary::load(&dir, crate::trace::unix_millis_now()).unwrap_or_else(|err| {
+                    eprintln!("usage summary unavailable: {err}");
+                    UsageSummary::default()
+                })
+            }
+            None => UsageSummary::default(),
+        }
+    }
+
+    /// Opens the session's writer; a disk failure degrades to "no trace file"
+    /// — the session itself never fails because tracing did.
+    fn open_trace_writer(&self, epoch: u64) {
+        let dir = self
+            .inner
+            .read()
+            .expect("state lock poisoned")
+            .trace_dir
+            .clone();
+        let Some(dir) = dir else {
+            return;
+        };
+        let start_time_ms = crate::trace::unix_millis_now();
+        let config = TraceWriterConfig::new(
+            dir,
+            format!("session-{epoch}-{start_time_ms}"),
+            start_time_ms,
+        );
+        match TraceWriter::open(config) {
+            Ok(writer) => {
+                self.inner
+                    .write()
+                    .expect("state lock poisoned")
+                    .trace_writer = Some(writer);
+            }
+            Err(err) => eprintln!("trace writer unavailable, continuing without: {err}"),
+        }
+    }
+
+    /// Closes the session's trace: the writer drops, its queued records drain
+    /// into the file and the task exits (T3.7).
+    fn close_trace_writer(&self) {
         self.inner
             .write()
             .expect("state lock poisoned")
-            .timeline
-            .push(event.clone());
-        let _ = self.broadcast_tx.send(event);
+            .trace_writer = None;
     }
 
     /// Publishes one event to every surface: the timeline (resume replay), the
@@ -252,6 +350,9 @@ impl SessionState {
         self.playout.begin_session();
         self.replace_sim();
         self.reset_timeline();
+        // The durable trace opens with the session (T3.7): everything appended
+        // from here on can land in `traces/<date>/<session>.jsonl`.
+        self.open_trace_writer(epoch);
         // Session identity goes on the wire before any content: both desktop
         // webviews and every paired phone drop their cursors and rendered
         // events on it, so the restarted session can never be mistaken for a
@@ -270,6 +371,9 @@ impl SessionState {
         // playout generation moves, so an in-flight chunk from the stopped
         // session can never be played after the fact (T3.3).
         self.playout.end_session();
+        // The durable trace closes with it: the writer drains what is queued
+        // and exits — no line lands after the session ended (T3.7).
+        self.close_trace_writer();
         self.publish_status(SessionStatus::Ended);
     }
 
@@ -757,7 +861,10 @@ mod tests {
     /// Every line under `root/<date>/*.jsonl` (the session's durable trace).
     fn trace_lines(root: &std::path::Path) -> Vec<String> {
         let mut lines = Vec::new();
-        for date in std::fs::read_dir(root).expect("trace root exists").flatten() {
+        for date in std::fs::read_dir(root)
+            .expect("trace root exists")
+            .flatten()
+        {
             for file in std::fs::read_dir(date.path()).expect("date dir").flatten() {
                 let path = file.path();
                 if path.extension().is_some_and(|ext| ext == "jsonl") {
@@ -793,7 +900,9 @@ mod tests {
         state.append_event(user_sentence(true));
         state.append_event(user_sentence(true));
 
-        let writer = state.trace_writer().expect("the live session owns a writer");
+        let writer = state
+            .trace_writer()
+            .expect("the live session owns a writer");
         writer.flush().await.expect("flush");
         let lines = trace_lines(&root);
         assert_eq!(lines.len(), 2, "one line per closed sentence");

@@ -14,20 +14,27 @@
 //! `ProxyUnavailable` is the *absence* of the field (`lan::server`), never a
 //! fabricated number.
 
+use serde::{Deserialize, Serialize};
+
 /// Where a [`SttPartial`](crate::pipeline::stages::SttPartial) confidence value
 /// came from (research correction 3).
 ///
 /// 讯飞 has no per-word score — its `sc` field is reserved and always 0 — so a
 /// proxy value must be distinguishable from a real vendor score instead of
-/// being averaged into one number (D-02 / GOV-05).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// being averaged into one number (D-02 / GOV-05). Serialized into the JSONL
+/// trace as `confidenceSource` (snake_case), and the `Default` is the honest
+/// "no provenance accompanied this segment" value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConfidenceSource {
     /// The vendor returned a score we can use.
     Vendor,
     /// A local proxy produced the value (Phase 5 fills it; Phase 2 讯飞 stays
     /// `ProxyUnavailable`).
     Proxy,
-    /// No vendor score and no proxy yet — the Phase 2 讯飞 state.
+    /// No vendor score and no proxy yet — the Phase 2 讯飞 state, and the
+    /// marker for a record whose segment carried no provenance at all.
+    #[default]
     ProxyUnavailable,
 }
 

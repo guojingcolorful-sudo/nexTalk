@@ -20,6 +20,8 @@ pub mod state;
 pub mod trace;
 
 use state::SessionState;
+use trace::jsonl::UsageSummary;
+use trace::{CostReport, MONTHLY_QUOTA_MINUTES};
 
 /// LAN port the phone H5 teleprompter connects to (fixed for the skeleton).
 const LAN_PORT: u16 = 8787;
@@ -61,12 +63,38 @@ fn stop_session(state: tauri::State<'_, SessionState>) -> Result<(), String> {
     Ok(())
 }
 
+/// The month's staged usage and cost for the diagnostics panel (T3.7/D-13).
+/// A pure read of the local JSONL traces (D-05): the frontend renders these
+/// numbers and never recomputes them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageReport {
+    usage: UsageSummary,
+    cost: CostReport,
+    quota_minutes: u64,
+    used_minutes: u64,
+}
+
+/// `usage_summary` — current-month aggregation for DiagnosticsPage.
+#[tauri::command]
+fn usage_summary(state: tauri::State<'_, SessionState>) -> UsageReport {
+    let usage = state.usage_summary();
+    let cost = CostReport::from_usage(&usage);
+    UsageReport {
+        used_minutes: usage.used_minutes().round() as u64,
+        quota_minutes: MONTHLY_QUOTA_MINUTES,
+        usage,
+        cost,
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_pairing_info,
             start_session,
-            stop_session
+            stop_session,
+            usage_summary
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);
@@ -74,6 +102,13 @@ pub fn run() {
             // and session emits); cargo tests never call this, which is why
             // every emit path is a no-op without it.
             state.set_app_handle(app.handle().clone());
+            // Durable traces live under the app data dir (D-05/D-06): JSONL
+            // records under `traces/<date>/` — nothing here leaves the
+            // machine. A resolution failure only turns tracing off.
+            match app.path().app_data_dir() {
+                Ok(dir) => state.set_trace_dir(dir.join("traces")),
+                Err(err) => eprintln!("[trace] app data dir unavailable, tracing off: {err}"),
+            }
             app.manage(state.clone());
 
             // LAN server (pairing WS + static H5, no-store). A bind failure
