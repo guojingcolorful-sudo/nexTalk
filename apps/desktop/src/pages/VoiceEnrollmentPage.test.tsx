@@ -381,9 +381,12 @@ describe('VoiceEnrollmentPage 试听与重训', () => {
 
   test('重新训练 reuses the stored sample and the next 试听 reflects the new voice', async () => {
     let speaker = 'S_demo';
+    let attempts = 0;
     const previews: Array<{ kind: string; speakerId: string }> = [];
     mockBackend({
       train_voice_clone: () => {
+        attempts += 1;
+        if (attempts === 1) return CLONE_STATUS;
         speaker = 'S_demo_2';
         return RETRAINED_CLONE_STATUS;
       },
