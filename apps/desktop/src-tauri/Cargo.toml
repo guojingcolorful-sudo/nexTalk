@@ -42,6 +42,17 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 ] }
 uuid = { version = "1.26.0", features = ["v4"] }
 
+# --- 02-04 enrollment capture + resample -----------------------------------
+# cpal / hound / rubato: package-legitimacy gate approved 2026-10-05 (user
+# verified the crates.io pages and upstream repos; cpal 0.18.x was the
+# 02-RESEARCH [SUS] item — RustAudio/cpal, million-scale downloads, active
+# releases). cpal 0.18.2 = CoreAudio capture, hound 3.5.1 = WAV I/O (ruuda/
+# hound), rubato 5.0.1 = offline resampling (5.0 is the API rewrite — the old
+# FftFixedIn constructor no longer exists; see audio/resample.rs).
+cpal = "0.18.2"
+hound = "3.5.1"
+rubato = "5.0.1"
+
 [profile.release]
 strip = true
 lto = true
