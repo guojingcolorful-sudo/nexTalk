@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import NeobrutalismButton from '../components/NeobrutalismButton';
 import Skeleton from '../components/Skeleton';
+import UsageMinutesPanel from '../components/UsageMinutesPanel';
 import WizardShell from '../components/WizardShell';
 import { MOCK_BADGE_LABEL, MOCK_DETECTION_ITEMS, SIM_SOURCE_BADGE_LABEL } from '../data/mock-data';
 
@@ -175,6 +176,11 @@ export default function SetupWizardPage() {
           <p className="text-center text-[10px] text-gray-500">C-137</p>
         </div>
       ) : null}
+
+      {/* 用量区块挂在向导步骤之外：首次启动与老用户都能看到（T3.9）。 */}
+      <div className="mt-4">
+        <UsageMinutesPanel />
+      </div>
     </WizardShell>
   );
 }
