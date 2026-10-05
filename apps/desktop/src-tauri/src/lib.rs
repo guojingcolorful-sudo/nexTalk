@@ -12,6 +12,7 @@ use tauri::{Emitter, Manager};
 
 // Public so `tests/session_integration.rs` (a separate crate) can drive the
 // real state + LAN server the way the demo does.
+pub mod audio;
 pub mod lan;
 pub mod pipeline;
 pub mod sim;

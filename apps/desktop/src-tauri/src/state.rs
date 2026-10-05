@@ -19,6 +19,7 @@ use serde_json::json;
 use tauri::Emitter;
 use tokio::sync::broadcast;
 
+use crate::audio::playout::PlayoutQueue;
 use crate::lan::server::{LanguagePref, ServerEvent, SessionStatus};
 use crate::sim::source::SimSource;
 
@@ -36,6 +37,11 @@ pub struct SessionState {
     /// Bumped on every session start/stop; a scheduler whose epoch no longer
     /// matches exits on its next tick.
     session_epoch: Arc<AtomicU64>,
+    /// The synthesized-voice playout buffer (02-03 T3.3). Deliberately *not*
+    /// the session epoch: a barge-in moves the playout generation without
+    /// cancelling the running driver, so the two counters move independently.
+    /// Every clone shares one buffer (the queue is internally `Arc`-ed).
+    playout: PlayoutQueue,
 }
 
 struct SessionStateInner {
@@ -81,7 +87,15 @@ impl SessionState {
             broadcast_tx,
             connected_clients: Arc::new(AtomicUsize::new(0)),
             session_epoch: Arc::new(AtomicU64::new(0)),
+            playout: PlayoutQueue::new(),
         }
+    }
+
+    /// The synthesized-voice playout queue (02-03 T3.3). The cascade plays into
+    /// it and 02-05 reads from it; its epoch is independent of the session
+    /// epoch (a barge-in must not cancel the session's driver).
+    pub fn playout(&self) -> &PlayoutQueue {
+        &self.playout
     }
 
     /// Stores the Tauri app handle (called once from `setup`); every emit path
@@ -232,6 +246,10 @@ impl SessionState {
         // session stops on its next tick instead of appending into the new
         // timeline.
         let epoch = self.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        // The new session owns a fresh playout generation: whatever the last
+        // session left buffered is refused from here on, and any chunk still
+        // in flight cannot land in the new session's audio (T3.3).
+        self.playout.begin_session();
         self.replace_sim();
         self.reset_timeline();
         // Session identity goes on the wire before any content: both desktop
@@ -248,6 +266,10 @@ impl SessionState {
     /// kept for review.
     pub fn stop_session(&self) {
         self.session_epoch.fetch_add(1, Ordering::SeqCst);
+        // 停止 cuts the voice immediately: the buffer is cleared and the
+        // playout generation moves, so an in-flight chunk from the stopped
+        // session can never be played after the fact (T3.3).
+        self.playout.end_session();
         self.publish_status(SessionStatus::Ended);
     }
 

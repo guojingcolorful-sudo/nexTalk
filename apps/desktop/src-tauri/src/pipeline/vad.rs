@@ -19,8 +19,8 @@
 //! Consumers apply their own duration policy: the segmenter discards speech
 //! shorter than 300 ms ([`crate::pipeline::segment::SegmentConfig`]), barge-in
 //! requires 320 ms before it interrupts
-//! ([`crate::pipeline::audio::playout::MIN_INTERRUPT_SPEECH_MS`]). The VAD only
-//! reports what the energy says.
+//! ([`crate::audio::playout::MIN_INTERRUPT_SPEECH_MS`]). The VAD only reports
+//! what the energy says.
 
 /// Frame length in milliseconds — the granularity of the state machine.
 pub const FRAME_MS: u64 = 10;

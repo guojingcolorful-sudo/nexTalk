@@ -103,16 +103,19 @@ fn interrupt_drops_unplayed_playout_audio_and_fades_the_tail() {
     let mut tail = vec![0.0f32; 4_096];
     let written = queue.render(&mut tail);
     assert_eq!(written, outcome.faded_samples, "the fade is what is left");
-    assert!(written > 0, "an interrupt keeps a fade, it does not hard-cut");
-    let tail = &tail[..written];
-    for pair in tail.windows(2) {
+    assert!(
+        written > 0,
+        "an interrupt keeps a fade, it does not hard-cut"
+    );
+    let fade = &tail[..written];
+    for pair in fade.windows(2) {
         assert!(
             pair[1].abs() <= pair[0].abs() + f32::EPSILON,
             "the fade must converge monotonically: {pair:?}"
         );
     }
     assert_eq!(
-        tail.last().copied().unwrap_or(1.0),
+        fade.last().copied().unwrap_or(1.0),
         0.0,
         "the fade lands on silence — the click-free cut"
     );
@@ -244,7 +247,8 @@ fn interrupt_requires_the_minimum_speech_gate() {
     assert!(should_interrupt(300, &tuned));
 
     // The queue stamps interrupts with the injected clock (no wall time).
-    let mut queue = PlayoutQueue::with_clock(PlayoutConfig::default(), Arc::new(StepClock::new(240)));
+    let mut queue =
+        PlayoutQueue::with_clock(PlayoutConfig::default(), Arc::new(StepClock::new(240)));
     queue
         .push(queue.epoch(), 1, &loud_chunk(50))
         .expect("admitted");

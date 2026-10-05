@@ -38,9 +38,9 @@ use std::sync::{Arc, Mutex};
 use crate::pipeline::budget::{LatencyMark, Stage, Waterfall, WaterfallError, E2E_BUDGET_MS};
 use crate::pipeline::segment::{DiscardReason, Segment, SegmentConfig, SegmentEvent, Segmenter};
 use crate::pipeline::stages::{
-    AbstainReason, AudioChunk, MarkHandle, StageError, SttEvent, SttPartial, SttSource, TokenUsage,
-    Translator, TranslatorEvent, TtsEvent, TtsSink, TtsUsage, VendorStt, VendorTranslator,
-    VendorTts, VoiceRef, ZhFragment,
+    AbstainReason, MarkHandle, StageError, SttEvent, SttPartial, SttSource, TokenUsage, Translator,
+    TranslatorEvent, TtsEvent, TtsSink, TtsUsage, VendorStt, VendorTranslator, VendorTts, VoiceRef,
+    ZhFragment,
 };
 use crate::sim::source::TimeSource;
 
@@ -105,18 +105,14 @@ impl fmt::Debug for SharedClock {
 
 // ----------------------------------------------------------------- the sink ---
 
-/// Where synthesised audio goes. 02-05 implements it with the cpal ring; the
-/// epoch travels with every chunk so the playout side can drop stale audio
-/// after a barge-in (T3.3).
-pub trait PlayoutSink: Send {
-    /// Install the latency rig handle — the sink marks `PlaybackFirstSample`
-    /// on the first audible sample of each segment (02-01 contract).
-    fn set_marks(&mut self, marks: MarkHandle);
-    /// Hand one synthesised chunk to the playout chain. `segment_id` travels
-    /// with the audio so the sink can tell one sentence's playback run from
-    /// the next — and so a barge-in can attribute what it cut.
-    fn play(&mut self, epoch: u64, segment_id: u64, chunk: &AudioChunk);
-}
+/// Where synthesised audio goes — defined in [`crate::audio`], the layer that
+/// owns playback, and re-exported here so the cascade's importers see one path.
+///
+/// The epoch travels with every chunk so the playout side can drop stale audio
+/// after a barge-in (T3.3); `segment_id` travels with it so the sink can tell
+/// one sentence's playback run from the next and a barge-in can attribute what
+/// it cut (see [`crate::audio::playout::PlayoutQueue`], the 02-03 implementation).
+pub use crate::audio::PlayoutSink;
 
 // ------------------------------------------------------------- mark routing ---
 
