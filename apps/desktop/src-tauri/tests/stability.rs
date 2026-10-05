@@ -1,4 +1,5 @@
-//! Stability gate (02-03 T3.3): the barge-in playout queue.
+//! Stability gate (02-03 T3.3–T3.5): barge-in playout, fragment retry, the
+//! per-vendor circuit breaker.
 //!
 //! 抢话 is the one behaviour that must never glitch: when the user starts
 //! speaking over the cloned voice, the old audio has to be gone within a
@@ -14,6 +15,12 @@
 //!    the speakers, and a gate-less interrupt loop would cut the user's own
 //!    answer apart.
 //!
+//! The second half (T3.4/T3.5) covers the failure path: a fragment retries on
+//! D-09's 100/200 ms schedule inside its 500 ms budget, a provider with two
+//! consecutive bad fragments is cut off by its own breaker (D-10, two-minute
+//! window), and an exhausted fragment degrades to the original Chinese — no
+//! silence, no fabricated English, no vendor message in the trace.
+//!
 //! Zero network, zero keys, no `sleep`: every timing assertion reads an
 //! injected clock or a counter.
 
@@ -24,10 +31,19 @@ use nextalk_desktop_lib::audio::playout::{
     should_interrupt, PlayoutConfig, PlayoutQueue, FADE_OUT_MS, MIN_INTERRUPT_SPEECH_MS,
 };
 use nextalk_desktop_lib::audio::{PlayoutSink, RenderReference};
+use nextalk_desktop_lib::pipeline::breaker::{
+    BreakerState, RetryConfig, RetryPolicy, WaitMode, BREAKER_OPEN_MS,
+    MAX_RETRY_FRAGMENT_CONCURRENCY,
+};
 use nextalk_desktop_lib::pipeline::budget::Stage;
-use nextalk_desktop_lib::pipeline::stages::{AudioChunk, MarkHandle};
+use nextalk_desktop_lib::pipeline::cascade::{Cascade, CascadeConfig, SegmentScript, SharedClock};
+use nextalk_desktop_lib::pipeline::stages::{
+    AudioChunk, MarkHandle, ScriptedStt, ScriptedTts, ScriptedTranslator, StageError, SttPartial,
+    TokenUsage, TranslatorEvent,
+};
 use nextalk_desktop_lib::sim::source::TimeSource;
 use nextalk_desktop_lib::state::SessionState;
+use nextalk_desktop_lib::trace::jsonl::{SegmentStatus, TraceRecord};
 
 const RATE: u32 = 48_000;
 
@@ -360,4 +376,467 @@ fn playout_render_mirrors_into_the_reference_path() {
         vec![(480, RATE)],
         "every rendered block is mirrored to the AEC reference"
     );
+}
+
+// ------------------------------- fragment retry + circuit breaker (T3.4) ---
+
+const FRAME_MS: u64 = 10;
+const FRAME_SAMPLES: usize = 480; // 10 ms @ 48 kHz
+
+/// A 10 ms frame of a steady 440 Hz sine at `amplitude` — the segmenter's VAD
+/// needs real energy, not silence.
+fn sine_frame(amplitude: f32) -> Vec<f32> {
+    (0..FRAME_SAMPLES)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            (2.0 * std::f32::consts::PI * 440.0 * t).sin() * amplitude
+        })
+        .collect()
+}
+
+/// `ms` of speech as a `SegmentScript` for `epoch` — one fragment's audio.
+fn speech_script(epoch: u64, ms: u64) -> SegmentScript {
+    let frames = (0..ms / FRAME_MS)
+        .map(|i| (i * FRAME_MS, sine_frame(0.3)))
+        .collect();
+    SegmentScript { epoch, frames }
+}
+
+/// One committed final — the gate's unit of admission.
+fn committed_final(text: &str) -> SttPartial {
+    let mut partial = SttPartial::without_confidence("scripted", "scripted-1", text);
+    partial.is_final = true;
+    partial.committed = true;
+    partial
+}
+
+/// A scripted translation request that fails with a retryable transport error.
+fn failing_script() -> Vec<TranslatorEvent> {
+    vec![TranslatorEvent::Failed(StageError::transport(
+        "scripted",
+        "scripted transport failure",
+    ))]
+}
+
+/// The always-failing translator: every call replays the same failure.
+fn always_failing_translator() -> ScriptedTranslator {
+    ScriptedTranslator::new(failing_script())
+}
+
+/// The credential-failure translator: a 401 is a client error (D-06).
+fn failing_auth_translator() -> ScriptedTranslator {
+    ScriptedTranslator::new(vec![TranslatorEvent::Failed(StageError::http(
+        "scripted", 401,
+    ))])
+}
+
+/// A successful translation request — one final fragment plus its usage.
+fn succeed_script(text: &str) -> Vec<TranslatorEvent> {
+    vec![
+        TranslatorEvent::Fragment {
+            text: text.to_string(),
+            final_flag: true,
+            provider: "scripted".to_string(),
+            model_version: "scripted-1".to_string(),
+        },
+        TranslatorEvent::Usage(TokenUsage {
+            prompt_tokens: 2,
+            completion_tokens: 3,
+        }),
+    ]
+}
+
+/// A clock the test moves by hand — the breaker's two-minute window must not
+/// cost two minutes of real time (no `sleep`, ever).
+#[derive(Clone, Default)]
+struct ManualClock(Arc<AtomicU64>);
+
+impl ManualClock {
+    fn advance(&self, ms: u64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+}
+
+impl TimeSource for ManualClock {
+    fn elapsed_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// The retry-cascade builder: injected clock, immediate waits (the schedule is
+/// asserted from the ledger, never slept through) and a playout queue whose
+/// session generation is already open — so a degraded fragment that (wrongly)
+/// played would land in the queue and fail the no-audio assertion.
+fn retry_cascade(
+    stt: ScriptedStt,
+    translator: ScriptedTranslator,
+    policy: RetryPolicy,
+    clock: SharedClock,
+) -> (Cascade<ScriptedStt>, PlayoutQueue) {
+    let playout = PlayoutQueue::new();
+    let cascade = Cascade::from_source(
+        stt,
+        translator.into(),
+        ScriptedTts::default().into(),
+        playout.clone(),
+        clock,
+    )
+    .with_config(CascadeConfig {
+        retry: RetryConfig {
+            policy,
+            wait: WaitMode::Immediate,
+        },
+        ..CascadeConfig::default()
+    });
+    (cascade, playout)
+}
+
+/// Test 8 (D-09, signature): a fragment that keeps failing is retried on the
+/// 100/200 ms schedule, gives up inside the 500 ms budget, and never reaches
+/// TTS — the ledger proves both the schedule and the silence.
+#[tokio::test]
+async fn retry_retries_twice_with_the_injected_backoff_schedule() {
+    let stt = ScriptedStt::new(vec![committed_final("这句话重试了两次")]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        always_failing_translator(),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    let degraded = outcomes[0].degraded.as_ref().expect("the fragment degraded");
+    assert_eq!(degraded.error_code, "retry_exhausted");
+    assert_eq!(degraded.attempts, 3, "the first call plus two retries");
+    assert_eq!(degraded.waited_ms, 300, "100 + 200 ms of planned backoff");
+
+    let ledger = cascade.ledger();
+    assert_eq!(ledger.translator_calls, 3);
+    let waits: Vec<(u32, u64)> = ledger
+        .retry_waits
+        .iter()
+        .map(|wait| (wait.attempt, wait.delay_ms))
+        .collect();
+    assert_eq!(
+        waits,
+        vec![(1, 100), (2, 200)],
+        "D-09's schedule, one wait per retry, in order"
+    );
+    for wait in &ledger.retry_waits {
+        assert_eq!(wait.segment_id, outcomes[0].segment.id);
+        assert_eq!(
+            wait.at_ms % 240,
+            0,
+            "the wait is stamped with the injected clock, not wall time"
+        );
+    }
+    assert!(
+        ledger.retry_waits[1].at_ms > ledger.retry_waits[0].at_ms,
+        "the second wait is stamped later than the first"
+    );
+
+    // Nothing was fabricated and nothing was spoken.
+    assert!(!outcomes[0].translated);
+    assert_eq!(outcomes[0].tts_calls, 0);
+    assert!(ledger.translated.is_empty(), "no fragment reached the vendor");
+    assert!(ledger.tts_inputs.is_empty(), "the invariant witness is clean");
+    assert_eq!(
+        playout.buffered_chunks(),
+        0,
+        "a degraded fragment makes no sound"
+    );
+    assert_eq!(
+        cascade.breaker_state("scripted"),
+        BreakerState::Closed,
+        "one bad fragment cannot trip the breaker (threshold 2)"
+    );
+}
+
+/// Test 9 (D-09 budget): the budget is the other way to give up — with 250 ms
+/// of headroom the 200 ms wait no longer fits, so the fragment stops after two
+/// calls, and the next fragment's budget starts fresh.
+#[tokio::test]
+async fn retry_gives_up_when_the_budget_is_gone_and_keeps_going() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句"),
+        committed_final("第二句"),
+    ]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        always_failing_translator(),
+        RetryPolicy {
+            max_attempts: 2,
+            backoff_ms: [100, 200],
+            budget_ms: 250,
+        },
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2, "both fragments closed");
+    for outcome in &outcomes {
+        let degraded = outcome.degraded.as_ref().expect("both fragments degraded");
+        assert_eq!(degraded.error_code, "retry_budget_exhausted");
+        assert_eq!(degraded.attempts, 2, "the 200 ms wait never fit the budget");
+        assert_eq!(degraded.waited_ms, 100, "only the 100 ms wait was spent");
+    }
+    assert_eq!(
+        cascade.ledger().translator_calls,
+        4,
+        "each fragment spent its own budget — no cross-fragment bleed"
+    );
+}
+
+/// Test 10 (GOV-12): the retry scope is exactly one fragment. Two failing
+/// fragments each get the full schedule — no shared counter, no bleed — and
+/// only one fragment is ever in flight.
+#[tokio::test]
+async fn retry_scope_stays_one_fragment() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句"),
+        committed_final("第二句"),
+    ]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        always_failing_translator(),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2);
+    let first = outcomes[0].segment.id;
+    let second = outcomes[1].segment.id;
+    let waits: Vec<(u64, u32, u64)> = cascade
+        .ledger()
+        .retry_waits
+        .iter()
+        .map(|wait| (wait.segment_id, wait.attempt, wait.delay_ms))
+        .collect();
+    assert_eq!(
+        waits,
+        vec![
+            (first, 1, 100),
+            (first, 2, 200),
+            (second, 1, 100),
+            (second, 2, 200),
+        ],
+        "each fragment owns its schedule, grouped and in order"
+    );
+    assert_eq!(cascade.ledger().translator_calls, 6, "3 calls per fragment");
+    assert_eq!(
+        MAX_RETRY_FRAGMENT_CONCURRENCY, 1,
+        "GOV-12: retries are serialised — one fragment in flight"
+    );
+}
+
+/// Test 11 (D-06): a 401 is a client error — one call, no waits, no breaker
+/// strike. Retrying a credential failure only burns latency, and enough of
+/// them must still never open the circuit.
+#[tokio::test]
+async fn retry_client_errors_skip_the_budget() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句"),
+        committed_final("第二句"),
+        committed_final("第三句"),
+    ]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        failing_auth_translator(),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 3);
+    for outcome in &outcomes {
+        let degraded = outcome.degraded.as_ref().expect("degraded");
+        assert_eq!(degraded.error_code, "client_error");
+        assert_eq!(degraded.attempts, 1, "a 401 is not retried");
+    }
+    assert_eq!(
+        cascade.ledger().translator_calls,
+        3,
+        "one call per fragment — no retry, no budget spend"
+    );
+    assert!(cascade.ledger().retry_waits.is_empty());
+    assert_eq!(
+        cascade.breaker_state("scripted"),
+        BreakerState::Closed,
+        "client errors are the user's problem, not the vendor's: never a strike"
+    );
+}
+
+/// Test 12 (D-10): two bad fragments open the vendor's circuit — the third
+/// fragment is refused without a single translator call (`circuit_open`), and
+/// nothing is spoken. The other stages keep running: only the vendor is cut.
+#[tokio::test]
+async fn retry_stops_calling_when_the_breaker_opens() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句"),
+        committed_final("第二句"),
+        committed_final("第三句"),
+    ]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        always_failing_translator(),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 3);
+    assert_eq!(
+        outcomes[0].degraded.as_ref().unwrap().error_code,
+        "retry_exhausted"
+    );
+    assert_eq!(
+        outcomes[1].degraded.as_ref().unwrap().error_code,
+        "retry_exhausted"
+    );
+    let refused = outcomes[2]
+        .degraded
+        .as_ref()
+        .expect("the third fragment degraded");
+    assert_eq!(refused.error_code, "circuit_open");
+    assert_eq!(refused.attempts, 0, "the open breaker refuses the call outright");
+    assert_eq!(
+        cascade.ledger().translator_calls,
+        6,
+        "two fragments × three calls; the third never called"
+    );
+    assert!(matches!(
+        cascade.breaker_state("scripted"),
+        BreakerState::Open { .. }
+    ));
+    assert_eq!(playout.buffered_chunks(), 0);
+}
+
+/// Test 13 (D-10 half-open): after the open window elapses the next fragment
+/// is the single probe. It succeeds, the breaker closes, and the following
+/// fragment translates normally — the degraded era leaves no residue.
+#[tokio::test]
+async fn retry_recovers_through_the_half_open_probe() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句"),
+        committed_final("第二句"),
+    ]);
+    let translator = ScriptedTranslator::per_call(vec![
+        failing_script(),
+        failing_script(),
+        failing_script(), // fragment 1: exhausted
+        failing_script(),
+        failing_script(),
+        failing_script(), // fragment 2: exhausted — opens the circuit
+        succeed_script("recovered one"),
+        succeed_script("recovered two"),
+    ]);
+    let clock = ManualClock::default();
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        translator,
+        RetryPolicy::default(),
+        SharedClock::new(clock.clone()),
+    );
+    let epoch = playout.begin_session();
+    let first = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 2);
+    assert!(first.iter().all(|outcome| outcome.degraded.is_some()));
+    assert!(
+        matches!(
+            cascade.breaker_state("scripted"),
+            BreakerState::Open { .. }
+        ),
+        "two strikes opened the circuit"
+    );
+
+    // The open window passes (no sleeping: the test moves the clock).
+    clock.advance(BREAKER_OPEN_MS + 1);
+    let epoch = playout.begin_session();
+    let second = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(second.len(), 2);
+    assert!(
+        second.iter().all(|outcome| outcome.degraded.is_none()),
+        "the degraded form is gone: {second:?}"
+    );
+    assert!(
+        second.iter().all(|outcome| outcome.translated),
+        "the probe's success restored translation"
+    );
+    assert_eq!(cascade.breaker_state("scripted"), BreakerState::Closed);
+    assert_eq!(
+        cascade.ledger().translator_calls,
+        8,
+        "six failures, then one probe and one normal call"
+    );
+    assert!(
+        playout.buffered_chunks() > 0,
+        "recovered fragments speak again"
+    );
+}
+
+/// Test 14 (GOV-10/D-07): the degradation reaches the trace as data — the
+/// aggregatable error code in `errorCode`, the status in `status` — never as a
+/// vendor message blob, and never as a confidence mark on the subtitle
+/// (GOV-01/02, 2026-09-30 revision: no subtitle confidence badges in Phase 2).
+#[tokio::test]
+async fn retry_exhaustion_records_the_error_code_for_the_trace() {
+    let stt = ScriptedStt::new(vec![committed_final("这句话进了轨迹")]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        always_failing_translator(),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    let degraded = outcomes[0].degraded.as_ref().expect("degraded");
+    let record = TraceRecord::degraded(degraded.error_code.clone());
+    assert_eq!(record.status, SegmentStatus::Degraded);
+    let line = record
+        .to_json_line()
+        .expect("the degraded record serializes");
+    assert!(line.contains("\"errorCode\":\"retry_exhausted\""), "{line}");
+    assert!(line.contains("\"status\":\"degraded\""), "{line}");
+    assert!(
+        !line.contains("scripted transport failure"),
+        "the trace carries the code, not the message blob: {line}"
+    );
+
+    // The healthy shape stays representable too (Task 5 fills the rest).
+    let ok = TraceRecord::ok().to_json_line().expect("ok serializes");
+    assert!(ok.contains("\"status\":\"ok\""), "{ok}");
+    assert!(ok.contains("\"errorCode\":null"), "{ok}");
 }

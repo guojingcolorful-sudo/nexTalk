@@ -102,3 +102,63 @@ describe('ChatBubble', () => {
     expect(container.firstChild).toBeNull();
   });
 });
+
+// GOV-14 / D-12: when the translator is down the bubble shows the original
+// Chinese, the locked copy, and a red badge carrying the error code — never a
+// fabricated English line, never a silent gap.
+describe('ChatBubble degraded form', () => {
+  const ERROR_CODE = 'retry_exhausted';
+
+  it('renders the badge, the locked copy, the original and 正在重试 — never a fabricated English line', () => {
+    render(
+      <ChatBubble
+        speaker="user"
+        zh={ANSWER_ZH}
+        en="A translation the pipeline never produced"
+        degraded={{ errorCode: ERROR_CODE }}
+      />,
+    );
+    revealAll();
+
+    const badge = screen.getByText('翻译失败');
+    expect(badge.className).toContain('bg-red-500');
+    expect(badge.getAttribute('data-error-code')).toBe(ERROR_CODE);
+    expect(screen.getByText('翻译服务暂时不可用')).toBeTruthy();
+    expect(screen.getByText(ANSWER_ZH)).toBeTruthy();
+    expect(screen.getByText('正在重试')).toBeTruthy();
+    expect(screen.queryByText('A translation the pipeline never produced')).toBeNull();
+  });
+
+  it('shows the original even when the bubble is set to English (the original is the only truth)', () => {
+    render(
+      <ChatBubble
+        speaker="user"
+        zh={ANSWER_ZH}
+        mode="all-en"
+        degraded={{ errorCode: ERROR_CODE }}
+      />,
+    );
+    revealAll();
+
+    expect(screen.getByText(ANSWER_ZH)).toBeTruthy();
+    expect(screen.getByText('翻译服务暂时不可用')).toBeTruthy();
+  });
+
+  it('drops the degraded form when the next event for the segment is healthy (no residue)', () => {
+    const { rerender } = render(
+      <ChatBubble speaker="user" zh={ANSWER_ZH} degraded={{ errorCode: 'circuit_open' }} />,
+    );
+    revealAll();
+    expect(screen.getByText('翻译失败')).toBeTruthy();
+
+    rerender(
+      <ChatBubble speaker="user" zh={ANSWER_ZH} en="Recovered translation" />,
+    );
+    revealAll();
+
+    expect(screen.queryByText('翻译失败')).toBeNull();
+    expect(screen.queryByText('翻译服务暂时不可用')).toBeNull();
+    expect(screen.queryByText('正在重试')).toBeNull();
+    expect(screen.getByText(ANSWER_ZH)).toBeTruthy();
+  });
+});
