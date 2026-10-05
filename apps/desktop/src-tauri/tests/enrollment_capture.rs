@@ -185,10 +185,11 @@ fn a_sample_over_ten_megabytes_is_refused() {
         bytes: MAX_SAMPLE_BYTES,
         ..base
     };
-    assert!(
-        nextalk_desktop_lib::enroll::capture::validate_capture(&at_cap, &CaptureGuard::default())
-            .is_ok()
-    );
+    assert!(nextalk_desktop_lib::enroll::capture::validate_capture(
+        &at_cap,
+        &CaptureGuard::default()
+    )
+    .is_ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +261,15 @@ fn speech_below_the_minimum_is_rejected() {
     };
     let error = nextalk_desktop_lib::enroll::capture::validate_capture(&stats, &guard)
         .expect_err("25 s of speech is under a 30 s floor");
-    assert!(matches!(error, CaptureError::TooLittleSpeech { .. }), "{error:?}");
-    assert!(error.message().contains("有效朗读不足"), "{}", error.message());
+    assert!(
+        matches!(error, CaptureError::TooLittleSpeech { .. }),
+        "{error:?}"
+    );
+    assert!(
+        error.message().contains("有效朗读不足"),
+        "{}",
+        error.message()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +378,11 @@ fn the_first_500ms_of_device_noise_are_dropped_without_shifting_the_take() {
 
     // The click is gone: the loudest part of the first second sits far below
     // the 0.9 it was recorded at.
-    assert!(rms(0.0, 1.0) < 0.1, "startup click survived: {}", rms(0.0, 1.0));
+    assert!(
+        rms(0.0, 1.0) < 0.1,
+        "startup click survived: {}",
+        rms(0.0, 1.0)
+    );
     // The gap is still silent and the speech still starts where it was spoken
     // (9 s after the trim), so the take was not shifted earlier.
     assert!(rms(1.0, 8.5) < 0.01, "gap was shifted: {}", rms(1.0, 8.5));

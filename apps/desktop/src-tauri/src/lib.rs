@@ -13,12 +13,16 @@ use tauri::{Emitter, Manager};
 // Public so `tests/session_integration.rs` (a separate crate) can drive the
 // real state + LAN server the way the demo does.
 pub mod audio;
+pub mod enroll;
 pub mod lan;
 pub mod pipeline;
 pub mod sim;
 pub mod state;
 pub mod trace;
 
+use enroll::capture::{
+    finish_capture, CaptureBackend, CaptureError, CaptureGuard, CaptureSession, CpalCapture,
+};
 use state::SessionState;
 use trace::jsonl::UsageSummary;
 use trace::{CostReport, MONTHLY_QUOTA_MINUTES};
@@ -88,13 +92,124 @@ fn usage_summary(state: tauri::State<'_, SessionState>) -> UsageReport {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Voice enrollment (02-04 T4.1): capture a take into <app data>/enroll/
+// ---------------------------------------------------------------------------
+
+/// The enrollment recorder is its own managed state — deliberately separate
+/// from [`SessionState`]. The sample is biometric data (T-02-16): it must not
+/// ride along the session/JSONL path, and stopping a session must never touch
+/// a take that is being recorded for the voice profile.
+#[derive(Default)]
+struct EnrollmentState {
+    active: std::sync::Mutex<Option<ActiveEnrollment>>,
+}
+
+struct ActiveEnrollment {
+    backend: Box<dyn CaptureBackend>,
+    session: CaptureSession,
+}
+
+/// The structured error the frontend renders: stable code + locked Chinese copy.
+#[derive(Serialize)]
+struct CaptureErrorDto {
+    code: String,
+    message: String,
+}
+
+impl From<CaptureError> for CaptureErrorDto {
+    fn from(error: CaptureError) -> Self {
+        Self {
+            code: error.code().to_string(),
+            message: error.message(),
+        }
+    }
+}
+
+fn poisoned_state() -> CaptureErrorDto {
+    CaptureErrorDto {
+        code: "internal".to_string(),
+        message: "录音状态异常，请重启应用后重试".to_string(),
+    }
+}
+
+/// `start_enrollment_recording` — open the default input device and begin a take.
+#[tauri::command]
+fn start_enrollment_recording(
+    state: tauri::State<'_, EnrollmentState>,
+) -> Result<(), CaptureErrorDto> {
+    let mut active = state.active.lock().map_err(|_| poisoned_state())?;
+    if active.is_some() {
+        return Err(CaptureError::AlreadyRecording.into());
+    }
+    let mut backend = CpalCapture::new()?;
+    let session = CaptureSession::begin(&mut backend)?;
+    *active = Some(ActiveEnrollment {
+        backend: Box::new(backend),
+        session,
+    });
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureResultDto {
+    path: String,
+    duration_s: f64,
+    silence_ratio: f32,
+    bytes: u64,
+}
+
+/// `stop_enrollment_recording` — stop the take, run the guard checks, and write
+/// `<app data>/enroll/<sessionId>.wav` (16 kHz mono PCM16, owner-only).
+#[tauri::command]
+fn stop_enrollment_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EnrollmentState>,
+) -> Result<CaptureResultDto, CaptureErrorDto> {
+    let mut active = state
+        .active
+        .lock()
+        .map_err(|_| poisoned_state())?
+        .take()
+        .ok_or(CaptureError::NoActiveTake)?;
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| CaptureError::Io(error.to_string()))?;
+    let session_id = format!(
+        "take-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis())
+            .unwrap_or(0)
+    );
+
+    let result = finish_capture(
+        active.session,
+        active.backend.as_mut(),
+        &CaptureGuard::default(),
+        &root,
+        &session_id,
+    )?;
+
+    Ok(CaptureResultDto {
+        path: result.path.display().to_string(),
+        duration_s: result.duration_s,
+        silence_ratio: result.silence_ratio,
+        bytes: result.bytes,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_pairing_info,
             start_session,
             stop_session,
-            usage_summary
+            usage_summary,
+            start_enrollment_recording,
+            stop_enrollment_recording
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);
@@ -110,6 +225,7 @@ pub fn run() {
                 Err(err) => eprintln!("[trace] app data dir unavailable, tracing off: {err}"),
             }
             app.manage(state.clone());
+            app.manage(EnrollmentState::default());
 
             // LAN server (pairing WS + static H5, no-store). A bind failure
             // must not take the desktop app down — log and continue. The app
