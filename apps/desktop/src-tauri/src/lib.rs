@@ -23,6 +23,11 @@ pub mod trace;
 use enroll::capture::{
     finish_capture, CaptureBackend, CaptureError, CaptureGuard, CaptureSession, CpalCapture,
 };
+use enroll::register::{
+    next_speaker_id, train_voice_clone as run_voice_clone_training, CloneTrainError, CloneTrainer,
+};
+use enroll::voice_store::{preset_from_lookup, VoiceProfile, VoiceStore, VoiceStoreError};
+use pipeline::stages::VoiceRef;
 use state::SessionState;
 use trace::jsonl::UsageSummary;
 use trace::{CostReport, MONTHLY_QUOTA_MINUTES};
@@ -201,6 +206,203 @@ fn stop_enrollment_recording(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Voice enrollment (02-04 T4.2/T4.3): training, the profile, the preview state
+// ---------------------------------------------------------------------------
+
+/// Stable error shape for the voice commands (mirrors [`CaptureErrorDto`]).
+#[derive(Serialize)]
+struct VoiceCommandErrorDto {
+    code: String,
+    message: String,
+}
+
+impl From<CloneTrainError> for VoiceCommandErrorDto {
+    fn from(error: CloneTrainError) -> Self {
+        Self {
+            code: error.code().to_string(),
+            message: error.message(),
+        }
+    }
+}
+
+impl From<VoiceStoreError> for VoiceCommandErrorDto {
+    fn from(error: VoiceStoreError) -> Self {
+        Self {
+            code: error.code().to_string(),
+            message: error.message(),
+        }
+    }
+}
+
+impl VoiceCommandErrorDto {
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: "internal".to_string(),
+            message: message.into(),
+        }
+    }
+
+    fn busy() -> Self {
+        Self {
+            code: "busy".to_string(),
+            message: "正在录音，请先停止录音再删除音色档案".to_string(),
+        }
+    }
+}
+
+/// The resolved voice for the badge: 我的克隆 vs 预置.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceRefDto {
+    kind: String,
+    name: String,
+}
+
+impl VoiceRefDto {
+    fn of(voice: &VoiceRef) -> Self {
+        match voice {
+            VoiceRef::Clone(speaker) => Self {
+                kind: "clone".to_string(),
+                name: speaker.as_str().to_string(),
+            },
+            VoiceRef::Preset(name) => Self {
+                kind: "preset".to_string(),
+                name: name.clone(),
+            },
+        }
+    }
+}
+
+/// What the enrollment wizard and the badge read (T4.3): the profile as saved
+/// (never the audio, never a credential), the voice that will actually speak,
+/// and a warning when the profile is unusable.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceStatusDto {
+    profile: Option<VoiceProfile>,
+    voice: VoiceRefDto,
+    warning: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteVoiceDto {
+    profile_removed: bool,
+    samples: Vec<String>,
+}
+
+fn app_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, VoiceCommandErrorDto> {
+    app.path()
+        .app_data_dir()
+        .map_err(|error| VoiceCommandErrorDto::internal(format!("应用数据目录不可用：{error}")))
+}
+
+/// The current status: stored profile + resolved voice. Never fails — a
+/// corrupt profile is a warning plus the preset voice, so the app can always
+/// render.
+fn voice_status(store: &VoiceStore) -> VoiceStatusDto {
+    let preset = preset_from_lookup(|name| std::env::var(name).ok());
+    let profile = store.load().ok().flatten();
+    let resolution = store.resolve(&preset);
+    VoiceStatusDto {
+        profile,
+        voice: VoiceRefDto::of(&resolution.voice),
+        warning: resolution.warning,
+    }
+}
+
+/// `train_voice_clone` — upload one recorded take and store the resulting
+/// voice profile. Emits `enrollment_train` progress (`training` → `ready` /
+/// `failed`) on the desktop window only.
+#[tauri::command]
+async fn train_voice_clone(
+    app: tauri::AppHandle,
+    sample_path: String,
+    transcript: String,
+) -> Result<VoiceStatusDto, VoiceCommandErrorDto> {
+    let root = app_root(&app)?;
+    let store = VoiceStore::new(&root);
+    let lookup = |name: &str| std::env::var(name).ok();
+    let trainer = CloneTrainer::from_lookup(lookup);
+    let speaker_id = next_speaker_id(lookup);
+
+    let _ = app.emit(
+        "enrollment_train",
+        serde_json::json!({ "stage": "training", "speakerId": speaker_id }),
+    );
+
+    match run_voice_clone_training(
+        &trainer,
+        &store,
+        std::path::Path::new(&sample_path),
+        &transcript,
+        &speaker_id,
+    )
+    .await
+    {
+        Ok(_profile) => {
+            let status = voice_status(&store);
+            let _ = app.emit(
+                "enrollment_train",
+                serde_json::json!({ "stage": "ready", "speakerId": speaker_id }),
+            );
+            Ok(status)
+        }
+        Err(error) => {
+            let dto: VoiceCommandErrorDto = error.into();
+            let _ = app.emit(
+                "enrollment_train",
+                serde_json::json!({
+                    "stage": "failed",
+                    "code": dto.code,
+                    "message": dto.message,
+                }),
+            );
+            Err(dto)
+        }
+    }
+}
+
+/// `get_voice_profile` — the stored profile, the resolved voice and any
+/// warning, for the wizard and the 「当前音色」 badge.
+#[tauri::command]
+fn get_voice_profile(app: tauri::AppHandle) -> Result<VoiceStatusDto, VoiceCommandErrorDto> {
+    let root = app_root(&app)?;
+    Ok(voice_status(&VoiceStore::new(&root)))
+}
+
+/// `delete_voice_profile` — wipe the profile and every enrollment take
+/// (T-02-16). Refused while a take is being recorded: the wipe must not race
+/// the capture that is still writing.
+#[tauri::command]
+fn delete_voice_profile(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EnrollmentState>,
+) -> Result<DeleteVoiceDto, VoiceCommandErrorDto> {
+    let active = state
+        .active
+        .lock()
+        .map_err(|_| VoiceCommandErrorDto::internal("录音状态异常，请重启应用后重试"))?;
+    if active.is_some() {
+        return Err(VoiceCommandErrorDto::busy());
+    }
+    drop(active);
+
+    let root = app_root(&app)?;
+    let outcome = VoiceStore::new(&root)
+        .delete()
+        .map_err(VoiceCommandErrorDto::from)?;
+    Ok(DeleteVoiceDto {
+        profile_removed: outcome.profile_removed,
+        samples: outcome
+            .samples
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -209,7 +411,10 @@ pub fn run() {
             stop_session,
             usage_summary,
             start_enrollment_recording,
-            stop_enrollment_recording
+            stop_enrollment_recording,
+            train_voice_clone,
+            get_voice_profile,
+            delete_voice_profile
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);
