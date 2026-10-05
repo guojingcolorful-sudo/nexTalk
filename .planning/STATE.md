@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 executing — 02-03 complete (2026-10-05)
-last_updated: "2026-10-05T13:13:00.000Z"
-last_activity: 2026-10-05 -- Completed 02-03-PLAN.md: cascade stability gate (commit gate / sentence aggregation / barge-in / retry+breaker / abstention+degraded) + JSONL trace & cost metering + 20-case failure library + usage panel
+stopped_at: Phase 2 executing — 02-04 complete (2026-10-05)
+last_updated: "2026-10-05T15:58:00.000Z"
+last_activity: 2026-10-05 -- Completed 02-04-PLAN.md: cross-lingual clone verdict approved + real cpal capture (48k→16k WAV) + voice_clone training & local voice profile + preset fallback + four-step enrollment wizard with preview/retrain
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 28
-  completed_plans: 8
-  percent: 29
+  completed_plans: 9
+  percent: 32
 ---
 
 # Project State
@@ -21,34 +21,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-26)
 
 **Core value:** 让用户以母语思考、以本人音色讲出地道英文——端到端延迟 ≤ 2 秒
-**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (02-03 done: cascade assembled behind the stability gate; 02-04 live probes next)
+**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (02-04 done: clone enrollment end-to-end — cross-lingual verdict approved, real capture, training, preset fallback, preview/retrain; 02-05 audio core next)
 
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 3 of 5 in current phase (02-03 complete; 02-04 next)
-Status: Phase 2 executing — the cascade is assembled and stability-gated (spoken ⊆ committed enforced at one gate), barge-in/retry/breaker/abstention verified, JSONL trace + cost meter live, 20-case failure library in CI; 02-04 (live probes: 火山 cross-lingual clone arbitration, real stage counters) is next
-Last activity: 2026-10-05 -- Completed quick task 261005-wdd: PreToolUse 风控 hook + permissions 收紧（git push 加 ask、git checkout 收窄为 -b；重启会话生效）
+Plan: 4 of 5 in current phase (02-04 complete; 02-05 next)
+Status: Phase 2 executing — clone enrollment lands end-to-end: cross-lingual verdict approved (三份对照工件), real cpal capture → 48k→16k WAV, voice_clone training + local voice profile, resolve_voice per fragment with preset fallback (unregistered users can run the pipeline), four-step wizard with preview/retrain; 02-05 (AEC + device hot-change) is next
+Last activity: 2026-10-05 -- Completed 02-04-PLAN.md: 跨语种克隆探针人耳裁决 approved（clone-en/zh/preset-en 三份工件）+ cpal 真实采集（48k→16k 单声道 WAV、0600、时长/体积/静音校验）+ voice_clone 训练（10MB 预检、WER 门 45001109）+ 本地音色档案与 resolve_voice 每片段解析 + 预置回退（未注册可用）+ 四步注册向导（试听 zh/en、重训保留旧音色、删除两击确认）；另有 quick task 261005-wdd（PreToolUse 风控 hook + permissions 收紧，重启会话生效）
 
-Progress: [███░░░░░░░] 29% (8/28 plans, Phase 1/7 done, Phase 2: 3/5)
+Progress: [████░░░░░░] 32% (9/28 plans, Phase 1/7 done, Phase 2: 4/5)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions; 02-03 ~5h active over three sessions, ~28h wall)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h + ~5h active
+- Total plans completed: 9
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions; 02-03 ~5h active over three sessions, ~28h wall; 02-04 ~2h active)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h + ~5h + ~2h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
-| 2. Real Cloud Pipeline + Audio Core | 3 | 5 | ~2d wall avg (all three span idle gaps) |
+| 2. Real Cloud Pipeline + Audio Core | 4 | 5 | ~2d wall avg (all four span idle gaps) |
 
 **Recent Trend:**
 
+- 02-04 clone enrollment (2026-10-05): 15 commits (5 RED + 4 GREEN + 1 chore + 2 docs + 1 probe + 2 test fixes), cargo 290 tests (188 lib + 8 cascade_integration + 15 enrollment_capture + 14 enrollment_train + 3 latency_rig + 31 mock_vendors + 5 session_integration + 19 stability + 6 voice_resolution + 1 doctest; 2 manual checks #[ignore]d) + 63 vitest (10 files) + 36 playwright (4 skipped) green, 跨语种克隆裁决 approved（真 key 探针两轮 6 份音频工件）, 5 auto-fixed deviations (3 Rule 1 + 1 Rule 2 + 1 Rule 3)
 - 02-03 stability gate (2026-10-05): 14 commits (6 RED + 6 GREEN + 1 pin-test + 1 feat-only non-TDD task), cargo 232 tests (165 lib + 8 cascade_integration + 3 rig + 31 mock_vendors + 5 session_integration + 19 stability + 1 doctest; 1 live variant #[ignore]d) + 162 vitest across 4 packages + 37 playwright (4 skipped) green, failure-cases 20/20, build 428.06 kB JS / 135.26 kB gz, 5 auto-fixed deviations (3 Rule 3 + 1 Rule 1 + 1 Rule 2), zero keys required
 - 02-02 vendor clients (2026-10-04): 12 commits (6 RED + 6 GREEN), cargo 155 tests (116 lib + 31 mock_vendors + 3 rig + 5 session_integration; 1 live variant `#[ignore]`d) + 145 vitest across 4 packages green, root `pnpm build` green, 3 auto-fixed deviations (all Rule 3 blocking) + 1 plan-accuracy note (`wire_shapes` test location), zero keys required
 - 02-01 latency rig (2026-10-03): 5 commits (2 RED + 2 GREEN + 1 chore), 50 cargo tests (43 lib + 3 rig + 4 integration; 1 live variant `#[ignore]`d) + 35 vitest (8 files) + 33 playwright green, build 420.93 kB JS / 133.45 kB gz, 2 auto-fixed deviations + 4 documented design/scope decisions (overlap-aware constructor, CI build step, requirement numbering reconciliation, no literal workspace flag in ci.yml)
@@ -63,6 +64,12 @@ Progress: [███░░░░░░░] 29% (8/28 plans, Phase 1/7 done, Phas
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [02-04]: 跨语种克隆裁决 approved（三份对照工件 clone-en/clone-zh/preset-en + 用户人耳判定，落 blind-clone-results.json 的 cross_lingual）——D-11 维持、GOV-16 备用供应商不触发；.env.example「ICL 2.0 仅同语种」矛盾被证伪（探针真 key 实跑）
+- [02-04]: 试听参数形状与探针逐参一致——英文 explicit_language=en + tone_fidelity=false，中文（同语种）省略两键（VolcTts::same_language() 构建器）；预置音色英文路径以探针 C 份为准，02-02 内联参数即正确形状
+- [02-04]: 采集纪律扩展（T-02-19）——cpal 回调只入队+溢出计数；drain 线程常驻消费并独占写 LevelHandle（AtomicU32 f32 bits），enrollment_level 命令 10Hz 读快照；此模式是 Phase 3 设备热切换的参照
+- [02-04]: resolve_voice() 每片段解析一次（cascade VoiceSource 闭包，不进程级缓存）——训练后即时生效；徽章与解析同源（T-02-20）；无档/坏档 → 预置 + 可读警告，永不阻塞启动（ROADMAP 成功标准 3 后半达成）
+- [02-04]: 重训复用档案 samplePath（不重录）；失败保留旧 speaker（previous 锚点）；试听不缓存（每次点击重新合成）；删除=档案+样本一次性清除且录音进行中拒绝（busy）
+- [02-04 Requirement numbering]: frontmatter [AUDI-05, GOV-16] 用 ROADMAP 成功标准口径——AUDI-05 = 克隆注册 = REQUIREMENTS.md **AUDI-03**（已推进 Complete (02-04)）；REQUIREMENTS.md 的 AUDI-05（AEC/设备热变更）属 02-05，未动。GOV-16 = 治理编号（备用供应商策略，未被触发）
 - [02-03]: 提交门是 GOV-15「spoken ⊆ committed」的唯一执法点——Cascade 只在 committed 文本上向翻译/TTS 放行，partial 仅渲染；句子聚合 + 本地能量 VAD 决定 silence 闭合的段边界（cascade_integration / stability 两套集成测试钉住）
 - [02-03]: 抢话 = epoch 自增先行（未播出音频整段丢弃、已播出部分带上限淡出 ~100ms）；最小语音门限 300–350ms 防自打断循环；02-05 的 jitter buffer 在此 playout 队列上扩展
 - [02-03]: 片段级重试恰好 2 次、退避 100→200ms、500ms 预算内放弃该片段；供应商连续 2 次失败 → 熔断 120s → 半开探测（BreakerState::HalfOpen）
@@ -140,8 +147,10 @@ None yet.
 - 01-05 Task 2 `<human-check>` (interactive `pnpm --filter @nextalk/desktop tauri dev` demo pass: QR scan → 开始模拟会话 → r1 flows to console + dual + phone in sync → phone count flips to 已连接 1 台设备 → phone mode switch → 打断/重听 → ended) is outstanding — needs a GUI session + phone + camera. Every leg has a green automated equivalent (29 cargo tests incl. the real-WS integration test; 29 playwright specs incl. demo.spec.ts); run it before `/gsd:verify-work`
 - Phase 1 is code-complete (5/5 plans, all automated gates green at HEAD) but its three human passes (01-03 desktop walkthrough, 01-04 real-device phone, 01-05 full demo) are the remaining end-of-phase manual checks
 - Playwright e2e now proves the mock-WS flow for BOTH surfaces; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
-- 02-03 Known stub: TraceRecord 的 StageUsage（STT 音频 ms/翻译 tokens/TTS 字符）默认全零——真实会话的成本面板与用量分钟数读 0，直到阶段计数接线（挂载点 TraceRecord::with_usage；02-04 装配或 Phase 3 telemetry）
-- 02-03: 失败案例 0017（跨语种克隆握手被拒）目标已是真实测试（volc_client_classifies_a_rejected_handshake_and_leaks_nothing），但案例措辞是占位——02-04 T4.0 锁定跨语种克隆结论后回填
+- 02-03 Known stub: TraceRecord 的 StageUsage（STT 音频 ms/翻译 tokens/TTS 字符）默认全零——真实会话的成本面板与用量分钟数读 0，直到阶段计数接线（挂载点 TraceRecord::with_usage；02-04 未接线——本计划不含阶段计数——顺延 Phase 3 telemetry）
+- ~~02-03: 失败案例 0017（跨语种克隆握手被拒）措辞为占位~~ RESOLVED 2026-10-05 (02-04): T4.0 裁决 approved 后措辞已回填（043cba5）；探针通过故未新增 0003/0021 案例（0003 编号已被 02-03 占用）
+- 02-04: 真人 GUI 验证未跑——注册→训练→试听全流程 + fallback 人工检查（删 voice/profile.json → 启动 → 跑一轮对话）需要 GUI + 麦克风；自动化等价物全绿（voice_resolution 6 条 + enrollment e2e 四步）。`tests/enrollment_capture.rs` 的真机采集测试为 `#[ignore]` 手动项。跑一次再 `/gsd:verify-work`
+- 02-04: `audio::play_pcm_blocking` 是临时最小回放助手（代码注释注明）——02-05 的完整播放链（抖动缓冲 + AEC 参考）应替换它，勿在其上扩展功能
 
 ### Quick Tasks Completed
 
@@ -161,6 +170,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-10-05T13:13:00.000Z
-Stopped at: Completed 02-03-PLAN.md (stability gate: preview-vs-commit enforcement, sentence aggregation + local VAD, epoch-guarded barge-in, fragment retry + per-vendor breaker + Chinese-locked degraded display, deterministic numeric validation + silent abstention, single-writer bounded JSONL trace + cost/usage panels, 20-case failure library in CI) — 02-04 (live probes: cross-lingual clone arbitration + real stage counters) is next
-Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-03-SUMMARY.md
+Last session: 2026-10-05T15:58:00.000Z
+Stopped at: Completed 02-04-PLAN.md (跨语种克隆裁决 approved + cpal 真实采集 48k→16k WAV + voice_clone 训练与本地音色档案 + 预置回退与 resolve_voice 每片段解析 + 四步注册向导试听/重训/删除；290 cargo + 63 vitest + 36 playwright 全绿) — 02-05 (AEC wiring + 设备热变更) is next
+Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-04-SUMMARY.md
