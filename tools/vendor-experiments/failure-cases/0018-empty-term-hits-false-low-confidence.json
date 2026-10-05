@@ -1,0 +1,11 @@
+{
+  "id": "0018",
+  "title": "术语命中为空被误判为低置信，正常句被错误标注",
+  "root_cause": "模型幻觉：把「无术语命中」当作置信证据，凭空生成低置信标记",
+  "source": "低置信事件（无受保护术语的句子被标低置信）",
+  "input": "无受保护术语的自然句（termHits 为空）",
+  "wrong_output": "confidence 被标为低，溯源被标成由数据推断",
+  "expected_output": "无命中 ≠ 低置信；置信只在供应商真实发送时记录",
+  "fix": "置信仅采信供应商字段，空 termHits 不影响置信，不凭空推断",
+  "regression_test": "cargo: the_confidence_is_only_reported_when_the_vendor_sends_one"
+}

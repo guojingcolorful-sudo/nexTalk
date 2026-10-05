@@ -1,0 +1,11 @@
+{
+  "id": "0019",
+  "title": "重试预算耗尽后仍占用该段会话，后续句子被拖垮",
+  "root_cause": "其他：重试超出预算未收敛，段级管道一直挂在该段上",
+  "source": "低置信事件（重试计数超过预算仍未见终止）",
+  "input": "单段连续失败耗尽重试预算",
+  "wrong_output": "永不放弃，会话阻塞在失败段",
+  "expected_output": "预算耗尽即放弃该段并继续，整体会话不被拖垮",
+  "fix": "重试预算耗尽后返回失败并释放段，后续段照常流转",
+  "regression_test": "cargo: retry_gives_up_when_the_budget_is_gone_and_keeps_going"
+}

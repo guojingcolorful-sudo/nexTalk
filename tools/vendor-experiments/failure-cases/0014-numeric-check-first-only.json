@@ -1,0 +1,11 @@
+{
+  "id": "0014",
+  "title": "数字校验只比对第一个数字，后出现的数值漂移漏网",
+  "root_cause": "数字漂移：校验实现只检查首个口播候选，其余数字未参与比对",
+  "source": "人工抽检（多数字句子的校验覆盖不足）",
+  "input": "源文同时含「800 毫秒」与「3 个节点」",
+  "wrong_output": "800 被抓住但「30 个节点」的漂移仍放行",
+  "expected_output": "每个口播候选数字都参与比对，任一漂移即拒绝",
+  "fix": "校验遍历全部口播候选而非仅首个",
+  "regression_test": "cargo: numeric_validation_checks_every_spoken_candidate"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "0009",
+  "title": "翻译流中的畸形 JSON 事件被静默跳过，句子永远等不到译文",
+  "root_cause": "模型幻觉：SSE 数据里出现非法 JSON 片段，解析失败被忽略不计",
+  "source": "人工抽检（mock 服务器注入畸形事件回放）",
+  "input": "SSE data: {\"choices\": [oops}",
+  "wrong_output": "静默丢弃该事件，句子挂起等待一个永不到的译文",
+  "expected_output": "显式归类为可重试失败并重试，不静默丢弃",
+  "fix": "DeepSeek 客户端把畸形事件归类为 retryable 失败；空 JSON body 仍不算错误",
+  "regression_test": "cargo: deepseek_client_surfaces_a_malformed_event_as_a_retryable_failure"
+}

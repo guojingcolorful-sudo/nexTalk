@@ -1,0 +1,11 @@
+{
+  "id": "0015",
+  "title": "数字校验拦截后前端未展示降级态，用户看到空白气泡",
+  "root_cause": "其他：降级结果（锁定文案 + 原文 + 正在重试）未渲染，气泡空置",
+  "source": "用户反馈（拦截后字幕短暂空白）",
+  "input": "degraded 事件（badge + 锁定文案 + 原文 + 正在重试）",
+  "wrong_output": "气泡空白，或只显示一个编造的英文句",
+  "expected_output": "展示徽标、锁定文案、原文与「正在重试」，绝不编造英文；下一个健康事件到达时降级态无残留",
+  "fix": "ChatBubble 渲染降级形态；健康事件按段覆盖并移除降级态",
+  "regression_test": "vitest: renders the badge, the locked copy, the original and 正在重试 — never a fabricated English line"
+}

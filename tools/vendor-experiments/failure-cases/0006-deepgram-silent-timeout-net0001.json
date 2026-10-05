@@ -1,0 +1,11 @@
+{
+  "id": "0006",
+  "title": "Deepgram 静默超时（NET-0001）被当作一般断线，重连策略误判",
+  "root_cause": "其他：close reason NET-0001 未被识别为「无数据静默超时」这一可重试类",
+  "source": "人工抽检（mock 服务器回放 NET-0001 关闭帧）",
+  "input": "WebSocket close 帧：reason=NET-0001，期间无任何 transcript 数据",
+  "wrong_output": "按协议错误终止会话，或立即放弃且不重连",
+  "expected_output": "归类为可重试的静默超时，按重试预算重连并保持会话",
+  "fix": "Deepgram 客户端识别 NET-0001 → 可重试静默超时（silent timeout）",
+  "regression_test": "cargo: deepgram_client_classifies_the_net_0001_close_as_a_retryable_silent_timeout"
+}

@@ -1,4 +1,6 @@
-# NexTalk CI — 四条并行车道：web 单测、e2e、Rust 全量、延迟 rig 冒烟。
+# NexTalk CI — 五条并行车道：web 单测、e2e、Rust 全量、延迟 rig 冒烟、
+# 失败案例回归（tools/vendor-experiments/failure-cases：案卷校验 + 逐例执行
+# regression_test 指向的真实测试，零供应商 key、零网络）。
 #
 # 研究修正 8（02-01）：本仓库没有 Cargo workspace —— 只有
 # apps/desktop/src-tauri/Cargo.toml 一个 crate 清单。所有 cargo 命令一律写成
@@ -71,3 +73,23 @@ jobs:
           workspaces: apps/desktop/src-tauri
       # 预算断言在 CI 中硬失败：e2e > 2000ms 即红，并打印归因阶段。
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --nocapture
+
+  failure-cases:
+    name: failure-cases
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      # 先校验案卷本身（schema/枚举/id ≥20/回归目标真实存在），再逐例执行
+      # regression_test：cargo 目标走 --manifest-path，vitest 目标按命中包执行。
+      - run: node tools/vendor-experiments/failure-cases/run.mjs --check
+      - run: node tools/vendor-experiments/failure-cases/run.mjs --run

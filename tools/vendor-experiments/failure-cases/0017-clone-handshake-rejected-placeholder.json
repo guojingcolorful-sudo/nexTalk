@@ -1,0 +1,11 @@
+{
+  "id": "0017",
+  "title": "跨语种克隆握手被拒（占位：待 02-04 T4.0 锁定结论回填）",
+  "root_cause": "音频质量：克隆资源握手被供应商拒绝（音色/语种匹配场景），无音频产出",
+  "source": "人工抽检（克隆握手失败回放）",
+  "input": "克隆资源握手请求（被供应商拒绝）",
+  "wrong_output": "错误回显携带凭据/请求细节，或静默无限重试",
+  "expected_output": "归类为自身失败（非重试）且不回显任何凭据，给出降级路径（占位，02-04 T4.0 结论回填）",
+  "fix": "握手被拒归类为终止失败、错误不回显敏感细节（占位待 T4.0 回填）",
+  "regression_test": "cargo: volc_client_classifies_a_rejected_handshake_and_leaks_nothing"
+}

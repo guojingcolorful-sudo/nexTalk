@@ -1,0 +1,11 @@
+{
+  "id": "0005",
+  "title": "用户抢话时旧句占线音频未清空，面试官听到上一句残音叠新句",
+  "root_cause": "其他：中断未丢弃未播出的 playout 音频，播放队列与新一轮输出重叠",
+  "source": "人工抽检（双通道回放：中断后仍能听到上一句尾音）",
+  "input": "（TTS 播放中）用户打断并开始新一句",
+  "wrong_output": "新音频叠在旧尾音上，两个声音同时出现",
+  "expected_output": "中断立即丢弃未播出的音频、对尾音淡出，新句独占播放",
+  "fix": "interrupt 先推进 epoch 再清空 playout：未播出的丢弃，已播出的淡出",
+  "regression_test": "cargo: interrupt_drops_unplayed_playout_audio_and_fades_the_tail"
+}

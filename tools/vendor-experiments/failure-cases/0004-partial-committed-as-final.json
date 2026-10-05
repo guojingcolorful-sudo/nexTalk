@@ -1,0 +1,11 @@
+{
+  "id": "0004",
+  "title": "STT 中间态（partial）被当作最终句提交，残缺句进入翻译",
+  "root_cause": "其他：把 partial 帧当作 final 处理，未等待句闭合（flush）信号",
+  "source": "低置信事件（回放日志中短句被重复翻译）",
+  "input": "partial「我们先来看第」…… flush 后 final「我们先来看第二个问题」",
+  "wrong_output": "「我们先来看第」被翻译成残缺英文并上屏",
+  "expected_output": "只提交 flush 闭合的句子，partial 仅更新缓冲",
+  "fix": "转写缓冲只在 flush 时提交；中间态不产出最终句、不触发翻译",
+  "regression_test": "cargo: the_transcript_buffer_commits_only_on_a_flush"
+}

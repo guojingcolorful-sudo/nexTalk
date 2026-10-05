@@ -1,0 +1,11 @@
+{
+  "id": "0008",
+  "title": "讯飞 wpgs 的 rpl 帧重建错误，替换区间覆盖过量文本",
+  "root_cause": "其他：wpgs=rpl 替换指令未按覆盖区间重建，旧候选残留拼接",
+  "source": "人工抽检（wpgs 动态修正事件回放）",
+  "input": "interim「连表查询」→ rpl 帧：「连表查询瓶颈」",
+  "wrong_output": "「连表查询连表查询瓶颈」重复拼接，覆盖区间外的文本也受损",
+  "expected_output": "rpl 精确重写被覆盖区间，区间外文本逐字不变",
+  "fix": "按 wpgs 覆盖区间执行替换，替换范围外保持原样",
+  "regression_test": "cargo: wpgs_replace_rewrites_the_covered_range"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "0011",
+  "title": "熔断打开期间仍继续发起供应商请求，重试风暴放大故障",
+  "root_cause": "其他：断路器打开后未见请求抑制，重试路径照发请求",
+  "source": "人工抽检（重试次数与供应商请求计数不符）",
+  "input": "连续失败触发熔断阈值后继续重试",
+  "wrong_output": "熔断后供应商请求计数继续增长",
+  "expected_output": "熔断打开即短路，重试预算内不再打供应商",
+  "fix": "重试前先查断路器状态，打开即返回错误、不调用供应商",
+  "regression_test": "cargo: retry_stops_calling_when_the_breaker_opens"
+}

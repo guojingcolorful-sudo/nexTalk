@@ -1,0 +1,11 @@
+{
+  "id": "0010",
+  "title": "火山 TTS 错误帧被忽略，客户端等待一个永不到来的音频",
+  "root_cause": "其他：错误帧（code + message）未升级为终止失败，客户端继续等音频",
+  "source": "低置信事件（合成超时告警伴随无音频产出）",
+  "input": "TTS 流中 {\"code\": 3001, \"message\": \"...\"} 错误帧",
+  "wrong_output": "客户端挂起直到超时，误报为网络问题",
+  "expected_output": "错误帧立即上报为终止失败，携带错误码与消息",
+  "fix": "火山客户端把错误帧归类为 terminal（不可重试）失败，会话走降级路径",
+  "regression_test": "cargo: volc_client_reports_an_error_frame_as_a_terminal_failure"
+}

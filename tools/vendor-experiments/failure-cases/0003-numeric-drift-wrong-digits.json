@@ -1,0 +1,11 @@
+{
+  "id": "0003",
+  "title": "译文数字漂移：源文 800 毫秒被译成 8000 毫秒",
+  "root_cause": "数字漂移：模型对数值的生成不受约束，译文数字集合与源文不一致",
+  "source": "人工抽检（翻译探针数字集合比对，2026-09-29）",
+  "input": "单次响应超过 800 毫秒。",
+  "wrong_output": "…exceeding 8000 milliseconds.（数字表意漂移）",
+  "expected_output": "校验层拒绝该译文并携带原证据（raw evidence），不允许静默放行",
+  "fix": "D-04 数字一致性校验按数字集合比对源文与译文，不一致即拒绝",
+  "regression_test": "cargo: drifted_numbers_are_rejected_with_raw_evidence"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "0016",
+  "title": "轨迹写队列无界增长：磁盘慢时内存随记录数线性上涨",
+  "root_cause": "其他：写队列无容量上限，磁盘写入迟缓时积压无限增长",
+  "source": "人工抽检（长会话内存曲线与写入速率不符）",
+  "input": "磁盘写入迟缓时持续追加轨迹记录",
+  "wrong_output": "内存随记录数线性增长，进程最终 OOM",
+  "expected_output": "队列有界：满即拒绝并计数（dropped_records），生产者永不阻塞",
+  "fix": "写队列固定容量（1024），try_send 失败计数可见，flush 后核对落盘行数",
+  "regression_test": "cargo: a_full_queue_drops_counted_records_instead_of_blocking"
+}

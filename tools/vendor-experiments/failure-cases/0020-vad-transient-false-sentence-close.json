@@ -1,0 +1,11 @@
+{
+  "id": "0020",
+  "title": "静默段被瞬态气声打断，短促噪声触发一次空句闭合",
+  "root_cause": "音频质量：气声/瞬态被 VAD 当作语音，静默事件被当成句闭合",
+  "source": "人工抽检（VAD 事件回放：瞬态触发句闭合）",
+  "input": "短促气声 + 静默",
+  "wrong_output": "触发一次空翻译，用户看到不存在的句子",
+  "expected_output": "瞬态被丢弃；静默正常闭合句子且不产生空段",
+  "fix": "VAD 对瞬态做丢弃处理，静默闭合与瞬态处理分别断言",
+  "regression_test": "cargo: silence_closes_and_transients_are_discarded"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "0012",
+  "title": "保留字段（sc）被当成供应商置信度，代理置信被误标为 vendor",
+  "root_cause": "其他：把保留/未定义字段解析成 vendor 置信来源，污染溯源字段",
+  "source": "人工抽检（溯源核对：sc 值被当作 vendor 证据）",
+  "input": "讯飞返回中含保留字段 sc=1",
+  "wrong_output": "confidence_source 标为 vendor，置信值凭空出现",
+  "expected_output": "仅当供应商真实发送置信字段才记 vendor；保留字段永不作为证据",
+  "fix": "置信来源只由已声明的 vendor 字段决定，保留字段（sc）被忽略",
+  "regression_test": "cargo: confidence_is_never_invented_from_the_reserved_sc_field"
+}

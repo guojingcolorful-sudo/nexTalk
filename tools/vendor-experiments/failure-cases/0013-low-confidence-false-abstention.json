@@ -1,0 +1,11 @@
+{
+  "id": "0013",
+  "title": "低置信被误判为弃权，完整文本的句子被标「待翻译」",
+  "root_cause": "其他：弃权条件写成「低置信即弃」，与契约（无有效文本才弃权）不符",
+  "source": "低置信事件（低置信句子被错误弃权）",
+  "input": "低置信但有完整中文文本的 final 句",
+  "wrong_output": "标记 abstained，用户看到「待翻译」而原文其实完整",
+  "expected_output": "低置信只做降级标注；弃权仅发生在没有有效文本时",
+  "fix": "弃权判定只看「是否存在有效文本」，低置信永不弃权",
+  "regression_test": "cargo: low_confidence_never_abstains"
+}
