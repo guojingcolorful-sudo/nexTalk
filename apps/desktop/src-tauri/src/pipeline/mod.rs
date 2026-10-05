@@ -12,9 +12,11 @@
 pub mod breaker;
 pub mod budget;
 pub mod cascade;
+pub mod confidence;
 pub mod segment;
 pub mod stages;
 pub mod vad;
+pub mod validate;
 
 #[cfg(test)]
 mod budget_test;

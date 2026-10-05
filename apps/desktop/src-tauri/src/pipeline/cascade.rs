@@ -45,6 +45,9 @@ use crate::pipeline::stages::{
     TokenUsage, Translator, TranslatorEvent, TtsEvent, TtsSink, TtsUsage, VendorStt,
     VendorTranslator, VendorTts, VoiceRef, ZhFragment,
 };
+use crate::pipeline::validate::{
+    validate_number_consistency, ValidationResult, NUMERIC_MISMATCH_CODE,
+};
 use crate::sim::source::TimeSource;
 
 /// Preset voice used until 02-04 resolves the user's clone per fragment.
@@ -252,6 +255,12 @@ pub struct CascadeLedger {
     pub empty_segments: Vec<u64>,
     /// Translator-declared abstentions (D-03).
     pub abstained: Vec<AbstainReason>,
+    /// Spoken candidates that passed the D-04 numeric check (GOV-04). The
+    /// check sits at the single TTS exit, so this equals
+    /// `tts_inputs + validation_rejections` — the coverage witness.
+    pub validation_checks: u32,
+    /// Segments whose candidate was withheld by the check (never spoken).
+    pub validation_rejections: Vec<u64>,
     /// Token accounting per segment (D-13 consumes it in T3.7).
     pub usage: Vec<(u64, TokenUsage)>,
     /// Character accounting per segment (D-13).
@@ -340,6 +349,13 @@ pub struct SegmentOutcome {
     /// Set when the fragment degraded (GOV-14): the reason the subtitle shows
     /// the original with a badge. `None` is the healthy path.
     pub degraded: Option<Degraded>,
+    /// The D-04 verdict (GOV-04) when the candidate reached the single TTS
+    /// exit. `None` means no candidate was ever produced (abstained,
+    /// unfinalized, or empty translation).
+    pub validation: Option<ValidationResult>,
+    /// The reason the segment produced no speakable text (D-03) — the value
+    /// the `abstained` event and the 「待翻译」 marker are built from.
+    pub abstained: Option<AbstainReason>,
 }
 
 /// The user-track cascade: STT → commit gate → segmenter → translator →
@@ -550,10 +566,15 @@ impl<S: SttSource> Cascade<S> {
             tts_calls: 0,
             waterfall: None,
             degraded: None,
+            validation: None,
+            abstained: None,
         };
 
         if segment.zh_text.trim().is_empty() {
-            // D-03: no valid text is the only abstain. T3.6 emits the event.
+            // D-03: no valid text is the only abstain on the normal path —
+            // speech was present (the segment opened), nothing recognisable
+            // came out of it. T3.6 emits the `abstained` event from here.
+            outcome.abstained = Some(AbstainReason::Unrecognized);
             self.ledger.empty_segments.push(segment.id);
             self.settle_waterfall(&mut outcome);
             return Ok(outcome);
@@ -624,11 +645,12 @@ impl<S: SttSource> Cascade<S> {
             }
         };
 
-        // A translation result was adopted — the healthy meaning of
-        // `translated` (the exhausted path above returned with it false).
-        outcome.translated = true;
+        // A translation result was adopted — unless the vendor declined
+        // (D-03): an abstention is a decided outcome, not a translation.
+        outcome.translated = cycle.abstained.is_none();
         if let Some(reason) = cycle.abstained {
             self.ledger.abstained.push(reason);
+            outcome.abstained = Some(reason);
         }
         self.ledger
             .usage
@@ -651,6 +673,25 @@ impl<S: SttSource> Cascade<S> {
         }
 
         self.ledger.assembled.push(english.clone());
+
+        // GOV-04/D-04: the single TTS exit passes the deterministic check —
+        // every candidate is checked exactly once, so the coverage equation
+        // `validation_checks == tts_inputs + validation_rejections` holds with
+        // no remainder. A mismatch is withheld: the original stays on screen in
+        // the degraded form (T-02-12) and no English is spoken.
+        self.ledger.validation_checks += 1;
+        outcome.validation = Some(validate_number_consistency(&segment.zh_text, &english));
+        if let Some(ValidationResult::Mismatch { .. }) = &outcome.validation {
+            self.ledger.validation_rejections.push(segment.id);
+            outcome.degraded = Some(Degraded {
+                error_code: NUMERIC_MISMATCH_CODE.to_string(),
+                attempts: attempt,
+                waited_ms,
+            });
+            self.settle_waterfall(&mut outcome);
+            return Ok(outcome);
+        }
+
         // The invariant witness is recorded at the single hand-off point.
         self.ledger.tts_inputs.push(english.clone());
 

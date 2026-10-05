@@ -88,30 +88,11 @@ impl fmt::Debug for MarkHandle {
 // shared vocabulary
 // ---------------------------------------------------------------------------
 
-/// Where a [`SttPartial::confidence`] value came from (research correction 3).
-///
-/// 讯飞 has no per-word score — its `sc` field is reserved and always 0 — so a
-/// `None`/proxy value must be distinguishable from a real vendor score instead
-/// of being averaged into one number (D-02 / GOV-05).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfidenceSource {
-    /// The vendor returned a score we can use.
-    Vendor,
-    /// A local proxy produced the value (02-03 T3.6).
-    Proxy,
-    /// No vendor score and no proxy yet — the Phase 2 讯飞 state.
-    ProxyUnavailable,
-}
-
-impl ConfidenceSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ConfidenceSource::Vendor => "vendor",
-            ConfidenceSource::Proxy => "proxy",
-            ConfidenceSource::ProxyUnavailable => "proxy_unavailable",
-        }
-    }
-}
+// The provenance enum lives in `pipeline::confidence` (02-03 T3.6): it is
+// shared vocabulary, but its home is the confidence module (data-only —
+// GOV-01/02 2026-09-30 revision). This re-export keeps every existing
+// `stages::…::ConfidenceSource` path working.
+pub use crate::pipeline::confidence::ConfidenceSource;
 
 /// Why the translator declined to answer (D-03: abstain only on silent audio).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

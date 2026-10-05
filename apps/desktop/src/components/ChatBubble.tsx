@@ -36,6 +36,13 @@ interface ChatBubbleProps {
    * fabricated, and every language preference is overridden while degraded.
    */
   degraded?: { errorCode: string };
+  /**
+   * D-03: the segment produced no speakable text — the bubble renders the
+   * locked 「待翻译」 state instead of a message. The state outranks any text
+   * that arrived with it, and it is never a confidence mark (GOV-01/02,
+   * 2026-09-30: subtitles carry no confidence badges).
+   */
+  abstained?: boolean;
 }
 
 function present(text?: string): string | undefined {
@@ -65,6 +72,7 @@ export default function ChatBubble({
   mode = null,
   instant = false,
   degraded,
+  abstained = false,
 }: ChatBubbleProps) {
   const [localPref, setLocalPref] = useState<LanguagePref | null>(null);
   const pref = localPref ?? mode ?? SPEAKER_DEFAULT_PREF[speaker];
@@ -95,12 +103,42 @@ export default function ChatBubble({
     primary = secondary ?? (pref === 'all-zh' ? enText : zhText);
     secondary = undefined;
   }
-  if (primary === undefined && !degradedView) return null;
   // UAT-10/12: the newest line teleprompters (40ms/char, instant under
   // reduced motion); past subtitles render complete immediately. The subline
-  // always stays instant so it never lags behind.
+  // always stays instant so it never lags behind. The hook runs before any
+  // early return: a bubble can gain or lose text between frames, and a
+  // conditional hook would change the hook count mid-stream.
   const typedPrimary = useTypewriter(primary ?? '');
   const shownPrimary = instant ? (primary ?? '') : typedPrimary;
+
+  if (primary === undefined && !degradedView && !abstained) return null;
+
+  // D-03: no speakable text — the card is a STATE, not a message. It renders
+  // as its own locked 「待翻译」 form (no language toggle: there is nothing to
+  // toggle) and outranks any text that arrived with the event.
+  if (abstained) {
+    return (
+      <div className={`flex w-[95%] flex-col gap-1 ${isUser ? 'self-end' : ''}`}>
+        <div className={`mb-1 flex items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
+          <span
+            className={`text-xs font-bold uppercase ${isUser ? 'text-portalGreen' : 'text-gray-400'}`}
+          >
+            <FontAwesomeIcon icon={isUser ? faMicrophone : faUserTie} aria-hidden="true" className="mr-1" />
+            {isUser ? '用户' : '面试官'}
+          </span>
+        </div>
+        <p
+          className={`min-h-[1.5em] rounded-xl border-2 border-dashed p-3 text-[15px] font-semibold text-gray-400 ${
+            isUser
+              ? 'rounded-tr-none border-portalGreen bg-green-900 text-right'
+              : 'rounded-tl-none border-gray-600 bg-slate-800'
+          }`}
+        >
+          待翻译
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex w-[95%] flex-col gap-1 ${isUser ? 'self-end' : ''}`}>

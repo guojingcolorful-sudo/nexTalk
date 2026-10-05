@@ -29,6 +29,13 @@ interface ChatBubbleProps {
    * English line, never a silent gap.
    */
   degraded?: { errorCode: string };
+  /**
+   * D-03: the segment produced no speakable text — the bubble renders the
+   * identical locked 「待翻译」 state as the desktop instead of a message. The
+   * state outranks any text that arrived with it, and it is never a
+   * confidence mark (GOV-01/02, 2026-09-30).
+   */
+  abstained?: boolean;
 }
 
 const SPEAKER_LABEL: Record<Speaker, string> = {
@@ -59,8 +66,34 @@ export default function ChatBubble({
   language,
   instant = false,
   degraded,
+  abstained = false,
 }: ChatBubbleProps) {
   const isUser = speaker === 'user';
+
+  // D-03: no speakable text — the card is a STATE, not a message. It renders
+  // as its own locked 「待翻译」 form and outranks any text that arrived with
+  // the event.
+  if (abstained) {
+    return (
+      <article
+        aria-label={SPEAKER_LABEL[speaker]}
+        className={`flex w-full flex-col ${isUser ? 'items-end' : 'items-start'}`}
+      >
+        <span className="mb-1 text-xs font-bold uppercase tracking-wider text-gray-400">
+          {SPEAKER_LABEL[speaker]}
+        </span>
+        <div
+          className={`w-fit max-w-[95%] rounded-xl border-2 border-dashed p-3 ${
+            isUser
+              ? 'rounded-tr-none border-portalGreen bg-green-900'
+              : 'rounded-tl-none border-gray-600 bg-slate-800'
+          }`}
+        >
+          <p className="min-h-[1.5em] font-semibold text-gray-400">待翻译</p>
+        </div>
+      </article>
+    );
+  }
 
   const zhText = present(zh);
   const enText = present(en);

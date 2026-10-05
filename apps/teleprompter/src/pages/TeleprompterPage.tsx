@@ -28,6 +28,10 @@ import { useWs, type WsConnectionState, type WsTicket } from '../hooks/useWs';
 const TAB_PARAM = 'tab';
 
 type SubtitleEvent = Extract<ServerEvent, { t: 'subtitle' }>;
+type AbstainedEvent = Extract<ServerEvent, { t: 'abstained' }>;
+
+/** One entry in the 字幕 list: a line, or the D-03 「待翻译」 state. */
+type StreamItem = SubtitleEvent | AbstainedEvent;
 
 /** One item in the AI 辅助 tab: a recorded question or a strategy card. */
 type AiTabItem =
@@ -162,14 +166,18 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
   // Word-level streaming (2026-10-04): one bubble per speaker line — repeated
   // frames with the same id refine it in place, mirroring the desktop. A line
   // that streamed partials never re-types its final (the typewriter belongs to
-  // lines that arrived whole, like the user's answer).
+  // lines that arrived whole, like the user's answer). D-03 abstentions are
+  // their own event and join the same stream by id, so the 「待翻译」 state
+  // keeps its place among the subtitles.
   const { subtitles, streamedIds } = useMemo(() => {
-    const byId = new Map<string, SubtitleEvent>();
+    const byId = new Map<string, StreamItem>();
     const streamed = new Set<string>();
     for (const event of events) {
       if (event.t === 'subtitle') {
         byId.set(event.id, event);
         if (!event.final) streamed.add(event.id);
+      } else if (event.t === 'abstained') {
+        byId.set(event.id, event);
       }
     }
     return { subtitles: [...byId.values()], streamedIds: streamed };
@@ -301,22 +309,26 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                   key={subtitle.id}
                   ref={subtitle.id === anchorId ? anchorRef : null}
                 >
-                  <ChatBubble
-                    speaker={subtitle.speaker}
-                    zh={subtitle.zh}
-                    en={subtitle.en}
-                    language={languagePref}
-                    degraded={
-                      subtitle.trace?.errorCode !== undefined
-                        ? { errorCode: subtitle.trace.errorCode }
-                        : undefined
-                    }
-                    instant={
-                      index < subtitles.length - 1 ||
-                      !subtitle.final ||
-                      streamedIds.has(subtitle.id)
-                    }
-                  />
+                  {subtitle.t === 'abstained' ? (
+                    <ChatBubble speaker={subtitle.speaker} abstained />
+                  ) : (
+                    <ChatBubble
+                      speaker={subtitle.speaker}
+                      zh={subtitle.zh}
+                      en={subtitle.en}
+                      language={languagePref}
+                      degraded={
+                        subtitle.trace?.errorCode !== undefined
+                          ? { errorCode: subtitle.trace.errorCode }
+                          : undefined
+                      }
+                      instant={
+                        index < subtitles.length - 1 ||
+                        !subtitle.final ||
+                        streamedIds.has(subtitle.id)
+                      }
+                    />
+                  )}
                 </div>
               ))
             )}
