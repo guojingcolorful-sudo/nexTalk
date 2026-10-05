@@ -261,24 +261,6 @@ test.describe('console hub', () => {
 
 /** The locked sim script (src-tauri/src/sim/script.rs) — the dual pane must
  *  render exactly this content. */
-/** Serialized into the page: the mic request is refused (unavailable path). */
-function denyMicrophone(): void {
-  Object.defineProperty(navigator, 'mediaDevices', {
-    configurable: true,
-    value: { getUserMedia: () => Promise.reject(new Error('NotAllowedError')) },
-  });
-}
-
-/** Serialized into the page: a silent fake stream so recording can start. */
-function grantMicrophone(): void {
-  Object.defineProperty(navigator, 'mediaDevices', {
-    configurable: true,
-    value: {
-      getUserMedia: () => Promise.resolve({ getTracks: () => [{ stop: () => undefined }] }),
-    },
-  });
-}
-
 const QUESTION_EN =
   'Could you walk me through the specific steps you took to optimize the database?';
 const QUESTION_ZH = '你能详细说一下你优化数据库的具体步骤吗？';
@@ -508,54 +490,10 @@ test.describe('setup wizard', () => {
   });
 });
 
-test.describe('voice enrollment', () => {
-  test.use({ viewport: CONSOLE_VIEWPORT });
-
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(installTauriMock);
-    await page.addInitScript(denyMicrophone);
-  });
-
-  test('shows the locked mic-unavailable banner when the mic is refused', async ({ page }) => {
-    await page.goto('/#/voice');
-
-    await expect(page.getByRole('heading', { name: '音色注册' })).toBeVisible();
-    await expect(page.getByText(VOICE_READING_TEXT)).toBeVisible();
-
-    await page.getByRole('button', { name: '下一步' }).click();
-    await expect(page.getByRole('heading', { name: '录音 1-3 分钟' })).toBeVisible();
-    await expect(page.getByTestId('recording-countdown')).toHaveText('03:00');
-
-    await page.getByRole('button', { name: '开始录音' }).click();
-
-    const banner = page.getByRole('alert');
-    await expect(banner).toContainText('麦克风不可用');
-    await expect(banner).toContainText('请在 系统设置 → 隐私与安全性 → 麦克风 中允许访问');
-    // Nothing was captured — the wizard stays on the recording step.
-    await expect(page.getByText('麦克风开启-监听中')).toHaveCount(0);
-    await expect(page.getByTestId('recording-countdown')).toHaveText('03:00');
-  });
-
-  test('records with a countdown, then finishes on the sample step', async ({ page }) => {
-    await page.addInitScript(grantMicrophone);
-    await page.goto('/#/voice');
-
-    await page.getByRole('button', { name: '下一步' }).click();
-    await page.getByRole('button', { name: '开始录音' }).click();
-
-    await expect(page.getByText('麦克风开启-监听中')).toBeVisible();
-    await expect(page.getByTestId('recording-countdown')).toHaveText(/^0[23]:\d{2}$/);
-
-    await page.getByRole('button', { name: '停止录音' }).click();
-    await expect(page.getByRole('heading', { name: '试听与完成' })).toBeVisible();
-    await expect(page.getByText('音色样本占位')).toBeVisible();
-    await expect(page.getByText('模拟数据')).toBeVisible();
-    await expect(page.getByRole('button', { name: '播放' })).toBeDisabled();
-
-    await page.getByRole('button', { name: '完成' }).click();
-    await expect(page).toHaveURL(/#\/console$/);
-  });
-});
+// The voice enrollment wizard is driven entirely by Rust commands now (02-04
+// T4.3/T4.4) — its full four-step walk, on a stateful mock backend, lives in
+// e2e/enrollment.spec.ts. The old 3-step getUserMedia page it replaced no
+// longer exists.
 
 test.describe('glossary', () => {
   test.use({ viewport: CONSOLE_VIEWPORT });
