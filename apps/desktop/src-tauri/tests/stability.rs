@@ -31,6 +31,9 @@ use nextalk_desktop_lib::audio::playout::{
     should_interrupt, PlayoutConfig, PlayoutQueue, FADE_OUT_MS, MIN_INTERRUPT_SPEECH_MS,
 };
 use nextalk_desktop_lib::audio::{PlayoutSink, RenderReference};
+use nextalk_desktop_lib::lan::server::{
+    ConfidenceSource as WireConfidenceSource, ServerEvent, Speaker, SubtitleTrace,
+};
 use nextalk_desktop_lib::pipeline::breaker::{
     BreakerState, RetryConfig, RetryPolicy, WaitMode, BREAKER_OPEN_MS,
     MAX_RETRY_FRAGMENT_CONCURRENCY,
@@ -808,6 +811,28 @@ async fn retry_recovers_through_the_half_open_probe() {
     );
 }
 
+/// A closed user sentence carrying the per-segment provenance the cascade
+/// attaches — the shape the state bridge forwards to the trace writer (T3.7).
+fn traced_sentence(error_code: Option<String>) -> ServerEvent {
+    ServerEvent::Subtitle {
+        id: "u1".into(),
+        speaker: Speaker::User,
+        seq: 1,
+        zh: Some("这句话进了轨迹".into()),
+        en: Some("This sentence reached the trace.".into()),
+        final_flag: true,
+        confidence: None,
+        trace: Some(SubtitleTrace {
+            segment_start_ms: 300,
+            term_hits: vec![],
+            provider: "volc".into(),
+            model_version: "icl-2.0".into(),
+            confidence_source: WireConfidenceSource::Proxy,
+            error_code,
+        }),
+    }
+}
+
 /// Test 14 (GOV-10/D-07): the degradation reaches the trace as data — the
 /// aggregatable error code in `errorCode`, the status in `status` — never as a
 /// vendor message blob, and never as a confidence mark on the subtitle
@@ -828,8 +853,14 @@ async fn retry_exhaustion_records_the_error_code_for_the_trace() {
         .unwrap();
 
     let degraded = outcomes[0].degraded.as_ref().expect("degraded");
-    let record = TraceRecord::degraded(degraded.error_code.clone());
+    let record = TraceRecord::from_event(
+        "session-trace",
+        1_791_158_400_000,
+        &traced_sentence(Some(degraded.error_code.clone())),
+    )
+    .expect("a closed sentence produces a record");
     assert_eq!(record.status, SegmentStatus::Degraded);
+    assert_eq!(record.provider, "volc");
     let line = record
         .to_json_line()
         .expect("the degraded record serializes");
@@ -840,10 +871,15 @@ async fn retry_exhaustion_records_the_error_code_for_the_trace() {
         "the trace carries the code, not the message blob: {line}"
     );
 
-    // The healthy shape stays representable too (Task 5 fills the rest).
-    let ok = TraceRecord::ok().to_json_line().expect("ok serializes");
-    assert!(ok.contains("\"status\":\"ok\""), "{ok}");
-    assert!(ok.contains("\"errorCode\":null"), "{ok}");
+    // The healthy shape stays representable too — one record per sentence,
+    // with the provenance the segment actually carried.
+    let ok = TraceRecord::from_event("session-trace", 1_791_158_400_001, &traced_sentence(None))
+        .expect("a clean sentence produces a record");
+    assert_eq!(ok.status, SegmentStatus::Ok);
+    assert_eq!(ok.error_code, None);
+    let ok_line = ok.to_json_line().expect("ok serializes");
+    assert!(ok_line.contains("\"status\":\"ok\""), "{ok_line}");
+    assert!(ok_line.contains("\"errorCode\":null"), "{ok_line}");
 }
 
 // ---------------------- silent abstention + D-04 numeric check (T3.6) ---

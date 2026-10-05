@@ -454,6 +454,8 @@ impl SessionState {
 mod tests {
     use super::*;
     use crate::lan::server::test_events::{self, strategy_event, subtitle_question, user_answer};
+    use crate::lan::server::{ConfidenceLevel, ConfidenceSource, Speaker, SubtitleTrace};
+    use crate::trace::jsonl::{SegmentStatus, TraceRecord};
 
     /// The session-identity marker exactly as it lands on the wire.
     fn session_started(epoch: u64) -> ServerEvent {
@@ -728,5 +730,86 @@ mod tests {
             0,
             "a stray close must not wrap"
         );
+    }
+
+    /// One user sentence with the per-segment provenance attached — what the
+    /// cascade leaves behind on every real segment (T3.7).
+    fn user_sentence(final_flag: bool) -> ServerEvent {
+        ServerEvent::Subtitle {
+            id: "u1".into(),
+            speaker: Speaker::User,
+            seq: 1,
+            zh: Some("这句话进了轨迹".into()),
+            en: Some("This sentence reached the trace.".into()),
+            final_flag,
+            confidence: Some(ConfidenceLevel::Low),
+            trace: Some(SubtitleTrace {
+                segment_start_ms: 300,
+                term_hits: vec![],
+                provider: "volc".into(),
+                model_version: "icl-2.0".into(),
+                confidence_source: ConfidenceSource::Proxy,
+                error_code: None,
+            }),
+        }
+    }
+
+    /// Every line under `root/<date>/*.jsonl` (the session's durable trace).
+    fn trace_lines(root: &std::path::Path) -> Vec<String> {
+        let mut lines = Vec::new();
+        for date in std::fs::read_dir(root).expect("trace root exists").flatten() {
+            for file in std::fs::read_dir(date.path()).expect("date dir").flatten() {
+                let path = file.path();
+                if path.extension().is_some_and(|ext| ext == "jsonl") {
+                    lines.extend(
+                        std::fs::read_to_string(path)
+                            .expect("trace file readable")
+                            .lines()
+                            .map(str::to_string),
+                    );
+                }
+            }
+        }
+        lines
+    }
+
+    /// T3.7 (D-05/D-18): the timeline and the durable trace are one model —
+    /// every closed sentence lands as exactly one JSONL line, bridged in
+    /// `append_event` so no second instrumentation path exists (GOV-10).
+    #[tokio::test]
+    async fn sentence_events_reach_the_trace_writer() {
+        let root = std::env::temp_dir().join(format!("nextalk-state-trace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let state = SessionState::new(8787);
+        state.set_trace_dir(root.clone());
+        state.start_session().expect("start");
+        // Non-sentence noise and a live frame never create lines.
+        state.append_event(ServerEvent::Status {
+            session: SessionStatus::Listening,
+        });
+        state.append_event(user_sentence(false));
+        // Two closed sentences = two lines.
+        state.append_event(user_sentence(true));
+        state.append_event(user_sentence(true));
+
+        let writer = state.trace_writer().expect("the live session owns a writer");
+        writer.flush().await.expect("flush");
+        let lines = trace_lines(&root);
+        assert_eq!(lines.len(), 2, "one line per closed sentence");
+        let records: Vec<TraceRecord> = lines
+            .iter()
+            .map(|line| serde_json::from_str(line).expect("no torn line"))
+            .collect();
+        for record in &records {
+            assert_eq!(record.session_id, writer.session_id());
+            assert_eq!(record.status, SegmentStatus::Ok);
+            assert_eq!(record.provider, "volc");
+        }
+
+        // 停止 closes the writer: nothing new lands after the session ends.
+        state.stop_session();
+        assert!(state.trace_writer().is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
