@@ -12,7 +12,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **AUDI-01**: 官方 BlackHole 虚拟声卡安装向导（引导安装为独立系统组件，不捆绑 GPL 代码）+ 设备检测与路由
 - [ ] **AUDI-02**: 「耳机 + BlackHole」聚合多输出设备：面试官原声零延迟透传耳机 + 回采捕获供 AI 分析
 - [ ] **AUDI-03**: 音色注册（1-3 分钟录音 → 克隆音色）；未注册前可用库存音色试用翻译链路
-- [ ] **AUDI-04**: 中→英级联流式管线（STT partial → 翻译 → TTS partial），端到端 ≤2s，遵守「partial 渲染、final 发声」稳定性门 — 02-02: 三段真实客户端原料就位（讯飞 iat / DeepSeek / 火山 ICL 2.0 + Deepgram 副线），阶段契约、错误分类、固定路由与离线 mock 全绿（155 cargo + 145 vitest）；级联装配与稳定性门仍待 02-03
+- [x] **AUDI-04**: 中→英级联流式管线（STT partial → 翻译 → TTS partial），端到端 ≤2s，遵守「partial 渲染、final 发声」稳定性门 — 02-02: 三段真实客户端原料就位（讯飞 iat / DeepSeek / 火山 ICL 2.0 + Deepgram 副线），阶段契约、错误分类、固定路由与离线 mock 全绿（155 cargo + 145 vitest）；02-03: 级联装配完成——提交门（spoken ⊆ committed 唯一执法点）、句子聚合/本地 VAD、抢话中断队列、片段重试/熔断、弃权与降级展示、单写者 JSONL 溯源与 20 例失败案例库全绿（232 cargo + 162 vitest + 37 playwright）
 - [ ] **AUDI-05**: AEC 回声消除 + 音频设备热变更处理
 - [x] **AUDI-06**: 延迟测量装置（mic→输出逐级瀑布计时，门禁一切下游阶段）— 02-01: `pipeline/budget.rs` 五边界流式瀑布 + `assert_within_budget` 硬断言（超支归因阶段）+ 冷/热分离聚合（512 有界环）+ `tests/latency_rig.rs` 集成车道 + `/diagnostics` 面板 + CI 四车道（rig 车道硬失败）。注：ROADMAP 成功标准中的「AUDI-04 = 延迟测量装置」与 REQUIREMENTS 本行同一能力；REQUIREMENTS 的 AUDI-04（级联管线本身）仍待 02-02/02-03
 - [ ] **AUDI-07**: 术语/热词表（STT/MT 术语保护，如 K8s、backpressure、幂等性）
@@ -92,7 +92,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDI-01 | Phase 3 | Pending |
 | AUDI-02 | Phase 3 | Pending |
 | AUDI-03 | Phase 2 | Pending |
-| AUDI-04 | Phase 2 | Pending |
+| AUDI-04 | Phase 2 | Complete (02-02/02-03) |
 | AUDI-05 | Phase 2 | Pending |
 | AUDI-06 | Phase 2 | Complete (02-01) |
 | AUDI-07 | Phase 4 | Pending |

@@ -81,7 +81,7 @@ Plans:
 
 - [x] 02-01: Latency rig: e2e stopwatch + per-stage waterfall timing (gate for all downstream work) — 2026-10-03: five streaming-TTFB boundaries, `Waterfall::from_marks_with_durations` proves overlap (2223ms serial sum passes a ≤2000ms stopwatch), OverBudget attributes the stage, cold/warm kept in separate bounded rings, /diagnostics panel, 4-lane CI with the rig as a hard-failing gate
 - [x] 02-02: Real providers wired (讯飞 iat / Deepgram Nova-3 / DeepSeek / 火山 ICL 2.0 — the 2026-10-03 vendor re-decision) as streaming stages with typed contracts — 2026-10-04: 三阶段契约 + RetryClass 分类 + 固定路由（GOV-18）；讯飞（HMAC 签名/wpgs 重建/仅 status==2 提交/60s 轮换）、Deepgram（language=en 硬锁/Token/KeepAlive/NET-0001 识别）、DeepSeek（\n\n 边界/温度 0/滑窗 ≤2/畸形即可重试）、火山（二进制帧逐字段移植/跨语种参数显式/资源随音色切换）；四家确定性 mock 与故障注入；D-07 confidence/trace/abstained 双端扩展（向后兼容）；155 cargo + 145 vitest 全绿、零 key
-- [ ] 02-03: Stability gate (preview vs commit), sentence aggregation, barge-in queue, jitter buffer, provider pre-warming
+- [x] 02-03: Stability gate (preview vs commit), sentence aggregation, barge-in queue, jitter buffer, provider pre-warming — 2026-10-05: 提交门（partial 渲染、仅 committed 下潜，GOV-15 唯一执法点）+ 句子聚合/本地 VAD + epoch 守卫抢话队列（丢弃未播、封顶淡出、300ms 最小语音门限）+ 片段重试（2 次/100→200ms/500ms）与熔断（2 次/120s/半开）+ 双语降级展示与静默弃权（待翻译）+ 数字校验（失败复用锁定降级文案）+ 单写者有界 JSONL 溯源与成本/用量面板 + 失败案例库 20 例（第五条 CI 车道）；232 cargo + 162 vitest + 37 playwright 全绿、零 key
 - [ ] 02-04: Voice clone enrollment (1-3 min recording → clone) + stock voice fallback
 - [ ] 02-05: AEC wiring + device hot-change handling + routing hygiene (distinct mic vs loopback streams)
 
@@ -228,7 +228,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Simulation Mode | 5/5 | Complete | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10), 01-04 (2026-09-11), 01-05 (2026-09-11) |
-| 2. Real Cloud Pipeline + Audio Core | 2/5 | Executing | 02-01 (2026-10-03), 02-02 (2026-10-04) |
+| 2. Real Cloud Pipeline + Audio Core | 3/5 | Executing | 02-01 (2026-10-03), 02-02 (2026-10-04), 02-03 (2026-10-05) |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |
 | 5. AI Interview Assistant | 0/4 | Not started | - |

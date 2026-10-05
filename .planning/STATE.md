@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 executing — 02-02 complete (2026-10-04)
-last_updated: "2026-10-04T08:40:00.000Z"
-last_activity: 2026-10-04 -- Completed 02-02-PLAN.md: four real vendor streaming clients + offline mocks + D-07 protocol extension on both ends
+stopped_at: Phase 2 executing — 02-03 complete (2026-10-05)
+last_updated: "2026-10-05T13:13:00.000Z"
+last_activity: 2026-10-05 -- Completed 02-03-PLAN.md: cascade stability gate (commit gate / sentence aggregation / barge-in / retry+breaker / abstention+degraded) + JSONL trace & cost metering + 20-case failure library + usage panel
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 28
-  completed_plans: 7
-  percent: 25
+  completed_plans: 8
+  percent: 29
 ---
 
 # Project State
@@ -21,40 +21,39 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-26)
 
 **Core value:** 让用户以母语思考、以本人音色讲出地道英文——端到端延迟 ≤ 2 秒
-**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (wave 1 done: latency rig gates everything downstream)
+**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (02-03 done: cascade assembled behind the stability gate; 02-04 live probes next)
 
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 2 of 5 in current phase (02-02 complete; 02-03 next)
-Status: Phase 2 executing — four real vendor clients (讯飞/Deepgram/DeepSeek/火山) behind typed stage contracts with offline mocks; cascade assembly (02-03) is next
-Last activity: 2026-10-04 -- Completed 02-02-PLAN.md: 三阶段契约 + 错误分类 + 固定路由；讯飞 iat（签名/wpgs/轮换）、Deepgram Nova-3（en 锁/KeepAlive）、DeepSeek SSE（\n\n 边界/温度 0/滑窗 ≤2）、火山 ICL 2.0（二进制帧/跨语种参数）；四家 mock 故障注入；D-07 协议双端扩展（confidence/trace/abstained，向后兼容）
+Plan: 3 of 5 in current phase (02-03 complete; 02-04 next)
+Status: Phase 2 executing — the cascade is assembled and stability-gated (spoken ⊆ committed enforced at one gate), barge-in/retry/breaker/abstention verified, JSONL trace + cost meter live, 20-case failure library in CI; 02-04 (live probes: 火山 cross-lingual clone arbitration, real stage counters) is next
+Last activity: 2026-10-05 -- Completed 02-03-PLAN.md: 提交门（partial 渲染/仅 committed 下潜）+ 句子聚合与本地能量 VAD + epoch 守卫抢话队列（丢弃未播/封顶淡出/300ms 最小语音门限）+ 片段重试（2 次/100→200ms/500ms 预算）与熔断（2 次/120s/半开）+ 双语降级展示与静默弃权 + 数字校验复用锁定降级文案 + 单写者有界 JSONL 溯源与成本/用量面板 + 失败案例库 20 例（第五条 CI 车道）
 
-Progress: [███░░░░░░░] 25% (7/28 plans, Phase 1/7 done)
+Progress: [███░░░░░░░] 29% (8/28 plans, Phase 1/7 done, Phase 2: 3/5)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 7
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h active
+- Total plans completed: 8
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions; 02-03 ~5h active over three sessions, ~28h wall)
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h + ~5h active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
-| 2. Real Cloud Pipeline + Audio Core | 2 | 5 | ~2d wall avg (both plans span idle gaps) |
+| 2. Real Cloud Pipeline + Audio Core | 3 | 5 | ~2d wall avg (all three span idle gaps) |
 
 **Recent Trend:**
 
+- 02-03 stability gate (2026-10-05): 14 commits (6 RED + 6 GREEN + 1 pin-test + 1 feat-only non-TDD task), cargo 232 tests (165 lib + 8 cascade_integration + 3 rig + 31 mock_vendors + 5 session_integration + 19 stability + 1 doctest; 1 live variant #[ignore]d) + 162 vitest across 4 packages + 37 playwright (4 skipped) green, failure-cases 20/20, build 428.06 kB JS / 135.26 kB gz, 5 auto-fixed deviations (3 Rule 3 + 1 Rule 1 + 1 Rule 2), zero keys required
 - 02-02 vendor clients (2026-10-04): 12 commits (6 RED + 6 GREEN), cargo 155 tests (116 lib + 31 mock_vendors + 3 rig + 5 session_integration; 1 live variant `#[ignore]`d) + 145 vitest across 4 packages green, root `pnpm build` green, 3 auto-fixed deviations (all Rule 3 blocking) + 1 plan-accuracy note (`wire_shapes` test location), zero keys required
 - 02-01 latency rig (2026-10-03): 5 commits (2 RED + 2 GREEN + 1 chore), 50 cargo tests (43 lib + 3 rig + 4 integration; 1 live variant `#[ignore]`d) + 35 vitest (8 files) + 33 playwright green, build 420.93 kB JS / 133.45 kB gz, 2 auto-fixed deviations + 4 documented design/scope decisions (overlap-aware constructor, CI build step, requirement numbering reconciliation, no literal workspace flag in ci.yml)
 - 01-04 phone teleprompter (2026-09-11): 4 commits (1 RED + 1 GREEN), 27 vitest + 5 new playwright specs (10/10 with --repeat-each=2, 26/26 full suite) green, build 93.30 kB gz JS / 4.48 kB gz CSS, 8 auto-fixed deviations
 - 01-03 desktop surface (2026-09-10): 5 commits (1 RED + 1 GREEN), 11 vitest + 19 desktop e2e (21 total across projects) green, build 128.70 kB gz JS / 5.37 kB gz CSS, 7 auto-fixed deviations
-- 01-02 walking skeleton (2026-09-09): 5 commits, 17 cargo + 3 vitest + 2 e2e tests green, 7 auto-fixed deviations
-
 *Updated after each plan completion*
 
 ## Accumulated Context
@@ -64,6 +63,16 @@ Progress: [███░░░░░░░] 25% (7/28 plans, Phase 1/7 done)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [02-03]: 提交门是 GOV-15「spoken ⊆ committed」的唯一执法点——Cascade 只在 committed 文本上向翻译/TTS 放行，partial 仅渲染；句子聚合 + 本地能量 VAD 决定 silence 闭合的段边界（cascade_integration / stability 两套集成测试钉住）
+- [02-03]: 抢话 = epoch 自增先行（未播出音频整段丢弃、已播出部分带上限淡出 ~100ms）；最小语音门限 300–350ms 防自打断循环；02-05 的 jitter buffer 在此 playout 队列上扩展
+- [02-03]: 片段级重试恰好 2 次、退避 100→200ms、500ms 预算内放弃该片段；供应商连续 2 次失败 → 熔断 120s → 半开探测（BreakerState::HalfOpen）
+- [02-03]: 弃权只发生在「无有效文本」（低置信永不弃权）；字幕面不做置信标记（GOV-01/02 2026-09-30 修订，置信呈现归 Phase 5 策略卡）；数字/单位/日期校验失败 → 拒绝译文并复用锁定降级文案（T-02-14），不新造措辞
+- [02-03]: 置信来源三值内部枚举（Vendor/Proxy/ProxyUnavailable）落 JSONL，线上仍两值（D-07：ProxyUnavailable = 字段缺席）；TraceRecord 用字段级 #[serde(default)] 保前向兼容，刻意不 derive Default（保 GOV-10 缺失即编译错的见证 doctest）
+- [02-03]: JSONL 单写者：有界 mpsc 队列（1024，满即拒绝并计数 dropped_records，生产者永不阻塞磁盘）、8MB 滚动、0600、slug 防路径逃逸、手写 civil 日期（不引入 chrono）；费率表为具名常量——火山无公开费率，用 Fish S2.1 Pro CJK 参考价并注明
+- [02-03]: 分阶段用量字段已就位但真实计数器未接（StageUsage 默认全零）——挂载点 TraceRecord::with_usage；接线后成本面板/剩余分钟数才有真实读数（02-04 装配或 Phase 3 telemetry）
+- [02-03]: 失败案例 regression_test 必须是可执行测试标识（cargo:/vitest:），runner 先 grep 存在再执行；0001/0002 散文目标重写为真实测试；CI 失败案例车道为第五条（计划文本「第四车道」按现状修正）
+- [02-03]: 用量面板为提示式（80% 阈值只提示不阻断，D-15/GOV-17）；用户面板只给分钟数、分阶段明细留 /diagnostics（D-13 分层）；无 IPC 桥 → 类型化 fixture + 显式「预览数据」标注（同延迟瀑布习惯）
+- [02-03 Requirement numbering]: frontmatter requirements（GOV-01/02/03/04/06/07/09/10/12/13/14/15/17/19/20 + 内验 AUDI-06）属治理/内验编号；REQUIREMENTS.md 27 条 v1 编号中本计划唯一触点 = **AUDI-04**（级联装配与稳定性门）——已推进为 Complete (02-02/02-03)
 - [02-02]: Dependency set beyond the three gate-approved packages — base64/thiserror/reqwest/uuid promoted from existing transitive deps to direct (讯飞 wire base64, StageError, SSE streaming, handshake UUID) and tokio-tungstenite gets `native-tls` (macOS Security.framework; rustls would drag in aws-lc-rs' cmake build). sha2 runs the 0.11 generation while 0.10.9 stays in the lockfile for other consumers — normal RustCrypto coexistence
 - [02-02]: 讯飞 — only `data.status == 2` is `committed` (status 0/1 always false, GOV-15's ground floor); the `sc` field is never read (reserved zero), so confidence stays `None` with `ConfidenceSource::ProxyUnavailable` until 02-03's local proxy; wpgs `rpl` rewrites the frames inside `rg` via an ordered `Vec<(sn, text)>`, not string surgery
 - [02-02]: Deepgram — `language=en` hard-locked (`multi` refused outright: it excludes Chinese and returns confident nonsense); `channel` is deliberately parsed untyped because VAD frames send an array while Results sends an object; the interviewer line emits NO `SttFirstPartial` mark (the 02-01 waterfall measures the user path only — asserted, not just commented)
@@ -131,6 +140,8 @@ None yet.
 - 01-05 Task 2 `<human-check>` (interactive `pnpm --filter @nextalk/desktop tauri dev` demo pass: QR scan → 开始模拟会话 → r1 flows to console + dual + phone in sync → phone count flips to 已连接 1 台设备 → phone mode switch → 打断/重听 → ended) is outstanding — needs a GUI session + phone + camera. Every leg has a green automated equivalent (29 cargo tests incl. the real-WS integration test; 29 playwright specs incl. demo.spec.ts); run it before `/gsd:verify-work`
 - Phase 1 is code-complete (5/5 plans, all automated gates green at HEAD) but its three human passes (01-03 desktop walkthrough, 01-04 real-device phone, 01-05 full demo) are the remaining end-of-phase manual checks
 - Playwright e2e now proves the mock-WS flow for BOTH surfaces; the true QR → phone path (real LAN server + real token) is the manual end-of-phase check per plan
+- 02-03 Known stub: TraceRecord 的 StageUsage（STT 音频 ms/翻译 tokens/TTS 字符）默认全零——真实会话的成本面板与用量分钟数读 0，直到阶段计数接线（挂载点 TraceRecord::with_usage；02-04 装配或 Phase 3 telemetry）
+- 02-03: 失败案例 0017（跨语种克隆握手被拒）目标已是真实测试（volc_client_classifies_a_rejected_handshake_and_leaks_nothing），但案例措辞是占位——02-04 T4.0 锁定跨语种克隆结论后回填
 
 ### Quick Tasks Completed
 
@@ -149,6 +160,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-10-04T08:40:00.000Z
-Stopped at: Completed 02-02-PLAN.md (four real vendor clients behind typed stage contracts, offline mocks with failure injection, D-07 confidence/trace/abstained extension on both protocol ends) — 02-03 (cascade assembly: preview-vs-commit stability gate, sentence aggregation, barge-in queue, provider pre-warming) is next
-Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-02-SUMMARY.md
+Last session: 2026-10-05T13:13:00.000Z
+Stopped at: Completed 02-03-PLAN.md (stability gate: preview-vs-commit enforcement, sentence aggregation + local VAD, epoch-guarded barge-in, fragment retry + per-vendor breaker + Chinese-locked degraded display, deterministic numeric validation + silent abstention, single-writer bounded JSONL trace + cost/usage panels, 20-case failure library in CI) — 02-04 (live probes: cross-lingual clone arbitration + real stage counters) is next
+Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-03-SUMMARY.md
