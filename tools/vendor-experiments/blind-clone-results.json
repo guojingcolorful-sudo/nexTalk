@@ -82,6 +82,13 @@
       }
     ],
     "exit_code": 0,
-    "verdict": "pending_user_judgement"
+    "verdict": "approved",
+    "verdict_at": "2026-10-05T13:38:11Z",
+    "user_judgement": {
+      "en_naturalness": "英文自然",
+      "zh_baseline": "与 D-11 中文盲听基线一致（克隆链路未退化）",
+      "similarity_vs_preset": "克隆明显比预置更像本人"
+    },
+    "assessment": "跨语种克隆成立：seed-icl-2.0 + explicit_language=en + tone_fidelity=false 可产出英文且保持说话人相似度；D-11 单一主供应商（火山 ICL 2.0）结论维持，GOV-16 第二 TTS 供应商不触发"
   }
 }
