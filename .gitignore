@@ -27,3 +27,7 @@ AI同传译.txt
 # Voice-clone training samples (biometric data — never commit)
 voice-sample.*
 samples/
+
+# Vendor-experiment audio artifacts (clone-voice synthesis output — biometric
+# data; the probe's results JSON is committed, the audio stays local)
+tools/vendor-experiments/artifacts/
