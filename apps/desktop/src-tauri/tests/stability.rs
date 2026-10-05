@@ -1,5 +1,5 @@
-//! Stability gate (02-03 T3.3–T3.5): barge-in playout, fragment retry, the
-//! per-vendor circuit breaker.
+//! Stability gate (02-03 T3.3–T3.6): barge-in playout, fragment retry, the
+//! per-vendor circuit breaker, silent abstention and the D-04 numeric check.
 //!
 //! 抢话 is the one behaviour that must never glitch: when the user starts
 //! speaking over the cloned voice, the old audio has to be gone within a
@@ -37,9 +37,13 @@ use nextalk_desktop_lib::pipeline::breaker::{
 };
 use nextalk_desktop_lib::pipeline::budget::Stage;
 use nextalk_desktop_lib::pipeline::cascade::{Cascade, CascadeConfig, SegmentScript, SharedClock};
+use nextalk_desktop_lib::pipeline::confidence::ConfidenceSource;
 use nextalk_desktop_lib::pipeline::stages::{
-    AudioChunk, MarkHandle, ScriptedStt, ScriptedTranslator, ScriptedTts, StageError, SttPartial,
-    TokenUsage, TranslatorEvent,
+    AbstainReason, AudioChunk, MarkHandle, ScriptedStt, ScriptedTranslator, ScriptedTts,
+    StageError, SttPartial, TokenUsage, TranslatorEvent,
+};
+use nextalk_desktop_lib::pipeline::validate::{
+    MismatchReason, ValidationResult, NUMERIC_MISMATCH_CODE,
 };
 use nextalk_desktop_lib::sim::source::TimeSource;
 use nextalk_desktop_lib::state::SessionState;
@@ -840,4 +844,219 @@ async fn retry_exhaustion_records_the_error_code_for_the_trace() {
     let ok = TraceRecord::ok().to_json_line().expect("ok serializes");
     assert!(ok.contains("\"status\":\"ok\""), "{ok}");
     assert!(ok.contains("\"errorCode\":null"), "{ok}");
+}
+
+// ---------------------- silent abstention + D-04 numeric check (T3.6) ---
+
+/// Test 15 (D-03): the only normal-path abstention is a closed segment with no
+/// valid text — nothing is translated, nothing is spoken, and the verdict
+/// rides on the outcome so T3.6 can emit the `abstained` event (both surfaces
+/// show 「待翻译」). No confidence reading exists that could cause this.
+#[tokio::test]
+async fn abstention_fires_only_when_there_is_no_valid_text() {
+    let stt = ScriptedStt::new(vec![committed_final("   ")]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        ScriptedTranslator::one_fragment("never used"),
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 1, "the blank segment still closed");
+    assert_eq!(
+        outcomes[0].abstained,
+        Some(AbstainReason::Unrecognized),
+        "speech was present; nothing recognisable came out of it"
+    );
+    assert!(!outcomes[0].translated, "no vendor call, no translation");
+    assert_eq!(outcomes[0].tts_calls, 0, "an abstention makes no sound");
+    assert_eq!(
+        outcomes[0].validation, None,
+        "no candidate ever reached the check"
+    );
+    assert!(outcomes[0].degraded.is_none(), "abstention is not an error");
+
+    let ledger = cascade.ledger();
+    assert_eq!(ledger.empty_segments, vec![outcomes[0].segment.id]);
+    assert_eq!(ledger.translator_calls, 0, "nothing was sent to the vendor");
+    assert!(ledger.tts_inputs.is_empty());
+    assert_eq!(playout.buffered_chunks(), 0);
+}
+
+/// Test 16 (D-03): a translator-declared abstention is a decided outcome, not
+/// a failure — carried on the outcome and the ledger, never spoken, and never
+/// rendered in the degraded form (the vendor answered, with a refusal).
+#[tokio::test]
+async fn translator_declared_abstention_is_carried_on_the_outcome() {
+    let stt = ScriptedStt::new(vec![committed_final("嗯……")]);
+    let translator = ScriptedTranslator::new(vec![TranslatorEvent::Abstained {
+        reason: AbstainReason::SilentAudio,
+    }]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        translator,
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].abstained, Some(AbstainReason::SilentAudio));
+    assert!(!outcomes[0].translated, "a refusal is not a translation");
+    assert_eq!(outcomes[0].tts_calls, 0);
+    assert!(outcomes[0].degraded.is_none(), "the vendor did not fail");
+    assert_eq!(cascade.ledger().abstained, vec![AbstainReason::SilentAudio]);
+    assert!(cascade.ledger().tts_inputs.is_empty());
+    assert_eq!(playout.buffered_chunks(), 0);
+}
+
+/// Test 17 (D-03, 2026-09-30 revision): confidence is provenance, never control
+/// flow — a 0.05 vendor score does not abstain, does not degrade, and does not
+/// stop the answer from speaking. (No subtitle badge: the number only enters
+/// the JSONL trace.)
+#[tokio::test]
+async fn low_confidence_never_abstains() {
+    let mut partial = committed_final("查询用了 800 毫秒");
+    partial.confidence = Some(0.05);
+    partial.confidence_source = ConfidenceSource::Vendor;
+    let stt = ScriptedStt::new(vec![partial]);
+    let translator = ScriptedTranslator::one_fragment("The query took 800 ms.");
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        translator,
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].abstained, None);
+    assert!(outcomes[0].translated);
+    assert_eq!(outcomes[0].tts_calls, 1, "low confidence still speaks");
+    assert_eq!(
+        outcomes[0].validation,
+        Some(ValidationResult::Match),
+        "800 毫秒 == 800 ms: the deterministic check passes"
+    );
+    assert!(outcomes[0].degraded.is_none());
+    assert_eq!(
+        cascade.ledger().tts_inputs,
+        vec!["The query took 800 ms.".to_string()]
+    );
+    assert!(playout.buffered_chunks() > 0, "the answer is audible");
+}
+
+/// Test 18 (GOV-04/D-04): a number that drifts is the one silent lie the
+/// cascade could still tell — a candidate whose numbers do not survive
+/// translation is withheld at the single TTS exit and shown as the original
+/// (the locked degraded form, code `numeric_mismatch`).
+#[tokio::test]
+async fn numeric_mismatch_falls_back_to_the_original() {
+    let stt = ScriptedStt::new(vec![committed_final("查询用了 800 毫秒")]);
+    let translator = ScriptedTranslator::one_fragment("The query took 900 ms.");
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        translator,
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].translated, "the call itself succeeded");
+    assert_eq!(
+        outcomes[0].tts_calls, 0,
+        "the mismatched English is withheld"
+    );
+    assert_eq!(
+        outcomes[0].validation,
+        Some(ValidationResult::Mismatch {
+            reason: MismatchReason::NumberDrift,
+            expected: "800 毫秒".to_string(),
+            found: "900 ms".to_string(),
+        })
+    );
+    let degraded = outcomes[0]
+        .degraded
+        .as_ref()
+        .expect("the fallback renders the original in the degraded form");
+    assert_eq!(degraded.error_code, NUMERIC_MISMATCH_CODE);
+    assert_eq!(NUMERIC_MISMATCH_CODE, "numeric_mismatch");
+
+    let ledger = cascade.ledger();
+    assert_eq!(
+        ledger.validation_checks, 1,
+        "the candidate was checked once"
+    );
+    assert_eq!(ledger.validation_rejections, vec![outcomes[0].segment.id]);
+    assert!(ledger.tts_inputs.is_empty(), "nothing reached TTS");
+    assert_eq!(playout.buffered_chunks(), 0);
+}
+
+/// Test 19 (GOV-04 coverage): every candidate that reaches the single TTS exit
+/// passes the check exactly once — the ledger equation has no remainder, so no
+/// translation can bypass the layer.
+#[tokio::test]
+async fn numeric_validation_checks_every_spoken_candidate() {
+    let stt = ScriptedStt::new(vec![
+        committed_final("第一句：这个查询用了 800 毫秒"),
+        committed_final("第二句：没有数字"),
+    ]);
+    let translator = ScriptedTranslator::per_call(vec![
+        succeed_script("The query took 900 ms."),
+        succeed_script("No digits here at all."),
+    ]);
+    let (mut cascade, playout) = retry_cascade(
+        stt,
+        translator,
+        RetryPolicy::default(),
+        SharedClock::new(StepClock::new(240)),
+    );
+    let epoch = playout.begin_session();
+    let outcomes = cascade
+        .drive_user_track(&speech_script(epoch, 300))
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2);
+    assert!(matches!(
+        outcomes[0].validation,
+        Some(ValidationResult::Mismatch {
+            reason: MismatchReason::NumberDrift,
+            ..
+        })
+    ));
+    assert_eq!(outcomes[1].validation, Some(ValidationResult::Match));
+
+    let ledger = cascade.ledger();
+    assert_eq!(ledger.translator_calls, 2);
+    assert_eq!(ledger.validation_rejections, vec![outcomes[0].segment.id]);
+    assert_eq!(
+        ledger.tts_inputs,
+        vec!["No digits here at all.".to_string()],
+        "only the validated candidate was spoken"
+    );
+    assert_eq!(
+        ledger.validation_checks as usize,
+        ledger.tts_inputs.len() + ledger.validation_rejections.len(),
+        "GOV-04 witness: checks = spoken + withheld — no candidate bypasses the layer"
+    );
+    assert!(playout.buffered_chunks() > 0);
 }

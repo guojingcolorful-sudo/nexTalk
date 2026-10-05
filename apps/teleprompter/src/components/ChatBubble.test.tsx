@@ -61,3 +61,24 @@ describe('ChatBubble degraded form', () => {
     expect(screen.getByText('翻译服务暂时不可用')).toBeTruthy();
   });
 });
+
+// D-03: the phone shows the identical 「待翻译」 state as the desktop for an
+// abstained segment — visible, never an empty card and never a fabricated
+// line.
+describe('ChatBubble abstained form', () => {
+  it('renders the 待翻译 marker instead of any text', () => {
+    stubReducedMotion();
+    render(<ChatBubble speaker="user" abstained />);
+
+    expect(screen.getByText('待翻译')).toBeTruthy();
+  });
+
+  it('keeps the marker even when text arrived with it — the state is not a message', () => {
+    stubReducedMotion();
+    render(<ChatBubble speaker="user" zh={ANSWER_ZH} en="An English line" abstained />);
+
+    expect(screen.getByText('待翻译')).toBeTruthy();
+    expect(screen.queryByText(ANSWER_ZH)).toBeNull();
+    expect(screen.queryByText('An English line')).toBeNull();
+  });
+});

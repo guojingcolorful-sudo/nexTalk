@@ -162,3 +162,24 @@ describe('ChatBubble degraded form', () => {
     expect(screen.getByText(ANSWER_ZH)).toBeTruthy();
   });
 });
+
+// D-03: the only abstain — a closed segment with no valid text. The bubble
+// stays visible as a 「待翻译」 state; confidence never produces this form
+// (GOV-01/02, 2026-09-30: no subtitle confidence badges in Phase 2).
+describe('ChatBubble abstained form', () => {
+  it('renders the 待翻译 marker instead of any text', () => {
+    render(<ChatBubble speaker="user" abstained />);
+    revealAll();
+
+    expect(screen.getByText('待翻译')).toBeTruthy();
+  });
+
+  it('keeps the marker even when text arrived with it — the state is not a message', () => {
+    render(<ChatBubble speaker="user" zh={ANSWER_ZH} en={QUESTION_EN} abstained />);
+    revealAll();
+
+    expect(screen.getByText('待翻译')).toBeTruthy();
+    expect(screen.queryByText(ANSWER_ZH)).toBeNull();
+    expect(screen.queryByText(QUESTION_EN)).toBeNull();
+  });
+});
