@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
 Plan: 3 of 5 in current phase (02-03 complete; 02-04 next)
 Status: Phase 2 executing — the cascade is assembled and stability-gated (spoken ⊆ committed enforced at one gate), barge-in/retry/breaker/abstention verified, JSONL trace + cost meter live, 20-case failure library in CI; 02-04 (live probes: 火山 cross-lingual clone arbitration, real stage counters) is next
-Last activity: 2026-10-05 -- Completed 02-03-PLAN.md: 提交门（partial 渲染/仅 committed 下潜）+ 句子聚合与本地能量 VAD + epoch 守卫抢话队列（丢弃未播/封顶淡出/300ms 最小语音门限）+ 片段重试（2 次/100→200ms/500ms 预算）与熔断（2 次/120s/半开）+ 双语降级展示与静默弃权 + 数字校验复用锁定降级文案 + 单写者有界 JSONL 溯源与成本/用量面板 + 失败案例库 20 例（第五条 CI 车道）
+Last activity: 2026-10-05 -- Completed quick task 261005-wdd: PreToolUse 风控 hook + permissions 收紧（git push 加 ask、git checkout 收窄为 -b；重启会话生效）
 
 Progress: [███░░░░░░░] 29% (8/28 plans, Phase 1/7 done, Phase 2: 3/5)
 
@@ -149,6 +149,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 20260930-dualpane-stop-button | 双栏扩展视图「停止」按钮（锁定确认 + stop_session + 终态回空态） | 2026-09-30 | 56f90f4 | [20260930-dualpane-stop-button](./quick/20260930-dualpane-stop-button/) |
 | 20260930-stop-keeps-stream | 停止后双栏保留字幕与策略（与手机端一致），仅 session_started 清空（撤销 246baae） | 2026-09-30 | a442841 | [20260930-stop-keeps-stream](./quick/20260930-stop-keeps-stream/) |
+| 261005-wdd | PreToolUse 风控 Hook（deny .env/credentials/pem 写入 + sudo/破坏性 rm/管道执行）+ permissions 收紧（git push 加 ask、收窄 git checkout） | 2026-10-05 | —（.claude/ 本地配置，零提交） | [261005-wdd-pretooluse-hook-deny-env-shell-claude-se](./quick/261005-wdd-pretooluse-hook-deny-env-shell-claude-se/) |
 
 ## Deferred Items
 
