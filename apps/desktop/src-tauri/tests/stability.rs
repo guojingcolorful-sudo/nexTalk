@@ -38,7 +38,7 @@ use nextalk_desktop_lib::pipeline::breaker::{
 use nextalk_desktop_lib::pipeline::budget::Stage;
 use nextalk_desktop_lib::pipeline::cascade::{Cascade, CascadeConfig, SegmentScript, SharedClock};
 use nextalk_desktop_lib::pipeline::stages::{
-    AudioChunk, MarkHandle, ScriptedStt, ScriptedTts, ScriptedTranslator, StageError, SttPartial,
+    AudioChunk, MarkHandle, ScriptedStt, ScriptedTranslator, ScriptedTts, StageError, SttPartial,
     TokenUsage, TranslatorEvent,
 };
 use nextalk_desktop_lib::sim::source::TimeSource;
@@ -510,7 +510,10 @@ async fn retry_retries_twice_with_the_injected_backoff_schedule() {
         .unwrap();
 
     assert_eq!(outcomes.len(), 1);
-    let degraded = outcomes[0].degraded.as_ref().expect("the fragment degraded");
+    let degraded = outcomes[0]
+        .degraded
+        .as_ref()
+        .expect("the fragment degraded");
     assert_eq!(degraded.error_code, "retry_exhausted");
     assert_eq!(degraded.attempts, 3, "the first call plus two retries");
     assert_eq!(degraded.waited_ms, 300, "100 + 200 ms of planned backoff");
@@ -543,8 +546,15 @@ async fn retry_retries_twice_with_the_injected_backoff_schedule() {
     // Nothing was fabricated and nothing was spoken.
     assert!(!outcomes[0].translated);
     assert_eq!(outcomes[0].tts_calls, 0);
-    assert!(ledger.translated.is_empty(), "no fragment reached the vendor");
-    assert!(ledger.tts_inputs.is_empty(), "the invariant witness is clean");
+    assert_eq!(
+        ledger.translated.len(),
+        1,
+        "the fragment reached the vendor three times; nothing usable came back"
+    );
+    assert!(
+        ledger.tts_inputs.is_empty(),
+        "the invariant witness is clean"
+    );
     assert_eq!(
         playout.buffered_chunks(),
         0,
@@ -562,10 +572,7 @@ async fn retry_retries_twice_with_the_injected_backoff_schedule() {
 /// calls, and the next fragment's budget starts fresh.
 #[tokio::test]
 async fn retry_gives_up_when_the_budget_is_gone_and_keeps_going() {
-    let stt = ScriptedStt::new(vec![
-        committed_final("第一句"),
-        committed_final("第二句"),
-    ]);
+    let stt = ScriptedStt::new(vec![committed_final("第一句"), committed_final("第二句")]);
     let (mut cascade, playout) = retry_cascade(
         stt,
         always_failing_translator(),
@@ -601,10 +608,7 @@ async fn retry_gives_up_when_the_budget_is_gone_and_keeps_going() {
 /// only one fragment is ever in flight.
 #[tokio::test]
 async fn retry_scope_stays_one_fragment() {
-    let stt = ScriptedStt::new(vec![
-        committed_final("第一句"),
-        committed_final("第二句"),
-    ]);
+    let stt = ScriptedStt::new(vec![committed_final("第一句"), committed_final("第二句")]);
     let (mut cascade, playout) = retry_cascade(
         stt,
         always_failing_translator(),
@@ -720,7 +724,10 @@ async fn retry_stops_calling_when_the_breaker_opens() {
         .as_ref()
         .expect("the third fragment degraded");
     assert_eq!(refused.error_code, "circuit_open");
-    assert_eq!(refused.attempts, 0, "the open breaker refuses the call outright");
+    assert_eq!(
+        refused.attempts, 0,
+        "the open breaker refuses the call outright"
+    );
     assert_eq!(
         cascade.ledger().translator_calls,
         6,
@@ -738,10 +745,7 @@ async fn retry_stops_calling_when_the_breaker_opens() {
 /// fragment translates normally — the degraded era leaves no residue.
 #[tokio::test]
 async fn retry_recovers_through_the_half_open_probe() {
-    let stt = ScriptedStt::new(vec![
-        committed_final("第一句"),
-        committed_final("第二句"),
-    ]);
+    let stt = ScriptedStt::new(vec![committed_final("第一句"), committed_final("第二句")]);
     let translator = ScriptedTranslator::per_call(vec![
         failing_script(),
         failing_script(),
@@ -767,10 +771,7 @@ async fn retry_recovers_through_the_half_open_probe() {
     assert_eq!(first.len(), 2);
     assert!(first.iter().all(|outcome| outcome.degraded.is_some()));
     assert!(
-        matches!(
-            cascade.breaker_state("scripted"),
-            BreakerState::Open { .. }
-        ),
+        matches!(cascade.breaker_state("scripted"), BreakerState::Open { .. }),
         "two strikes opened the circuit"
     );
 

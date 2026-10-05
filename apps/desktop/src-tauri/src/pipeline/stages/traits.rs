@@ -555,9 +555,16 @@ impl SttSource for ScriptedStt {
 }
 
 /// Deterministic translator double: replays a scripted event list.
+///
+/// Two scripts coexist: `events` replays on **every** call (the always-failing
+/// or always-succeeding shapes), `per_call` plays the nth list on the nth call
+/// (the last list repeats) — the shape a retry/probe test needs, where the
+/// first attempts fail and a later one succeeds.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptedTranslator {
     events: Vec<TranslatorEvent>,
+    per_call: Option<Vec<Vec<TranslatorEvent>>>,
+    next_call: usize,
     marks: MarkHandle,
 }
 
@@ -565,6 +572,20 @@ impl ScriptedTranslator {
     pub fn new(events: Vec<TranslatorEvent>) -> Self {
         Self {
             events,
+            per_call: None,
+            next_call: 0,
+            marks: MarkHandle::disabled(),
+        }
+    }
+
+    /// Per-call script (T3.4): the nth `translate()` plays the nth list; the
+    /// last list repeats forever. Lets a test script fail→fail→succeed across
+    /// the cascade's retry loop.
+    pub fn per_call(calls: Vec<Vec<TranslatorEvent>>) -> Self {
+        Self {
+            events: Vec::new(),
+            per_call: Some(calls),
+            next_call: 0,
             marks: MarkHandle::disabled(),
         }
     }
@@ -583,6 +604,19 @@ impl ScriptedTranslator {
                 completion_tokens: 1,
             }),
         ])
+    }
+
+    /// The event list the next call plays.
+    fn script_for_call(&mut self) -> Vec<TranslatorEvent> {
+        let Some(calls) = &self.per_call else {
+            return self.events.clone();
+        };
+        if calls.is_empty() {
+            return self.events.clone();
+        }
+        let index = self.next_call.min(calls.len() - 1);
+        self.next_call += 1;
+        calls[index].clone()
     }
 }
 
@@ -606,7 +640,7 @@ impl Translator for ScriptedTranslator {
         _epoch: u64,
     ) -> Result<TranslatorStream, StageError> {
         let (events_tx, events_rx) = mpsc::channel(EVENT_QUEUE_ITEMS);
-        let events = self.events.clone();
+        let events = self.script_for_call();
         let marks = self.marks.clone();
         tokio::spawn(async move {
             let mut marked = false;

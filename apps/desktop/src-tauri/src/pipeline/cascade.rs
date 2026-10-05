@@ -35,12 +35,15 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use crate::pipeline::breaker::{
+    BreakerSet, BreakerState, RetryConfig, RetryDecision, RetryWait, WaitMode,
+};
 use crate::pipeline::budget::{LatencyMark, Stage, Waterfall, WaterfallError, E2E_BUDGET_MS};
 use crate::pipeline::segment::{DiscardReason, Segment, SegmentConfig, SegmentEvent, Segmenter};
 use crate::pipeline::stages::{
-    AbstainReason, MarkHandle, StageError, SttEvent, SttPartial, SttSource, TokenUsage, Translator,
-    TranslatorEvent, TtsEvent, TtsSink, TtsUsage, VendorStt, VendorTranslator, VendorTts, VoiceRef,
-    ZhFragment,
+    AbstainReason, ErrorKind, MarkHandle, RetryClass, StageError, SttEvent, SttPartial, SttSource,
+    TokenUsage, Translator, TranslatorEvent, TtsEvent, TtsSink, TtsUsage, VendorStt,
+    VendorTranslator, VendorTts, VoiceRef, ZhFragment,
 };
 use crate::sim::source::TimeSource;
 
@@ -261,6 +264,13 @@ pub struct CascadeLedger {
     pub waterfall_errors: Vec<(u64, WaterfallError)>,
     /// Marks that arrived outside any segment's lifetime.
     pub stray_marks: u32,
+    /// Translator calls, retries included (T3.4). Distinct from
+    /// [`Self::translated`] on purpose: a degraded fragment reached the vendor
+    /// without producing an answer.
+    pub translator_calls: u32,
+    /// Every decided retry wait (T3.4), stamped by the injected clock — the
+    /// witness of D-09's schedule.
+    pub retry_waits: Vec<RetryWait>,
 }
 
 // -------------------------------------------------------------- the cascade ---
@@ -272,6 +282,8 @@ pub struct CascadeConfig {
     /// The session's first segment is cold; never derived from elapsed time
     /// (T-02-02).
     pub first_segment_cold: bool,
+    /// D-09 retry policy + how its waits are honoured (T3.4).
+    pub retry: RetryConfig,
 }
 
 impl Default for CascadeConfig {
@@ -279,6 +291,7 @@ impl Default for CascadeConfig {
         Self {
             segment: SegmentConfig::default(),
             first_segment_cold: true,
+            retry: RetryConfig::default(),
         }
     }
 }
@@ -291,13 +304,42 @@ pub struct SegmentScript {
     pub frames: Vec<(u64, Vec<f32>)>,
 }
 
+/// A fragment the translator never answered (GOV-14/D-12): the cascade keeps
+/// going with the original Chinese and the red badge, and the code here is
+/// what the UI and the trace carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Degraded {
+    /// Aggregatable code (D-19): `retry_exhausted`, `retry_budget_exhausted`,
+    /// `client_error`, `vendor_error`, `circuit_open` — never a message.
+    pub error_code: String,
+    /// Translator calls actually made (0 when the breaker refused outright).
+    pub attempts: u32,
+    /// Planned backoff milliseconds spent before giving up.
+    pub waited_ms: u64,
+}
+
+/// One successful translator call's payload. Kept internal to the retry loop
+/// ([`TranslationCycle`] is adopted only when the call returns `Ok`).
+#[derive(Debug, Clone, PartialEq)]
+struct TranslationCycle {
+    english: String,
+    run_is_final: bool,
+    abstained: Option<AbstainReason>,
+    usage: Vec<TokenUsage>,
+}
+
 /// What one closed segment produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentOutcome {
     pub segment: Segment,
+    /// True when a translation result was adopted (the breaker-refused and
+    /// exhausted paths leave it false even though the vendor was called).
     pub translated: bool,
     pub tts_calls: usize,
     pub waterfall: Option<Waterfall>,
+    /// Set when the fragment degraded (GOV-14): the reason the subtitle shows
+    /// the original with a badge. `None` is the healthy path.
+    pub degraded: Option<Degraded>,
 }
 
 /// The user-track cascade: STT → commit gate → segmenter → translator →
@@ -318,6 +360,9 @@ pub struct Cascade<S: SttSource = VendorStt> {
     segmenter: Segmenter,
     ledger: CascadeLedger,
     waterfalls: Vec<Waterfall>,
+    /// One circuit per provider (D-10): a sick vendor degrades its own stage
+    /// without touching the others.
+    breakers: BreakerSet,
 }
 
 impl<S: SttSource> fmt::Debug for Cascade<S> {
@@ -381,6 +426,7 @@ impl<S: SttSource> Cascade<S> {
             segmenter: Segmenter::new(),
             ledger: CascadeLedger::default(),
             waterfalls: Vec::new(),
+            breakers: BreakerSet::new(),
         }
     }
 
@@ -392,6 +438,12 @@ impl<S: SttSource> Cascade<S> {
 
     pub fn ledger(&self) -> &CascadeLedger {
         &self.ledger
+    }
+
+    /// The state of one provider's circuit (D-10) — the observable the UI and
+    /// the diagnostics read.
+    pub fn breaker_state(&self, provider: &'static str) -> BreakerState {
+        self.breakers.state_of(provider)
     }
 
     /// Take the completed waterfalls (one per closed segment, in close order).
@@ -497,6 +549,7 @@ impl<S: SttSource> Cascade<S> {
             translated: false,
             tts_calls: 0,
             waterfall: None,
+            degraded: None,
         };
 
         if segment.zh_text.trim().is_empty() {
@@ -506,35 +559,84 @@ impl<S: SttSource> Cascade<S> {
             return Ok(outcome);
         }
 
+        let provider = self.translator.provider();
+        let policy = self.config.retry.policy;
+
+        // D-10: while the circuit is open the call is refused outright — no
+        // translator call, no wait, immediate degradation (attempts = 0).
+        if !self
+            .breakers
+            .allow_request(provider, self.clock.elapsed_ms())
+        {
+            outcome.degraded = Some(Degraded {
+                error_code: "circuit_open".to_string(),
+                attempts: 0,
+                waited_ms: 0,
+            });
+            self.settle_waterfall(&mut outcome);
+            return Ok(outcome);
+        }
+
         let fragment = ZhFragment {
             text: segment.zh_text.clone(),
             seq: segment.id,
         };
+        // The fragment was handed to the vendor (the ledger's own witness).
         self.ledger.translated.push(fragment.clone());
-        outcome.translated = true;
 
-        let mut english = String::new();
-        let mut run_is_final = false;
-        let mut abstained = false;
-        let mut stream = self.translator.translate(&fragment, &[], epoch)?;
-        while let Some(event) = stream.next().await {
-            match event {
-                TranslatorEvent::Fragment {
-                    text, final_flag, ..
-                } => {
-                    english.push_str(&text);
-                    if final_flag {
-                        run_is_final = true;
+        // D-09: one fragment retries inside its own budget (GOV-12 scope).
+        let mut attempt = 0u32;
+        let mut retries_done = 0u32;
+        let mut waited_ms = 0u64;
+        let cycle = loop {
+            attempt += 1;
+            self.ledger.translator_calls += 1;
+            match self.translate_once(&fragment, epoch).await {
+                Ok(cycle) => {
+                    // The vendor answered: also the half-open probe's success.
+                    self.breakers.record_success(provider);
+                    break cycle;
+                }
+                Err(error) => match policy.decide(error.retry_class, retries_done, waited_ms) {
+                    RetryDecision::Retry { delay_ms } => {
+                        retries_done += 1;
+                        let at_ms = self.clock.elapsed_ms();
+                        self.ledger.retry_waits.push(RetryWait {
+                            segment_id: segment.id,
+                            attempt: retries_done,
+                            delay_ms,
+                            at_ms,
+                        });
+                        waited_ms += delay_ms;
+                        self.wait_backoff(delay_ms).await;
                     }
-                }
-                TranslatorEvent::Usage(usage) => self.ledger.usage.push((segment.id, usage)),
-                TranslatorEvent::Abstained { reason } => {
-                    self.ledger.abstained.push(reason);
-                    abstained = true;
-                }
-                TranslatorEvent::Failed(error) => return Err(error),
+                    RetryDecision::GiveUp(reason) => {
+                        self.note_failure(provider, &error);
+                        outcome.degraded = Some(Degraded {
+                            error_code: reason.error_code().to_string(),
+                            attempts: attempt,
+                            waited_ms,
+                        });
+                        self.settle_waterfall(&mut outcome);
+                        return Ok(outcome);
+                    }
+                },
             }
+        };
+
+        // A translation result was adopted — the healthy meaning of
+        // `translated` (the exhausted path above returned with it false).
+        outcome.translated = true;
+        if let Some(reason) = cycle.abstained {
+            self.ledger.abstained.push(reason);
         }
+        self.ledger
+            .usage
+            .extend(cycle.usage.into_iter().map(|usage| (segment.id, usage)));
+
+        let english = cycle.english;
+        let run_is_final = cycle.run_is_final;
+        let abstained = cycle.abstained.is_some();
 
         // The second half of GOV-15: only `final_flag == true` text is spoken.
         if !run_is_final || english.trim().is_empty() || abstained {
@@ -565,6 +667,60 @@ impl<S: SttSource> Cascade<S> {
 
         self.settle_waterfall(&mut outcome);
         Ok(outcome)
+    }
+
+    /// One translator call for `fragment`, with **no** ledger or outcome side
+    /// effects: a failed attempt leaves nothing behind, so the retry that
+    /// follows starts from the same clean state.
+    async fn translate_once(
+        &mut self,
+        fragment: &ZhFragment,
+        epoch: u64,
+    ) -> Result<TranslationCycle, StageError> {
+        let mut cycle = TranslationCycle {
+            english: String::new(),
+            run_is_final: false,
+            abstained: None,
+            usage: Vec::new(),
+        };
+        let mut stream = self.translator.translate(fragment, &[], epoch)?;
+        while let Some(event) = stream.next().await {
+            match event {
+                TranslatorEvent::Fragment {
+                    text, final_flag, ..
+                } => {
+                    cycle.english.push_str(&text);
+                    if final_flag {
+                        cycle.run_is_final = true;
+                    }
+                }
+                TranslatorEvent::Usage(usage) => cycle.usage.push(usage),
+                TranslatorEvent::Abstained { reason } => cycle.abstained = Some(reason),
+                TranslatorEvent::Failed(error) => return Err(error),
+            }
+        }
+        Ok(cycle)
+    }
+
+    /// Honour a decided wait. Production sleeps ([`WaitMode::Real`]); every
+    /// test takes [`WaitMode::Immediate`] and asserts the schedule from
+    /// [`CascadeLedger::retry_waits`] instead, so no test ever waits on the
+    /// wall clock.
+    async fn wait_backoff(&self, delay_ms: u64) {
+        if self.config.retry.wait == WaitMode::Real {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+    }
+
+    /// One strike on the provider's breaker — except for the two classes that
+    /// are never the vendor's health: client errors (D-06) and configuration
+    /// bugs.
+    fn note_failure(&mut self, provider: &'static str, error: &StageError) {
+        if error.retry_class == RetryClass::Client || error.kind == ErrorKind::Config {
+            return;
+        }
+        self.breakers
+            .record_failure(provider, self.clock.elapsed_ms());
     }
 
     fn settle_waterfall(&mut self, outcome: &mut SegmentOutcome) {

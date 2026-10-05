@@ -17,6 +17,7 @@ pub mod lan;
 pub mod pipeline;
 pub mod sim;
 pub mod state;
+pub mod trace;
 
 use state::SessionState;
 

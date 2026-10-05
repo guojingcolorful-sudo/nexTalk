@@ -9,6 +9,7 @@
 //! (retry/circuit breaker), `confidence.rs` + `validate.rs` (trace data and
 //! the deterministic output check), `trace/` (JSONL provenance + metering).
 
+pub mod breaker;
 pub mod budget;
 pub mod cascade;
 pub mod segment;

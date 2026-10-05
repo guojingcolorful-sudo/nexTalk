@@ -22,6 +22,13 @@ interface ChatBubbleProps {
    * render complete immediately — only the line being spoken types out.
    */
   instant?: boolean;
+  /**
+   * GOV-14 / D-12: the translator never delivered for this segment. Carries
+   * the aggregatable error code (D-19); the bubble shows the identical locked
+   * degraded form as the desktop — original Chinese only, never a fabricated
+   * English line, never a silent gap.
+   */
+  degraded?: { errorCode: string };
 }
 
 const SPEAKER_LABEL: Record<Speaker, string> = {
@@ -45,19 +52,31 @@ function present(text?: string): string | undefined {
  * message text is white; the interviewer's translation is rickBlue, the
  * user's is portalGreen.
  */
-export default function ChatBubble({ speaker, zh, en, language, instant = false }: ChatBubbleProps) {
+export default function ChatBubble({
+  speaker,
+  zh,
+  en,
+  language,
+  instant = false,
+  degraded,
+}: ChatBubbleProps) {
   const isUser = speaker === 'user';
 
   const zhText = present(zh);
   const enText = present(en);
+  const degradedView = degraded !== undefined;
 
   // The mode the phone owns (SYNC-03) FILTERS the bubble (UAT-4): 中 shows
   // the Chinese line only, EN the English line only, EN+中 both with the
   // spoken language as the primary. When the requested language has not
   // arrived in this subtitle, fall back to the other — never render empty.
+  // Degraded (GOV-14/D-12) overrides all of it: the original Chinese is the
+  // only line that may render, because no translation exists.
   let primary: string | undefined;
   let subline: string | undefined;
-  if (language === 'all-zh') {
+  if (degradedView) {
+    primary = zhText;
+  } else if (language === 'all-zh') {
     primary = zhText ?? enText;
   } else if (language === 'all-en') {
     primary = enText ?? zhText;
@@ -66,7 +85,7 @@ export default function ChatBubble({ speaker, zh, en, language, instant = false 
     subline = primary === zhText ? enText : zhText;
   }
 
-  if (primary === undefined) return null;
+  if (primary === undefined && !degradedView) return null;
 
   return (
     <article
@@ -83,6 +102,20 @@ export default function ChatBubble({ speaker, zh, en, language, instant = false 
             : 'rounded-tl-none border-black bg-slate-800'
         }`}
       >
+        {degraded !== undefined ? (
+          <div
+            className={`mb-1.5 flex flex-wrap items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}
+          >
+            <span
+              className="border-2 border-black bg-red-500 px-2 py-0.5 text-xs font-bold text-white shadow-[2px_2px_0_0_#000]"
+              data-error-code={degraded.errorCode}
+            >
+              翻译失败
+            </span>
+            <span className="text-xs font-bold text-red-400">翻译服务暂时不可用</span>
+            <span className="text-xs font-semibold text-gray-400">正在重试</span>
+          </div>
+        ) : null}
         {instant ? (
           <p className="min-h-[1.5em] whitespace-pre-wrap break-words text-[15px] font-semibold leading-normal text-white">
             {primary}

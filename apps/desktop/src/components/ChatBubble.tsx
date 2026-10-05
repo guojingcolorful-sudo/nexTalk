@@ -29,6 +29,13 @@ interface ChatBubbleProps {
    * render complete immediately — only the line being spoken types out.
    */
   instant?: boolean;
+  /**
+   * GOV-14 / D-12: the translator never delivered for this segment. Carries
+   * the aggregatable error code (D-19); the bubble falls back to the original
+   * Chinese and shows the locked degraded copy. An English line is never
+   * fabricated, and every language preference is overridden while degraded.
+   */
+  degraded?: { errorCode: string };
 }
 
 function present(text?: string): string | undefined {
@@ -45,6 +52,11 @@ function present(text?: string): string | undefined {
  * then the session mode the phone applied, then the speaker default — so an
  * untouched bubble follows the phone live while a deliberate local choice is
  * never overridden.
+ *
+ * GOV-14 degraded form (D-12): when `degraded` is set the resolution above is
+ * bypassed entirely — the bubble renders the original Chinese and the locked
+ * 「翻译失败」badge + 「翻译服务暂时不可用」/「正在重试」copy. Never an English
+ * line (the translation was never produced), never a silent gap.
  */
 export default function ChatBubble({
   speaker,
@@ -52,6 +64,7 @@ export default function ChatBubble({
   en,
   mode = null,
   instant = false,
+  degraded,
 }: ChatBubbleProps) {
   const [localPref, setLocalPref] = useState<LanguagePref | null>(null);
   const pref = localPref ?? mode ?? SPEAKER_DEFAULT_PREF[speaker];
@@ -59,10 +72,15 @@ export default function ChatBubble({
 
   const zhText = present(zh);
   const enText = present(en);
+  const degradedView = degraded !== undefined;
 
   let primary: string | undefined;
   let secondary: string | undefined;
-  if (pref === 'bilingual') {
+  if (degradedView) {
+    // GOV-14/D-12: the original Chinese is the only truth — no language
+    // preference may produce an English line the pipeline never translated.
+    primary = zhText;
+  } else if (pref === 'bilingual') {
     primary = isUser ? zhText : enText;
     secondary = isUser ? enText : zhText;
   } else if (pref === 'all-zh') {
@@ -73,16 +91,16 @@ export default function ChatBubble({
 
   // Fall back to the other language when the requested one has not arrived
   // yet (the user's English is produced by the clone, not by the user).
-  if (primary === undefined) {
+  if (!degradedView && primary === undefined) {
     primary = secondary ?? (pref === 'all-zh' ? enText : zhText);
     secondary = undefined;
   }
-  if (primary === undefined) return null;
+  if (primary === undefined && !degradedView) return null;
   // UAT-10/12: the newest line teleprompters (40ms/char, instant under
   // reduced motion); past subtitles render complete immediately. The subline
   // always stays instant so it never lags behind.
-  const typedPrimary = useTypewriter(primary);
-  const shownPrimary = instant ? primary : typedPrimary;
+  const typedPrimary = useTypewriter(primary ?? '');
+  const shownPrimary = instant ? (primary ?? '') : typedPrimary;
 
   return (
     <div className={`flex w-[95%] flex-col gap-1 ${isUser ? 'self-end' : ''}`}>
@@ -95,6 +113,21 @@ export default function ChatBubble({
         </span>
         <LanguageToggle speaker={speaker} value={pref} onChange={setLocalPref} />
       </div>
+
+      {degraded !== undefined ? (
+        <div
+          className={`flex flex-wrap items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}
+        >
+          <span
+            className="border-2 border-black bg-red-500 px-2 py-0.5 text-xs font-bold text-white shadow-[2px_2px_0_0_#000]"
+            data-error-code={degraded.errorCode}
+          >
+            翻译失败
+          </span>
+          <span className="text-xs font-bold text-red-400">翻译服务暂时不可用</span>
+          <span className="text-xs font-semibold text-gray-400">正在重试</span>
+        </div>
+      ) : null}
 
       <p
         className={`min-h-[1.5em] rounded-xl border-2 p-3 text-[15px] text-white ${

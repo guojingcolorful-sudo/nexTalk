@@ -306,6 +306,11 @@ export default function TeleprompterPage({ ticket }: TeleprompterPageProps) {
                     zh={subtitle.zh}
                     en={subtitle.en}
                     language={languagePref}
+                    degraded={
+                      subtitle.trace?.errorCode !== undefined
+                        ? { errorCode: subtitle.trace.errorCode }
+                        : undefined
+                    }
                     instant={
                       index < subtitles.length - 1 ||
                       !subtitle.final ||

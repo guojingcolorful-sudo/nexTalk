@@ -130,6 +130,11 @@ export default function DualPanePage() {
                   zh={subtitle.zh}
                   en={subtitle.en}
                   mode={languageMode}
+                  degraded={
+                    subtitle.trace?.errorCode !== undefined
+                      ? { errorCode: subtitle.trace.errorCode }
+                      : undefined
+                  }
                   instant={
                     index < subtitles.length - 1 ||
                     !subtitle.final ||
