@@ -3,11 +3,17 @@
 //!
 //! Wave 02-01 lands the latency measurement rig ([`budget`]) — the gate every
 //! downstream wave is judged by; 02-02 adds the vendor stage clients
-//! ([`stages`]). Later waves mount their modules here: `cascade.rs` +
-//! `breaker.rs` (02-03), `validate.rs` / cost metering (02-03).
+//! ([`stages`]); 02-03 ([`cascade`]) assembles them into the running chain,
+//! with [`segment`] + [`vad`] deciding where a sentence ends and [`cascade`]
+//! enforcing the commit gate (GOV-15). Later in the wave: `breaker.rs`
+//! (retry/circuit breaker), `confidence.rs` + `validate.rs` (trace data and
+//! the deterministic output check), `trace/` (JSONL provenance + metering).
 
 pub mod budget;
+pub mod cascade;
+pub mod segment;
 pub mod stages;
+pub mod vad;
 
 #[cfg(test)]
 mod budget_test;

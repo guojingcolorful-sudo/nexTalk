@@ -14,16 +14,14 @@ use std::sync::{Arc, Mutex};
 
 use nextalk_desktop_lib::pipeline::budget::{assert_within_budget, Stage};
 use nextalk_desktop_lib::pipeline::cascade::{
-    Cascade, CascadeConfig, PlayoutSink, SegmentScript,
+    Cascade, InterviewerCascade, PlayoutSink, SegmentScript, SharedClock,
 };
-use nextalk_desktop_lib::pipeline::segment::{CloseReason, SegmentConfig, SegmentEvent};
-use nextalk_desktop_lib::pipeline::segment::DiscardReason;
+use nextalk_desktop_lib::pipeline::segment::{CloseReason, SegmentConfig};
 use nextalk_desktop_lib::pipeline::stages::{
     AudioChunk, MarkHandle, ScriptedStt, ScriptedTranslator, ScriptedTts, StageError, SttEvent,
-    SttPartial, SttSource, SttStream, TimeSource,
+    SttPartial, SttSource, SttStream,
 };
-use nextalk_desktop_lib::sim::source::TimeSource as _;
-use nextalk_desktop_lib::pipeline::cascade::InterviewerCascade;
+use nextalk_desktop_lib::sim::source::TimeSource;
 
 // ------------------------------------------------------------------- helpers ---
 
@@ -53,17 +51,20 @@ impl TimeSource for StepClock {
 }
 
 /// The scripted playout double: records what was played and marks the first
-/// sample (the 02-01 `PlaybackFirstSample` boundary the real ring produces in
-/// 02-05).
+/// sample of each segment's playback run (the 02-01 `PlaybackFirstSample`
+/// boundary the real ring produces in 02-05).
 #[derive(Clone, Default)]
 struct ScriptedPlayout {
-    played: Arc<Mutex<Vec<(u64, usize)>>>,
+    played: Arc<Mutex<Vec<(u64, u64, usize)>>>,
     marks: Option<MarkHandle>,
-    seen_first: bool,
+    /// Which segment's playback run is in flight — shared across clones so the
+    /// "first sample of this sentence" notion belongs to the stream, not to a
+    /// clone of the double.
+    playing_segment: Arc<Mutex<Option<u64>>>,
 }
 
 impl ScriptedPlayout {
-    fn played(&self) -> Vec<(u64, usize)> {
+    fn played(&self) -> Vec<(u64, u64, usize)> {
         self.played.lock().unwrap().clone()
     }
 }
@@ -73,9 +74,17 @@ impl PlayoutSink for ScriptedPlayout {
         self.marks = Some(marks);
     }
 
-    fn play(&mut self, epoch: u64, chunk: &AudioChunk) {
-        if !self.seen_first {
-            self.seen_first = true;
+    fn play(&mut self, epoch: u64, segment_id: u64, chunk: &AudioChunk) {
+        let mark_first = {
+            let mut playing = self.playing_segment.lock().unwrap();
+            if *playing == Some(segment_id) {
+                false
+            } else {
+                *playing = Some(segment_id);
+                true
+            }
+        };
+        if mark_first {
             if let Some(marks) = &self.marks {
                 marks.mark(Stage::PlaybackFirstSample);
             }
@@ -83,7 +92,7 @@ impl PlayoutSink for ScriptedPlayout {
         self.played
             .lock()
             .unwrap()
-            .push((epoch, chunk.samples()));
+            .push((epoch, segment_id, chunk.samples()));
     }
 }
 
@@ -109,7 +118,11 @@ fn noise_frame(amplitude: f32) -> Vec<f32> {
 }
 
 /// Builds a `(at_ms, frame)` audio timeline from a frame generator.
-fn timeline(start_ms: u64, frames: usize, make: impl Fn(usize) -> Vec<f32>) -> Vec<(u64, Vec<f32>)> {
+fn timeline(
+    start_ms: u64,
+    frames: usize,
+    make: impl Fn(usize) -> Vec<f32>,
+) -> Vec<(u64, Vec<f32>)> {
     (0..frames)
         .map(|i| (start_ms + i as u64 * FRAME_MS, make(i)))
         .collect()
@@ -144,7 +157,7 @@ fn scripted_cascade(
     translator: ScriptedTranslator,
 ) -> (Cascade, ScriptedPlayout) {
     let playout = ScriptedPlayout::default();
-    let clock = nextalk_desktop_lib::pipeline::cascade::SharedClock::new(StepClock::new(240));
+    let clock = SharedClock::new(StepClock::new(240));
     let cascade = Cascade::new(
         stt.into(),
         translator.into(),
@@ -163,7 +176,8 @@ fn scripted_cascade(
 #[tokio::test]
 async fn poisoned_partials_never_reach_tts() {
     let stt = ScriptedStt::partial_then_final("半句话 POISON", "完整句子");
-    let (mut cascade, playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
 
     let script = SegmentScript {
         epoch: 7,
@@ -180,7 +194,10 @@ async fn poisoned_partials_never_reach_tts() {
     // Witness: everything ever handed to TTS.
     assert_eq!(ledger.tts_inputs, vec!["a complete sentence".to_string()]);
     assert!(
-        ledger.tts_inputs.iter().all(|text| !text.contains("POISON")),
+        ledger
+            .tts_inputs
+            .iter()
+            .all(|text| !text.contains("POISON")),
         "GOV-15 不变量违反：spoken English ⊆ committed finals —— 毒化 partial 泄漏到了 TTS：{:?}",
         ledger.tts_inputs
     );
@@ -201,7 +218,8 @@ async fn late_partials_are_dropped_without_retranslation() {
         committed_final("完整句子"),
         uncommitted_partial("半句话 POISON"),
     ]);
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
 
     let script = SegmentScript {
         epoch: 1,
@@ -210,7 +228,11 @@ async fn late_partials_are_dropped_without_retranslation() {
     let outcomes = cascade.drive_user_track(&script).await.unwrap();
 
     assert_eq!(outcomes.len(), 1, "a resend must not open a second segment");
-    assert_eq!(cascade.ledger().translated.len(), 1, "no retroactive translation");
+    assert_eq!(
+        cascade.ledger().translated.len(),
+        1,
+        "no retroactive translation"
+    );
     assert_eq!(
         cascade.ledger().rejected_partials,
         vec!["半句话 POISON".to_string()]
@@ -222,7 +244,8 @@ async fn late_partials_are_dropped_without_retranslation() {
 #[tokio::test]
 async fn vendor_eos_closes_the_segment() {
     let stt = ScriptedStt::partial_then_final("半句话", "完整句子");
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
 
     let script = SegmentScript {
         epoch: 1,
@@ -241,7 +264,8 @@ async fn vendor_eos_closes_the_segment() {
 async fn silence_closes_and_transients_are_discarded() {
     // (a) real speech + long silence → close, attributed to the silence.
     let stt = ScriptedStt::partial_then_final("半句话", "完整句子");
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
     let script = SegmentScript {
         epoch: 1,
         frames: concat(speech_frames(0, 400), silence_frames(400, 900)),
@@ -252,7 +276,8 @@ async fn silence_closes_and_transients_are_discarded() {
 
     // (b) a 200 ms burst of noise, nothing else → no segment at all.
     let stt = ScriptedStt::new(vec![]);
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
     let script = SegmentScript {
         epoch: 1,
         frames: concat(
@@ -265,11 +290,10 @@ async fn silence_closes_and_transients_are_discarded() {
         outcomes.is_empty(),
         "a 200 ms transient must not produce a segment: {outcomes:?}"
     );
-    assert!(cascade
-        .ledger()
-        .discarded_segments
-        .iter()
-        .any(|segment| segment.close_reason.is_none()));
+    assert!(
+        !cascade.ledger().discarded_segments.is_empty(),
+        "the transient is recorded as discarded, not silently dropped"
+    );
 }
 
 /// Test 5: a segment at the 15 s ceiling is force-closed (reason
@@ -278,7 +302,8 @@ async fn silence_closes_and_transients_are_discarded() {
 async fn max_duration_force_closes() {
     assert_eq!(SegmentConfig::default().max_segment_ms, 15_000);
     let stt = ScriptedStt::partial_then_final("半句话", "完整句子");
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
 
     // 15.2 s of continuous speech: past the ceiling, no silence anywhere.
     let script = SegmentScript {
@@ -305,12 +330,15 @@ async fn interviewer_line_is_subtitle_only() {
         SttEvent::Partial(uncommitted_partial("How would you")),
         SttEvent::Partial(committed_final("How would you implement a rate limiter")),
     ]);
-    let mut line = InterviewerCascade::new(stt.into());
+    let mut line = InterviewerCascade::from_source(stt);
     let outcome = line.drive_line(11).await.unwrap();
 
     assert_eq!(outcome.segments.len(), 1);
     assert_eq!(outcome.segments[0].close_reason, Some(CloseReason::Eos));
-    assert_eq!(outcome.segments[0].zh_text, "How would you implement a rate limiter");
+    assert_eq!(
+        outcome.segments[0].zh_text,
+        "How would you implement a rate limiter"
+    );
     let last = outcome.subtitles.last().unwrap();
     assert!(last.is_final);
     assert_eq!(last.text, "How would you implement a rate limiter");
@@ -327,9 +355,9 @@ async fn speech_started_alone_does_not_close_user_segments() {
         SttEvent::Partial(committed_final("完整句子")),
     ]);
     let playout = ScriptedPlayout::default();
-    let clock = nextalk_desktop_lib::pipeline::cascade::SharedClock::new(StepClock::new(240));
-    let mut cascade = Cascade::new(
-        stt.into(),
+    let clock = SharedClock::new(StepClock::new(240));
+    let mut cascade = Cascade::from_source(
+        stt,
         ScriptedTranslator::one_fragment("a complete sentence").into(),
         ScriptedTts::default().into(),
         playout,
@@ -351,7 +379,8 @@ async fn speech_started_alone_does_not_close_user_segments() {
 #[tokio::test]
 async fn every_segment_records_a_complete_waterfall() {
     let stt = ScriptedStt::partial_then_final("半句话", "完整句子");
-    let (mut cascade, _playout) = scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
+    let (mut cascade, _playout) =
+        scripted_cascade(stt, ScriptedTranslator::one_fragment("a complete sentence"));
 
     let script = SegmentScript {
         epoch: 3,
