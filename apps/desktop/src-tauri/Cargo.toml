@@ -53,6 +53,17 @@ cpal = "0.18.2"
 hound = "3.5.1"
 rubato = "5.0.1"
 
+# --- 02-05 AEC3 (T5.1) -----------------------------------------------------
+# webrtc-audio-processing: package-legitimacy gate approved 2026-10-05 (the
+# RustAudio crate wrapping the same WebRTC/PulseAudio AEC snapshot the
+# requirement doc names). **Pin with `~`, not `^`**: this crate's version tracks
+# the upstream PulseAudio WebRTC snapshot, not semver — a 2.x bump can be a
+# breaking API change (the 0.1→2.0 jump was), so a patch-only range is the
+# honest constraint. `bundled` compiles the vendored C++ via meson+ninja
+# (see README "Native audio build prerequisites"); the first build also fetches
+# abseil-cpp, so it needs network once. Resolved: 2.0.4.
+webrtc-audio-processing = { version = "~2.0", features = ["bundled"] }
+
 [profile.release]
 strip = true
 lto = true

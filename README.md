@@ -28,6 +28,29 @@ An AI real-time cross-language interview copilot. Think in your native language,
 
 Prerequisites: macOS 12.7+ (Monterey-compatible), Node 20+, pnpm, Rust toolchain (rustup).
 
+### Native audio build prerequisites (AEC3)
+
+The echo canceller is `webrtc-audio-processing` with the `bundled` feature, which
+compiles the vendored WebRTC C++ at build time. That needs **meson + ninja +
+clang** (Xcode Command Line Tools). There is no Homebrew step — install the two
+Python-packaged tools into the user site:
+
+```bash
+pip3 install --user "meson==1.11.2" "ninja==1.13.2"
+export PATH="$HOME/Library/Python/3.9/bin:$PATH"   # pip --user scripts, not on PATH by default
+```
+
+`cargo build` inherits the shell's `PATH`, so export it **before** building (the
+same export must appear in CI). The first build also downloads `abseil-cpp`
+through meson's subproject wrap — an offline first build cannot succeed; the
+result is cached under `target/`.
+
+`pkg-config` is **not** required: the crate probes for a system abseil and falls
+back to the meson-fetched copy (verified by a real bundled build on macOS 12.7,
+2026-10-06). If a future crate revision starts demanding it, build
+[pkgconf](https://github.com/pkgconf/pkgconf) 3.0.7 from source with the freshly
+installed meson+ninja (`meson setup build --prefix=$HOME/.local && ninja -C build install`).
+
 ```bash
 pnpm install
 pnpm --filter @nextalk/desktop dev:tauri   # launches the desktop app (both windows)

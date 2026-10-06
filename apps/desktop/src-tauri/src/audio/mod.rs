@@ -19,6 +19,7 @@
 //! [`play_pcm_blocking`] — a deliberately minimal "play this PCM through the
 //! default output device" used by the enrollment preview.
 
+pub mod aec;
 pub mod playout;
 pub mod resample;
 
