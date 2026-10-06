@@ -1,15 +1,17 @@
-//! Audio I/O (02-03 T3.3; the cpal device lands in 02-05).
+//! Audio I/O (02-03 T3.3; 02-05 attached the real CoreAudio device).
 //!
 //! This module owns the boundary between "the cascade produced synthesised
 //! audio" and "the operating system played it". Two contracts live here:
 //!
 //! - [`PlayoutSink`] — where the cascade hands a chunk. The cascade holds one
 //!   and never learns how it is played; [`playout::PlayoutQueue`] is the
-//!   epoch-guarded implementation, 02-05 attaches the real CoreAudio device.
+//!   epoch-guarded implementation and 02-05's [`playout::PlayoutChain`] is the
+//!   jitter-buffered one the session runs on, with the real device attached.
 //! - [`RenderReference`] — the mirror of what was rendered, which the AEC needs
-//!   as its far-end reference signal. 02-05 T5.1 wires it to
-//!   `webrtc-audio-processing`; 02-03 ships the interface and drives it so the
-//!   audio graph does not have to change shape later.
+//!   as its far-end reference signal. 02-05 T5.1 wired it to
+//!   `webrtc-audio-processing` via [`aec::SharedProcessor`]; 02-03 shipped the
+//!   interface and drove it so the audio graph did not have to change shape
+//!   later.
 //!
 //! `PlayoutSink` is defined here rather than in `pipeline::cascade` (where the
 //! first draft put it) because the audio layer is its natural owner; the
@@ -17,7 +19,10 @@
 //!
 //! 02-04 added two more residents: [`resample`] (the sample-rate boundary) and
 //! [`play_pcm_blocking`] — a deliberately minimal "play this PCM through the
-//! default output device" used by the enrollment preview.
+//! default output device". 02-05 built the real chains ([`capture`], [`device`],
+//! [`playout`], [`routing`]) and left this helper where it was: the enrollment
+//! preview plays one three-second block and has no streaming producer, so a
+//! jitter buffer there would be machinery with nothing to buffer.
 
 pub mod aec;
 pub mod bounded;
@@ -71,7 +76,7 @@ impl RenderReference for NoopRenderReference {
 }
 
 // ---------------------------------------------------------------------------
-// Blocking PCM playback (02-04 T4.1/T4.4 — 02-05 replaces this)
+// Blocking PCM playback (02-04 T4.1/T4.4 — the enrollment preview's path)
 // ---------------------------------------------------------------------------
 
 /// What can go wrong on the way to the speakers.
@@ -110,11 +115,13 @@ pub struct CpalPlayback;
 
 /// Play one PCM16 block through the default output device and wait for it.
 ///
-/// **Deliberately minimal** (02-04): open the default device, resample to its
-/// rate if needed, write the block from the callback, sleep the block's
-/// duration, drop the stream. The real playout ring with the epoch guard and
-/// AEC reference (see [`PlayoutSink`]) lands in 02-05 — the enrollment preview
-/// only ever plays one short block, so the simple path is the honest one.
+/// **Deliberately minimal** (02-04, kept by 02-05): open the default device,
+/// resample to its rate if needed, write the block from the callback, sleep the
+/// block's duration, drop the stream. The session's playout ring — jitter
+/// buffer, epoch guard, AEC reference, device rebuild (see [`PlayoutSink`] and
+/// [`playout::PlayoutChain`]) — landed in 02-05 T5.3/T5.4 and is what the
+/// cascade uses; the enrollment preview only ever plays one short block with no
+/// streaming producer behind it, so the simple path is the honest one here.
 pub fn play_pcm_blocking(pcm16: &[i16], sample_rate_hz: u32) -> Result<(), PlaybackError> {
     CpalPlayback.play(pcm16, sample_rate_hz)
 }
