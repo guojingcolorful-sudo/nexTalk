@@ -487,6 +487,489 @@ impl PlayoutSink for PlayoutQueue {
     }
 }
 
+// ---------------------------------------------------------------------------
+// the jitter layer (02-05 T5.3)
+// ---------------------------------------------------------------------------
+
+/// Buffer depth a new segment pre-rolls to before it starts playing.
+///
+/// Vendor TTS arrives in bursts, not at the device's pace; playing the first
+/// 40 ms the moment it lands is what turns every network hiccup into a stutter.
+/// 120 ms is deep enough to ride out a burst gap and shallow enough that the
+/// first syllable is not late — it comes out of the same ≤2 s budget the
+/// barge-in gate spends from.
+pub const DEFAULT_TARGET_MS: u64 = 120;
+
+/// Never buffer deeper than this (the plan's hard cap).
+///
+/// **A deep buffer is not safety, it is latency.** Every millisecond held here
+/// is a millisecond the user waits before hearing their own sentence finish,
+/// and — worse for this product — a millisecond of silence before 抢话 can
+/// start. The 02-01 budget spends 2 s in total; 200 ms is the most this stage
+/// may take without being the reason the budget breaks.
+pub const HARD_CAP_MS: u64 = 200;
+
+/// Below this depth the chain is one scheduling hiccup from an underrun, and
+/// says so (`JitterStats::low_water_events`) instead of waiting to be told by
+/// an audible gap. This is the tuning signal the failure-case library reads.
+pub const LOW_WATER_MS: u64 = 60;
+
+/// The jitter buffer's tunables, named so the failure-case library can cite
+/// them (and so the ordering constraint below is checkable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JitterPolicy {
+    /// Depth a new segment plays from (see [`DEFAULT_TARGET_MS`]).
+    pub target_ms: u64,
+    /// Backpressure ceiling (see [`HARD_CAP_MS`]).
+    pub hard_cap_ms: u64,
+    /// Low-water warning line (see [`LOW_WATER_MS`]).
+    pub low_water_ms: u64,
+    /// Whether a new segment pre-rolls. Off makes the chain a pass-through —
+    /// useful when the device itself is already buffering, and the switch the
+    /// failure-case library flips to reproduce a stutter.
+    pub pre_roll: bool,
+}
+
+impl Default for JitterPolicy {
+    fn default() -> Self {
+        Self {
+            target_ms: DEFAULT_TARGET_MS,
+            hard_cap_ms: HARD_CAP_MS,
+            low_water_ms: LOW_WATER_MS,
+            pre_roll: true,
+        }
+    }
+}
+
+impl JitterPolicy {
+    /// A policy that never pre-rolls and never caps — the degenerate case the
+    /// tests use to isolate the queue behaviour underneath.
+    pub const fn immediate() -> Self {
+        Self {
+            target_ms: 0,
+            hard_cap_ms: DEFAULT_CAPACITY_MS,
+            low_water_ms: 0,
+            pre_roll: false,
+        }
+    }
+
+    /// The plan's ordering constraint, as a value: a target deeper than the cap
+    /// could never be reached, and the chain would play nothing at all.
+    pub fn is_consistent(&self) -> bool {
+        if !self.pre_roll {
+            return true;
+        }
+        self.target_ms <= self.hard_cap_ms && self.low_water_ms <= self.target_ms
+    }
+}
+
+/// Jitter-buffer counters (T5.3). All of them are diagnostics — none of them
+/// changes what is played.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct JitterStats {
+    /// New segments that pre-rolled to the target depth.
+    pub pre_rolls: u64,
+    /// Segments that started below the target because the producer had stopped
+    /// filling (a one-word sentence must not wait forever for depth).
+    pub short_starts: u64,
+    /// Ticks that wanted more samples than the buffer had.
+    pub underruns: u64,
+    /// Ticks that rendered with less than `low_water_ms` left.
+    pub low_water_events: u64,
+    /// Chunks refused at this chain's front door because their generation was
+    /// over. Counted here rather than in the queue because the queue never saw
+    /// them — they were turned away before the resampler ran.
+    pub stale_chunks: u64,
+    /// Chunks retired by the hard cap (forwarded from the queue).
+    pub dropped_chunks: u64,
+    /// Milliseconds retired by the hard cap.
+    pub dropped_ms: u64,
+    /// Ticks that rendered at least one sample.
+    pub renders: u64,
+}
+
+/// The playout chain: the 02-03 [`PlayoutQueue`] (epoch guard, fade, bounded
+/// backpressure) with the jitter layer the real device needs on top, plus the
+/// AEC render mirror.
+///
+/// Two contracts this type exists to hold:
+///
+/// - **Everything reaching the device reaches the echo canceller**, from the
+///   same buffer. TTS arrives at 24 kHz and the graph runs at 48 kHz, so a
+///   chunk is resampled *once* on the way in; after that the samples the device
+///   consumes and the samples the AEC is given are the same memory
+///   (`&out[..written]`), not a copy that could drift (T-02-25).
+/// - **The mirror is what is being played, never what was received.** Mirroring
+///   at `push` would hand AEC3 a reference from the future, and its delay
+///   estimate would converge on a lie.
+#[derive(Clone)]
+pub struct PlayoutChain {
+    queue: PlayoutQueue,
+    policy: JitterPolicy,
+    /// The 24 kHz → 48 kHz converter, built on first use and reused (a new one
+    /// per chunk would drop the carry-over and click at every seam).
+    resampler: Arc<Mutex<Option<(u32, crate::audio::resample::StreamingResampler)>>>,
+    state: Arc<Mutex<ChainState>>,
+}
+
+struct ChainState {
+    /// May the chain consume? Cleared by an interrupt, a dry buffer and a new
+    /// session; set by a pre-roll.
+    playing: bool,
+    /// Did audio arrive since the previous tick?
+    pushed_since_tick: bool,
+    /// The buffer holds nothing but the interrupt fade: play it out and stop,
+    /// and do **not** count the resulting gap as an underrun — the sentence
+    /// ended because the user cut it, not because the producer starved.
+    draining_cut: bool,
+    stats: JitterStats,
+    /// The queue's lifetime drop counters as they stood when this session
+    /// began. The queue's numbers are deliberately lifetime-wide (02-03's
+    /// diagnostics); the chain reports the session's, by difference.
+    dropped_baseline_chunks: u64,
+    dropped_baseline_ms: u64,
+}
+
+impl PlayoutChain {
+    pub fn new() -> Self {
+        Self::with_policy(JitterPolicy::default())
+    }
+
+    pub fn with_policy(policy: JitterPolicy) -> Self {
+        Self::with_policy_and_clock(policy, Arc::new(RealClock::new()))
+    }
+
+    pub fn with_policy_and_clock(
+        policy: JitterPolicy,
+        clock: Arc<dyn TimeSource + Send + Sync>,
+    ) -> Self {
+        debug_assert!(
+            policy.is_consistent(),
+            "a pre-roll target deeper than the hard cap can never be reached"
+        );
+        let queue = PlayoutQueue::with_clock(
+            PlayoutConfig {
+                // The hard cap is enforced by the queue's own backpressure —
+                // one implementation of "drop the oldest, count it", not two.
+                capacity_ms: policy.hard_cap_ms,
+                ..PlayoutConfig::default()
+            },
+            clock,
+        );
+        Self {
+            queue,
+            policy,
+            resampler: Arc::new(Mutex::new(None)),
+            state: Arc::new(Mutex::new(ChainState {
+                playing: false,
+                pushed_since_tick: false,
+                draining_cut: false,
+                stats: JitterStats::default(),
+                dropped_baseline_chunks: 0,
+                dropped_baseline_ms: 0,
+            })),
+        }
+    }
+
+    pub fn policy(&self) -> JitterPolicy {
+        self.policy
+    }
+
+    /// The underlying epoch-guarded queue (its stats, timeline and marks are
+    /// still the authority for everything 02-03 defined).
+    pub fn queue(&self) -> &PlayoutQueue {
+        &self.queue
+    }
+
+    /// This session's counters. The buffer's own drop tallies are lifetime
+    /// figures (02-03's diagnostics read them that way), so what is reported
+    /// here is the difference since the session began — 停止 must leave the
+    /// next session with nothing to inherit.
+    pub fn stats(&self) -> JitterStats {
+        let state = self.state();
+        let queue = self.queue.stats();
+        let mut stats = state.stats;
+        stats.dropped_chunks = queue
+            .dropped_chunks
+            .saturating_sub(state.dropped_baseline_chunks);
+        stats.dropped_ms = queue.dropped_ms.saturating_sub(state.dropped_baseline_ms);
+        stats
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.queue.epoch()
+    }
+
+    /// Unplayed milliseconds, as the device sees them.
+    pub fn buffered_ms(&self) -> u64 {
+        self.queue.buffered_ms()
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.state().playing
+    }
+
+    /// Enqueue one synthesised chunk, converted to the graph rate.
+    ///
+    /// The conversion happens here rather than at render time so that what the
+    /// device plays and what the AEC is mirrored are the same buffer. A chunk
+    /// whose generation is already over is refused (02-03's contract).
+    pub fn push(
+        &mut self,
+        epoch: u64,
+        segment_id: u64,
+        pcm: &[f32],
+        sample_rate_hz: u32,
+    ) -> Result<(), StaleChunk> {
+        if epoch != self.queue.epoch() {
+            // The generation check runs before the resampler: converting audio
+            // for a sentence nobody will hear spends the CPU budget the ≤2 s
+            // path needs, and a stale chunk is refused *immediately* — that is
+            // the whole point of 02-03's epoch guard (02-05 T5.3 Test 6).
+            let current = self.queue.epoch();
+            self.state().stats.stale_chunks += 1;
+            return Err(StaleChunk {
+                chunk_epoch: epoch,
+                current_epoch: current,
+            });
+        }
+        if pcm.is_empty() {
+            return Ok(());
+        }
+
+        let converted = self.to_graph_rate(pcm, sample_rate_hz);
+        let chunk = AudioChunk::new(converted, crate::audio::capture::GRAPH_RATE_HZ);
+        self.queue.push(epoch, segment_id, &chunk)?;
+        self.state().pushed_since_tick = true;
+        Ok(())
+    }
+
+    /// Convert one chunk to the graph rate. 48 kHz passes through untouched —
+    /// an unnecessary resample is an unnecessary filter.
+    fn to_graph_rate(&self, pcm: &[f32], sample_rate_hz: u32) -> Vec<f32> {
+        let graph = crate::audio::capture::GRAPH_RATE_HZ;
+        if sample_rate_hz == graph || sample_rate_hz == 0 {
+            return pcm.to_vec();
+        }
+        let mut guard = self
+            .resampler
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let stale = !matches!(guard.as_ref(), Some((rate, _)) if *rate == sample_rate_hz);
+        if stale {
+            match crate::audio::resample::StreamingResampler::new(sample_rate_hz, graph, 240) {
+                Ok(built) => *guard = Some((sample_rate_hz, built)),
+                // A rate pair rubato refuses is a programming error, but a
+                // sentence that is heard slightly wrong beats a sentence that
+                // is not heard at all — and `resample_mono` is the same
+                // conversion without the streaming state.
+                Err(_) => return crate::audio::resample::resample_mono(pcm, sample_rate_hz, graph),
+            }
+        }
+        // No `flush` here: a chunk boundary is not a stream boundary. Flushing
+        // would convert the carry-over with zeros behind it on every chunk, and
+        // the FFT window would smear that padding into the first real samples
+        // of the next one. Held samples cost a few milliseconds of delay; they
+        // do not cost correctness, and they reappear on the next push.
+        guard
+            .as_mut()
+            .expect("just built or already present")
+            .1
+            .process(pcm)
+    }
+
+    /// Fill `out` with the next block of audio and mirror it into the AEC.
+    ///
+    /// Returns how many samples were written (0 while pre-rolling or idle).
+    /// Everything written is graph-rate; the mirror receives exactly the
+    /// written prefix, so a resample mismatch between what is heard and what
+    /// the canceller knows about is impossible by construction.
+    pub fn tick_mirrored(&mut self, out: &mut [f32], reference: &mut dyn RenderReference) -> usize {
+        self.tick_inner(out, Some(reference))
+    }
+
+    /// [`Self::tick_mirrored`] without the mirror (tests, and any path that
+    /// deliberately runs without AEC).
+    pub fn tick(&mut self, out: &mut [f32]) -> usize {
+        self.tick_inner(out, None)
+    }
+
+    fn tick_inner(
+        &mut self,
+        out: &mut [f32],
+        mut reference: Option<&mut dyn RenderReference>,
+    ) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+        out.fill(0.0);
+
+        let mut state = self.state();
+        if !state.playing {
+            // Nothing buffered is not a gap — it is the silence between
+            // sentences. Reading the water marks here would turn every pause
+            // into an underrun alarm.
+            let buffered = self.queue.buffered_ms();
+            if buffered == 0 {
+                state.pushed_since_tick = false;
+                return 0;
+            }
+            let reached_target = buffered >= self.policy.target_ms;
+            // A sentence shorter than the target must still be heard: once the
+            // producer stops filling, waiting longer only delays it.
+            let producer_paused = !state.pushed_since_tick;
+            if !self.policy.pre_roll || reached_target || producer_paused {
+                state.playing = true;
+                if self.policy.pre_roll {
+                    if reached_target {
+                        state.stats.pre_rolls += 1;
+                    } else {
+                        state.stats.short_starts += 1;
+                    }
+                }
+            } else {
+                state.pushed_since_tick = false;
+                return 0;
+            }
+        }
+        state.pushed_since_tick = false;
+        drop(state);
+
+        let written = match reference.as_mut() {
+            Some(reference) => self.queue.render_mirrored(out, *reference),
+            None => self.queue.render(out),
+        };
+
+        let mut state = self.state();
+        if written > 0 {
+            state.stats.renders += 1;
+        }
+
+        if state.playing && written < out.len() {
+            if state.draining_cut {
+                // 抢话 drained: the fade was the last audio and the sentence
+                // ended because the user ended it. Silence here is the plan
+                // working, not a gap, so it is not counted as one.
+                state.draining_cut = false;
+                state.playing = false;
+            } else {
+                // Underrun: the device asked for more than the buffer had. The
+                // samples that did come out are cut short, so ramp their tail
+                // to exact silence — the same reasoning as the interrupt fade,
+                // and the reason a stutter is heard as a stop, not a click.
+                state.stats.underruns += 1;
+                let fade = samples_for_ms(FADE_OUT_MS, crate::audio::capture::GRAPH_RATE_HZ);
+                let start = written.saturating_sub(fade.min(written));
+                apply_fade_to_silence(&mut out[start..written]);
+                state.playing = false;
+            }
+        }
+
+        if self.queue.buffered_ms() < self.policy.low_water_ms {
+            state.stats.low_water_events += 1;
+        }
+        written
+    }
+
+    /// Barge-in (02-03's contract, unchanged): advance the generation, clear,
+    /// keep the fade tail. The jitter layer stops consuming with it, so the AEC
+    /// mirror stops at the same instant the audio does.
+    pub fn interrupt(&mut self) -> InterruptOutcome {
+        let outcome = self.queue.interrupt();
+        let mut state = self.state();
+        state.pushed_since_tick = false;
+        // The queue kept a fade ramp; it still has to be heard, or the cut is a
+        // click after all. So the chain stays playing just long enough to
+        // drain it — and `draining_cut` says the silence that follows is the
+        // interrupt's doing, not a starving producer's.
+        state.draining_cut = outcome.faded_samples > 0;
+        state.playing = outcome.faded_samples > 0;
+        outcome
+    }
+
+    /// A session start: a new generation, an empty buffer, and counters that
+    /// belong to nobody.
+    pub fn begin_session(&mut self) -> u64 {
+        let epoch = self.queue.begin_session();
+        self.reset_state();
+        epoch
+    }
+
+    /// A session stop (「停止」): clear the buffer, reset the water marks, keep
+    /// nothing for the next session to inherit.
+    pub fn end_session(&mut self) -> u64 {
+        let epoch = self.queue.end_session();
+        self.reset_state();
+        epoch
+    }
+
+    fn reset_state(&self) {
+        let queue = self.queue.stats();
+        let mut state = self.state();
+        state.playing = false;
+        state.pushed_since_tick = false;
+        state.draining_cut = false;
+        state.stats = JitterStats::default();
+        // Re-base the difference counters on the queue's lifetime tallies as
+        // they stand now: 停止 leaves nothing for the next session to inherit.
+        state.dropped_baseline_chunks = queue.dropped_chunks;
+        state.dropped_baseline_ms = queue.dropped_ms;
+    }
+
+    fn state(&self) -> MutexGuard<'_, ChainState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+impl Default for PlayoutChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for PlayoutChain {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PlayoutChain")
+            .field("policy", &self.policy)
+            .field("playing", &self.is_playing())
+            .field("buffered_ms", &self.buffered_ms())
+            .field("stats", &self.stats())
+            .finish()
+    }
+}
+
+/// The cascade pushes a chunk and never learns how it is played.
+impl PlayoutSink for PlayoutChain {
+    fn set_marks(&mut self, marks: MarkHandle) {
+        self.queue.set_marks(marks);
+    }
+
+    fn play(&mut self, epoch: u64, segment_id: u64, chunk: &AudioChunk) {
+        // A refusal is already counted as a stale chunk; a playout sink has no
+        // way to report upward and must not stall the pipeline over it.
+        let _ = self.push(epoch, segment_id, &chunk.pcm, chunk.sample_rate_hz);
+    }
+}
+
+/// Ramp a block to exact zero over its own length (the tail of an underrun, or
+/// whatever survives an interrupt).
+fn apply_fade_to_silence(block: &mut [f32]) {
+    let len = block.len();
+    if len == 0 {
+        return;
+    }
+    for (index, sample) in block.iter_mut().enumerate() {
+        let gain = 1.0 - (index as f32 + 1.0) / len as f32;
+        *sample *= gain;
+    }
+    if let Some(last) = block.last_mut() {
+        *last = 0.0;
+    }
+}
+
 fn duration_ms(samples: usize, sample_rate_hz: u32) -> u64 {
     if sample_rate_hz == 0 {
         return 0;

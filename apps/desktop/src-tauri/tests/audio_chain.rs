@@ -1023,16 +1023,22 @@ fn playout_a_new_segment_waits_for_the_target_depth_before_it_starts() {
 
     // 40 ms and 80 ms: below the target. Nothing may play yet — this is the
     // whole reason the layer exists.
-    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 1, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     assert_eq!(chain.tick(&mut tick), 0, "40 ms of 120 ms is not enough");
-    chain.push(epoch, 2, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 2, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     assert_eq!(chain.tick(&mut tick), 0, "80 ms of 120 ms is not enough");
     assert!(!chain.is_playing(), "the chain is still pre-rolling");
     assert_eq!(chain.stats().pre_rolls, 0);
     assert_eq!(chain.buffered_ms(), 80, "nothing was consumed");
 
     // 120 ms: the target. It starts, and it starts full.
-    chain.push(epoch, 3, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 3, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     assert_eq!(
         chain.tick(&mut tick),
         ms_samples(40),
@@ -1052,7 +1058,9 @@ fn playout_a_short_sentence_below_the_target_still_plays() {
     let chunk = sine_48k(440.0, 0.5, ms_samples(60));
     let mut tick = vec![0.0f32; ms_samples(20)];
 
-    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 1, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     assert_eq!(chain.tick(&mut tick), 0, "the producer is still filling");
 
     // No new audio arrived since the last tick: the producer has stopped, so
@@ -1114,9 +1122,15 @@ fn playout_the_low_water_mark_warns_before_the_gap_and_not_after_it() {
     let chunk = sine_48k(440.0, 0.5, ms_samples(40));
     let mut tick = vec![0.0f32; ms_samples(40)];
 
-    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
-    chain.push(epoch, 2, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
-    chain.push(epoch, 3, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 1, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
+    chain
+        .push(epoch, 2, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
+    chain
+        .push(epoch, 3, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     assert_eq!(chain.tick(&mut tick), ms_samples(40));
     assert_eq!(chain.buffered_ms(), 80);
 
@@ -1149,7 +1163,9 @@ fn playout_an_underrun_ends_in_silence_with_a_fade_and_not_a_click() {
     // 55 ms of audio against 10 ms blocks: the last block is half full.
     let chunk = tone_at(0, ms_samples(55), 440.0, 0.5);
     let block = ms_samples(10);
-    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain
+        .push(epoch, 1, &chunk, GRAPH_RATE_HZ)
+        .expect("epoch 1");
     let mut tick = vec![0.0f32; block];
 
     for _ in 0..5 {
@@ -1230,7 +1246,10 @@ fn playout_the_echo_canceller_hears_exactly_what_the_speaker_plays() {
         "the graph rate, or the processor's frame assertion fires in a callback: {:?}",
         mirror.rates()
     );
-    assert!(mirror.blocks.len() > 1, "mirrored per block, not per sentence");
+    assert!(
+        mirror.blocks.len() > 1,
+        "mirrored per block, not per sentence"
+    );
 }
 
 // ---------------------------------------------------------------------------
