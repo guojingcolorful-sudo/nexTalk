@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.4
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 executing — 02-04 complete (2026-10-05)
-last_updated: "2026-10-05T15:58:00.000Z"
-last_activity: 2026-10-05 -- Completed 02-04-PLAN.md: cross-lingual clone verdict approved + real cpal capture (48k→16k WAV) + voice_clone training & local voice profile + preset fallback + four-step enrollment wizard with preview/retrain
+stopped_at: Phase 2 complete — 5/5 plans done (02-05 complete, 2026-10-06)
+last_updated: "2026-10-06T15:10:00.000Z"
+last_activity: 2026-10-06 -- Completed 02-05-PLAN.md: real audio core landed — AEC3/NS/AGC (11.55 dB measured echo cancellation) + live capture 48k→16k + jitter-buffered playout (200ms cap, AEC mirror on what plays) + error-driven device rebuild + dual-stream routing with loopback off by default. **Phase 2 is 5/5; three human passes pending (see Blockers)**
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 28
-  completed_plans: 9
-  percent: 32
+  completed_plans: 10
+  percent: 36
 ---
 
 # Project State
@@ -21,34 +21,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-26)
 
 **Core value:** 让用户以母语思考、以本人音色讲出地道英文——端到端延迟 ≤ 2 秒
-**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core (02-04 done: clone enrollment end-to-end — cross-lingual verdict approved, real capture, training, preset fallback, preview/retrain; 02-05 audio core next)
+**Current focus:** Phase 2: Real Cloud Pipeline + Audio Core — **5/5 plans complete** (02-01 rig → 02-02 vendor clients → 02-03 cascade stability → 02-04 clone enrollment → 02-05 audio core). Next: the three outstanding human passes, then `/gsd:verify-work` / Phase 3 (BlackHole routing + device picker)
 
 ## Current Position
 
 Phase: 2 of 7 (Real Cloud Pipeline + Audio Core)
-Plan: 4 of 5 in current phase (02-04 complete; 02-05 next)
-Status: Phase 2 executing — clone enrollment lands end-to-end: cross-lingual verdict approved (三份对照工件), real cpal capture → 48k→16k WAV, voice_clone training + local voice profile, resolve_voice per fragment with preset fallback (unregistered users can run the pipeline), four-step wizard with preview/retrain; 02-05 (AEC + device hot-change) is next
-Last activity: 2026-10-05 -- Completed 02-04-PLAN.md: 跨语种克隆探针人耳裁决 approved（clone-en/zh/preset-en 三份工件）+ cpal 真实采集（48k→16k 单声道 WAV、0600、时长/体积/静音校验）+ voice_clone 训练（10MB 预检、WER 门 45001109）+ 本地音色档案与 resolve_voice 每片段解析 + 预置回退（未注册可用）+ 四步注册向导（试听 zh/en、重训保留旧音色、删除两击确认）；另有 quick task 261005-wdd（PreToolUse 风控 hook + permissions 收紧，重启会话生效）
+Plan: 5 of 5 in current phase (all complete)
+Status: Phase 2 code-complete — the audio core is real: AEC3/NS/AGC behind a frame-disciplined wrapper (11.55 dB echo removed on the synthetic path), live capture chain (cpal callback → bounded queue → 10ms framing → AEC → streaming resample → 16k PCM16), jitter-buffered playout (120ms pre-roll / 200ms hard cap / underrun fade) with the AEC reference taken from the buffer the device consumed, error-driven device rebuild (backoff 250ms, cap 3, cooldown 5s, 5s open timeout, silence not a pop), and role-separated routing (mic/loopback/output; loopback opt-in by device name, off by default). Full suite 354 passed / 0 failed / 5 ignored; rig cold p50 1180ms / hot p50 1225ms. Outstanding: the phase's human passes (real unplug, real mic round trip, live latency measurement)
+Last activity: 2026-10-06 -- Completed 02-05-PLAN.md: AEC3/NS/AGC（帧纪律 10ms/480、渲染先于采集、无 VAD）+ 实时采集链 + 抖动缓冲播放链（硬上限 200ms、AEC 镜像取「正在播放的」缓冲）+ 错误驱动设备热切换（白名单处置、退避 250ms、上限 3 次、冷却 5s）+ 双流路由与 Phase 3 接缝（回采默认不启用、按名匹配、只读边界）；工具链（meson+ninja）经用户裁决落地并写进 README/CI/package.json
 
-Progress: [████░░░░░░] 32% (9/28 plans, Phase 1/7 done, Phase 2: 4/5)
+Progress: [████░░░░░░] 36% (10/28 plans, Phase 1/7 done, Phase 2: 5/5)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 9
-- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions; 02-03 ~5h active over three sessions, ~28h wall; 02-04 ~2h active)
-- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h + ~5h + ~2h active
+- Total plans completed: 10
+- Average duration: ~1d wall (01-01 26h active-session + gap; 01-02 6d wall, ~7h active; 01-03 ~1h active; 01-04 ~2.5h active over two sessions; 01-05 ~30 min active; 02-01 ~4d wall over two sessions; 02-02 ~4h active over two sessions; 02-03 ~5h active over three sessions, ~28h wall; 02-04 ~2h active; 02-05 ~1h47m active (the fastest plan so far — the toolchain gate was its only wait))
+- Total execution time: 26h + ~7h + ~1h + ~2.5h + ~0.5h + ~2h + ~4h + ~5h + ~2h + ~1h47m active
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation + Simulation Mode | 5 | 5 | ~1d wall avg (incl. idle gaps) |
-| 2. Real Cloud Pipeline + Audio Core | 4 | 5 | ~2d wall avg (all four span idle gaps) |
+| 2. Real Cloud Pipeline + Audio Core | 5 | 5 | ~1.5d wall avg (all five span idle gaps) |
 
 **Recent Trend:**
 
+- 02-05 audio core (2026-10-06): 11 commits (5 RED + 5 GREEN + 1 docs), cargo **354 passed / 0 failed / 5 ignored** (211 lib + 26 audio_chain + 15 audio_devices + 8 cascade_integration + 15 enrollment_capture + 14 enrollment_train + 3 latency_rig + 31 mock_vendors + 5 session_integration + 19 stability + 6 voice_resolution + 1 doctest; the ignored ones are the real-device/live-key manual checks), rig cold p50 1180ms / hot p50 1225ms (budget 2000ms, no regression after AEC + jitter buffer), 8 auto-fixed deviations (6 Rule 1 + 1 Rule 2 + 1 Rule 3(user-approved)), zero keys and zero real devices required
 - 02-04 clone enrollment (2026-10-05): 15 commits (5 RED + 4 GREEN + 1 chore + 2 docs + 1 probe + 2 test fixes), cargo 290 tests (188 lib + 8 cascade_integration + 15 enrollment_capture + 14 enrollment_train + 3 latency_rig + 31 mock_vendors + 5 session_integration + 19 stability + 6 voice_resolution + 1 doctest; 2 manual checks #[ignore]d) + 63 vitest (10 files) + 36 playwright (4 skipped) green, 跨语种克隆裁决 approved（真 key 探针两轮 6 份音频工件）, 5 auto-fixed deviations (3 Rule 1 + 1 Rule 2 + 1 Rule 3)
 - 02-03 stability gate (2026-10-05): 14 commits (6 RED + 6 GREEN + 1 pin-test + 1 feat-only non-TDD task), cargo 232 tests (165 lib + 8 cascade_integration + 3 rig + 31 mock_vendors + 5 session_integration + 19 stability + 1 doctest; 1 live variant #[ignore]d) + 162 vitest across 4 packages + 37 playwright (4 skipped) green, failure-cases 20/20, build 428.06 kB JS / 135.26 kB gz, 5 auto-fixed deviations (3 Rule 3 + 1 Rule 1 + 1 Rule 2), zero keys required
 - 02-02 vendor clients (2026-10-04): 12 commits (6 RED + 6 GREEN), cargo 155 tests (116 lib + 31 mock_vendors + 3 rig + 5 session_integration; 1 live variant `#[ignore]`d) + 145 vitest across 4 packages green, root `pnpm build` green, 3 auto-fixed deviations (all Rule 3 blocking) + 1 plan-accuracy note (`wire_shapes` test location), zero keys required
@@ -64,6 +65,14 @@ Progress: [████░░░░░░] 32% (9/28 plans, Phase 1/7 done, Phas
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [02-05]: AEC 不降级——bundled 构建真的成功（meson 1.11.2 + ninja 1.13.2 经用户裁决走 `pip3 install --user`；**pkg-config 实测不需要**），实测合成回路消回声 11.55 dB、本地话者距纯语音 2.80 dB；Task 0 的 `descope-aec` 分支未被触发，自听回环风险按设计消除
+- [02-05]: 帧纪律在封装层前置——479/960 样本帧得到 `AecError::BadFrameLength`（含期望/实际）而不是让 webrtc 的 `assert_eq!` 在 cpal 回调里终止进程（T-02-23）；渲染帧必须先于采集帧，无播放链时喂静音帧（静音就是「没有东西在播」的正确参考）
+- [02-05]: 播放链扩展现有队列而非另起一套——硬上限 200ms 靠 02-03 队列的背压实现，「丢最旧并计数」只有一个实现；AEC 参考镜像的就是设备消费的那个缓冲（T-02-25）；欠载把尾部斜坡到精确静音而不是留一个切样（爆音）
+- [02-05]: 设备重建的处置是白名单——只有 NotAvailable/Invalidated/Busy 触发重建，`Changed` 按 cpal 语义「流仍活」明确不重建，未分类的 `Unexpected` 也不拆还开着的流；连续失败上限的**跨越点仍返回 `Failed`**（本次尝试确实发生），`Exhausted` 只留给停摆期间的拒绝，否则上限不可观测（T-02-26）
+- [02-05]: `DeviceManager` 无内部锁（全部 `&mut self`，回调侧只有一次 channel send 的 `FaultSender`）——把锁中毒与临时 guard 生命周期死锁整类问题从设计里去掉；同一设备在输入/输出两侧解析为同一个 `Arc`（`Arc::ptr_eq` 是强断言，`PartialEq` 只是 audio_device_id）
+- [02-05]: 回采是 opt-in 且必须按名指定（T-02-24）——`RoutingProfile` 默认三字段皆空即「回采不存在」，`role_disabled` 是可读答案而非「悄悄用默认输入设备」；按名匹配（精确 → trim + 忽略大小写）而非能力标志（macOS 虚拟驱动两向皆报 true）；配置损坏的回落方向同样关闭回采。`LOOPBACK_DEVICE_NAME = "BlackHole 2ch"` 是 Phase 3 引导安装与设置页的单一来源
+- [02-05]: 路由层只读边界写进代码——源码扫描禁止 `aggregate`/`AudioObjectSet`/`defaults write`/能力标志进入 `routing.rs`；组合设备与系统音频设置属 Phase 3 的自有同意流程
+- [02-05 Requirement numbering]: frontmatter `requirements: [AUDI-06]` 用 ROADMAP 口径（「真实设备上采集→AEC→重采样→STT 与 TTS→抖动缓冲→播放→AEC 参考两条链路成立」= REQUIREMENTS.md 的 **AUDI-05**，已推进 Complete (02-05)；REQUIREMENTS.md 的 AUDI-06 是延迟测量装置，02-01 已完成）
 - [02-04]: 跨语种克隆裁决 approved（三份对照工件 clone-en/clone-zh/preset-en + 用户人耳判定，落 blind-clone-results.json 的 cross_lingual）——D-11 维持、GOV-16 备用供应商不触发；.env.example「ICL 2.0 仅同语种」矛盾被证伪（探针真 key 实跑）
 - [02-04]: 试听参数形状与探针逐参一致——英文 explicit_language=en + tone_fidelity=false，中文（同语种）省略两键（VolcTts::same_language() 构建器）；预置音色英文路径以探针 C 份为准，02-02 内联参数即正确形状
 - [02-04]: 采集纪律扩展（T-02-19）——cpal 回调只入队+溢出计数；drain 线程常驻消费并独占写 LevelHandle（AtomicU32 f32 bits），enrollment_level 命令 10Hz 读快照；此模式是 Phase 3 设备热切换的参照
@@ -150,7 +159,11 @@ None yet.
 - 02-03 Known stub: TraceRecord 的 StageUsage（STT 音频 ms/翻译 tokens/TTS 字符）默认全零——真实会话的成本面板与用量分钟数读 0，直到阶段计数接线（挂载点 TraceRecord::with_usage；02-04 未接线——本计划不含阶段计数——顺延 Phase 3 telemetry）
 - ~~02-03: 失败案例 0017（跨语种克隆握手被拒）措辞为占位~~ RESOLVED 2026-10-05 (02-04): T4.0 裁决 approved 后措辞已回填（043cba5）；探针通过故未新增 0003/0021 案例（0003 编号已被 02-03 占用）
 - 02-04: 真人 GUI 验证未跑——注册→训练→试听全流程 + fallback 人工检查（删 voice/profile.json → 启动 → 跑一轮对话）需要 GUI + 麦克风；自动化等价物全绿（voice_resolution 6 条 + enrollment e2e 四步）。`tests/enrollment_capture.rs` 的真机采集测试为 `#[ignore]` 手动项。跑一次再 `/gsd:verify-work`
-- 02-04: `audio::play_pcm_blocking` 是临时最小回放助手（代码注释注明）——02-05 的完整播放链（抖动缓冲 + AEC 参考）应替换它，勿在其上扩展功能
+- ~~02-04: `audio::play_pcm_blocking` 是临时最小回放助手——02-05 的完整播放链应替换它~~ RESOLVED 2026-10-06 (02-05): 会话路径已改走 `playout::PlayoutChain`（抖动缓冲 + AEC 参考 + 设备重建）；`play_pcm_blocking` **刻意保留**给注册试听（一段 3 秒块、无流式生产者，套抖动缓冲是无米之炊），`audio/mod.rs` 注释已改成真实分工（76719c5）
+- **02-05: Phase 2 的三项人工门仍未跑（executor 无法执行）** —— (a) 真机拔插：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test audio_devices a_real_device_unplug_is_survived -- --ignored`（要有个人真的拔耳机）；(b) 真机采集 + 播放 + 回声实测（GUI/麦克风回路）；(c) live 延迟测量：`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --ignored`（需真实供应商凭据，瀑布报告是阶段门禁的人工记录工件）。自动化等价物全绿，但这三项是 AUDI-06 真机达成的**唯一**证据缺口
+- 02-05: CI 的 macos-13 三条编译车道现在自装 meson+ninja 并把 `$(python3 -m site --user-base)/bin` 追加进 `$GITHUB_PATH`（bundled AEC3 的 C++ 需要）——换 runner 镜像/换机时这是首先要检查的一段；本地 `pnpm test:full` / `test:rig` 已自解析同一路径
+- 02-05: `audio_routing_status` / `audio_device_status` 两个只读可见性命令已注册但**暂无前端消费者**——设备选择器与 BlackHole 引导安装是 Phase 3 的界面面
+- 02-05: 已记入 `deferred-items.md`「From 02-05」——`validate.rs:461` 未使用的 `mut`、`sim/source_test.rs:256` 未使用的 `zh`、两处 `clone_on_copy`、一处 `drain_collect`，以及 webrtc-sys 的 Linux `-L` 链接噪声（全部既有、非本计划造成、全量套件仍绿）
 
 ### Quick Tasks Completed
 
@@ -170,6 +183,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-10-05T15:58:00.000Z
-Stopped at: Completed 02-04-PLAN.md (跨语种克隆裁决 approved + cpal 真实采集 48k→16k WAV + voice_clone 训练与本地音色档案 + 预置回退与 resolve_voice 每片段解析 + 四步注册向导试听/重训/删除；290 cargo + 63 vitest + 36 playwright 全绿) — 02-05 (AEC wiring + 设备热变更) is next
-Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-04-SUMMARY.md
+Last session: 2026-10-06T15:10:00.000Z
+Stopped at: Completed 02-05-PLAN.md — **Phase 2 is 5/5 plans complete** (真实音频内核落地：AEC3 消回声 11.55 dB + 采集链 48k→16k + 抖动缓冲播放链 200ms 硬上限 + 设备重建 + 双流路由；354 cargo passed / 0 failed / 5 ignored，rig 冷 1180ms / 热 1225ms)。下一步：三项人工门（真机拔插、真机回路、live 延迟测量）→ `/gsd:verify-work` → Phase 3（BlackHole 路由 + 设备选择器）
+Resume file: .planning/phases/02-real-cloud-pipeline-audio-core/02-05-SUMMARY.md

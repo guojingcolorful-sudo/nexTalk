@@ -14,7 +14,7 @@ NexTalk is a real-time CN→EN interview copilot: the user speaks Chinese, hears
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation + Simulation Mode** - Design system, desktop dual-pane UI, phone H5 teleprompter, LAN QR sync — full event flow demoable on simulated audio (completed 2026-09-11)
-- [ ] **Phase 2: Real Cloud Pipeline + Audio Core** - Cascaded streaming STT→translate→TTS with cloned voice, ≤2s e2e, latency rig as gate
+- [x] **Phase 2: Real Cloud Pipeline + Audio Core** - Cascaded streaming STT→translate→TTS with cloned voice, ≤2s e2e, latency rig as gate (completed 2026-10-06 — three real-device manual passes outstanding, see STATE blockers)
 - [ ] **Phase 3: Virtual Audio Device Integration** - BlackHole install wizard, aggregate multi-output device, meeting-app audio loop
 - [ ] **Phase 4: Stealth + Desktop Completion** - Cmd+Shift+H real orderOut hiding verified against real meeting apps, glossary term protection
 - [ ] **Phase 5: AI Interview Assistant** - Auto question-end detection; resume+glossary RAG with web-search evidence → answer framework (~1.5s), every point traceable, no fabrication (GOV-23)
@@ -83,7 +83,7 @@ Plans:
 - [x] 02-02: Real providers wired (讯飞 iat / Deepgram Nova-3 / DeepSeek / 火山 ICL 2.0 — the 2026-10-03 vendor re-decision) as streaming stages with typed contracts — 2026-10-04: 三阶段契约 + RetryClass 分类 + 固定路由（GOV-18）；讯飞（HMAC 签名/wpgs 重建/仅 status==2 提交/60s 轮换）、Deepgram（language=en 硬锁/Token/KeepAlive/NET-0001 识别）、DeepSeek（\n\n 边界/温度 0/滑窗 ≤2/畸形即可重试）、火山（二进制帧逐字段移植/跨语种参数显式/资源随音色切换）；四家确定性 mock 与故障注入；D-07 confidence/trace/abstained 双端扩展（向后兼容）；155 cargo + 145 vitest 全绿、零 key
 - [x] 02-03: Stability gate (preview vs commit), sentence aggregation, barge-in queue, jitter buffer, provider pre-warming — 2026-10-05: 提交门（partial 渲染、仅 committed 下潜，GOV-15 唯一执法点）+ 句子聚合/本地 VAD + epoch 守卫抢话队列（丢弃未播、封顶淡出、300ms 最小语音门限）+ 片段重试（2 次/100→200ms/500ms）与熔断（2 次/120s/半开）+ 双语降级展示与静默弃权（待翻译）+ 数字校验（失败复用锁定降级文案）+ 单写者有界 JSONL 溯源与成本/用量面板 + 失败案例库 20 例（第五条 CI 车道）；232 cargo + 162 vitest + 37 playwright 全绿、零 key
 - [x] 02-04: Voice clone enrollment (1-3 min recording → clone) + stock voice fallback — 2026-10-05: 跨语种克隆探针人耳裁决 approved（clone-en/zh/preset-en 三份工件，真 key 两轮）+ cpal 真实采集（48k→16k 单声道 WAV、0600、时长/体积/静音校验）+ voice_clone 训练（10MB 预检、WER 门 45001109）+ 本地音色档案与 resolve_voice 每片段解析 + 预置回退（未注册可用，成功标准 3 后半）+ 四步注册向导（试听 zh/en、重训保留旧音色、删除两击确认）；290 cargo + 63 vitest + 36 playwright 全绿
-- [ ] 02-05: AEC wiring + device hot-change handling + routing hygiene (distinct mic vs loopback streams)
+- [x] 02-05: AEC wiring + device hot-change handling + routing hygiene (distinct mic vs loopback streams) — 2026-10-06: AEC3/NS/AGC 帧纪律封装（实测消回声 11.55 dB / 本地话者 −2.80 dB）+ 实时采集链（回调只入队 → 10ms 组帧 → AEC → 流式重采样 → 16k PCM16 STT，1 秒输入恰好 16 000 样本）+ 抖动缓冲播放链（预滚 120ms / 硬上限 200ms / 欠载淡出；AEC 参考取「正在播放的」缓冲）+ 错误驱动设备热切换（白名单处置、退避 250ms、上限 3 次、冷却 5s、每次开流 5s 超时；重建期静音不丢句）+ 双流路由（麦克风/回采/输出三分离，回采默认不启用、按名解析 BlackHole、只读边界）;354 cargo passed / 0 failed / 5 ignored，rig 冷 1180ms / 热 1225ms，零 key 零真设备
 
 **Research notes**: Wire cost monitoring here (interim-result billing amplification: Deepgram per-message, Gemini Live token costs). AUDI-07 glossary protects the same stage contracts but ships with the desktop glossary management in Phase 4.
 
@@ -228,7 +228,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Simulation Mode | 5/5 | Complete | 01-01 (2026-08-29), 01-02 (2026-09-09), 01-03 (2026-09-10), 01-04 (2026-09-11), 01-05 (2026-09-11) |
-| 2. Real Cloud Pipeline + Audio Core | 4/5 | Executing | 02-01 (2026-10-03), 02-02 (2026-10-04), 02-03 (2026-10-05), 02-04 (2026-10-05) |
+| 2. Real Cloud Pipeline + Audio Core | 5/5 | Complete | 02-01 (2026-10-03), 02-02 (2026-10-04), 02-03 (2026-10-05), 02-04 (2026-10-05), 02-05 (2026-10-06) |
 | 3. Virtual Audio Device Integration | 0/3 | Not started | - |
 | 4. Stealth + Desktop Completion | 0/3 | Not started | - |
 | 5. AI Interview Assistant | 0/4 | Not started | - |
