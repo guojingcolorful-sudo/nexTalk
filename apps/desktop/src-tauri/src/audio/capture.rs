@@ -38,6 +38,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::audio::aec::{AecError, SharedProcessor, FRAME_SAMPLES, PROCESSOR_RATE_HZ};
 use crate::audio::bounded::CaptureSink;
 use crate::audio::resample::{f32_to_pcm16, StreamingResampler, OUTPUT_RATE_HZ};
+use crate::audio::routing::{RoutingPlan, StreamRole};
 
 /// The STT feed's rate (16 kHz mono, PCM16 LE).
 pub const STT_RATE_HZ: u32 = OUTPUT_RATE_HZ;
@@ -700,3 +701,109 @@ impl std::fmt::Debug for CaptureChain {
 /// The graph rate (48 kHz), re-exported so the capture side does not have to
 /// import from two modules for one constant.
 pub const GRAPH_RATE_HZ: u32 = PROCESSOR_RATE_HZ;
+
+// ---------------------------------------------------------------------------
+// per-role assembly (02-05 T5.5 — the Phase 3 seam)
+// ---------------------------------------------------------------------------
+
+/// Which line a capture chain feeds.
+///
+/// Both are capture and both end up as 16 kHz PCM16, which is exactly why the
+/// distinction has to be a type: the user's line is the one that gets cloned,
+/// and the interviewer's line is the one that must never be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureLine {
+    /// The user's own voice → the STT line that feeds the clone.
+    User,
+    /// The system's playback → the interviewer's STT 副线. Transcribed and
+    /// shown; **never** written to disk or to the JSONL trace (T-02-24).
+    Interviewer,
+}
+
+impl CaptureLine {
+    /// The line a role feeds, or `None` for a role that does not capture.
+    pub fn of(role: StreamRole) -> Option<Self> {
+        match role {
+            StreamRole::UserMic => Some(Self::User),
+            StreamRole::Loopback => Some(Self::Interviewer),
+            StreamRole::Output => None,
+        }
+    }
+
+    pub fn role(self) -> StreamRole {
+        match self {
+            Self::User => StreamRole::UserMic,
+            Self::Interviewer => StreamRole::Loopback,
+        }
+    }
+
+    /// A stable machine-readable code. Never localized.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::User => "user_line",
+            Self::Interviewer => "interviewer_line",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "用户线",
+            Self::Interviewer => "面试官线（副线）",
+        }
+    }
+
+    /// Is this the sub-line? The 副线 is consumed and dropped, never retained.
+    pub fn is_sub_line(self) -> bool {
+        self == Self::Interviewer
+    }
+}
+
+impl CpalSource {
+    /// The device the routing plan resolved for `role`.
+    ///
+    /// Takes the resolved handle rather than a name: [`RoutingPlan::resolve`]
+    /// already matched the configured name (tolerantly, with a readable error
+    /// when it is not there), and looking the name up a second time could pick
+    /// a different device if the machine's list changed in between.
+    ///
+    /// **Phase 3 takeover point.** This phase lands the assembly only: today
+    /// `role` is [`StreamRole::UserMic`] against the system default microphone,
+    /// and a loopback role resolves nothing unless the profile names a device.
+    /// Phase 3 is where the loopback becomes real — the guided BlackHole 2ch
+    /// install (`audio::routing::LOOPBACK_DEVICE_NAME`), the "回采未启用" banner
+    /// when it is missing, and the interviewer STT sub-line that consumes this
+    /// chain's output. Nothing below has to change for that: the role, the
+    /// plan and the line are already separated here, so Phase 3 supplies a
+    /// profile and a device, not a rewrite.
+    ///
+    /// The device name is system-provided and untrusted (T-02-22): it is used
+    /// for display and passed to cpal, never interpolated into a shell command
+    /// or a path.
+    pub fn for_role(role: StreamRole, plan: &RoutingPlan) -> Result<Self, CaptureError> {
+        let handle = plan.device(role).ok_or_else(|| {
+            CaptureError::Device(format!(
+                "{}未启用：在设置中指定设备后才会启用采集",
+                role.label()
+            ))
+        })?;
+        let backend = handle
+            .backend()
+            .ok_or_else(|| CaptureError::Device(format!("{}不是可用的系统设备", role.label())))?;
+        Self::from_backend(backend.clone())
+    }
+
+    /// Wrap a device cpal already handed us (the routing plan's own handle).
+    fn from_backend(device: cpal::Device) -> Result<Self, CaptureError> {
+        let config = device
+            .default_input_config()
+            .map_err(|error| CaptureError::Device(error.to_string()))?;
+        Ok(Self {
+            device,
+            config,
+            stream: None,
+            errors: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            sink: None,
+            overflows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        })
+    }
+}

@@ -8,8 +8,8 @@
     "build": "pnpm --filter @nextalk/teleprompter build && pnpm --filter @nextalk/desktop build",
     "test": "pnpm -r test",
     "test:e2e": "pnpm exec playwright test",
-    "test:full": "pnpm -r test && pnpm exec playwright test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml && node tools/vendor-experiments/failure-cases/run.mjs --check && node tools/vendor-experiments/failure-cases/run.mjs --run",
-    "test:rig": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --nocapture"
+    "test:full": "export PATH=\"$(python3 -m site --user-base)/bin:$PATH\" && pnpm -r test && pnpm exec playwright test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml && node tools/vendor-experiments/failure-cases/run.mjs --check && node tools/vendor-experiments/failure-cases/run.mjs --run",
+    "test:rig": "export PATH=\"$(python3 -m site --user-base)/bin:$PATH\" && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --nocapture"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -721,7 +721,7 @@ fn a_real_device_unplug_is_survived() {
 // ---------------------------------------------------------------------------
 
 use nextalk_desktop_lib::audio::routing::{
-    RoutingError, RoutingPlan, RoutingProfile, StreamRole, LOOPBACK_DEVICE_NAME,
+    RoutingPlan, RoutingProfile, StreamRole, LOOPBACK_DEVICE_NAME,
 };
 
 /// `Arc<ScriptedFactory>` where the routing layer wants `&dyn StreamFactory`.
@@ -767,7 +767,9 @@ fn routing_each_role_gets_its_own_path_and_the_loopback_is_never_the_mic() {
         .expect("the loopback opens");
     assert_ne!(
         mic_stream.device().map(|device| device.id().to_string()),
-        loopback_stream.device().map(|device| device.id().to_string())
+        loopback_stream
+            .device()
+            .map(|device| device.id().to_string())
     );
 
     let opened = factory.log().opened.clone();
@@ -826,7 +828,8 @@ fn routing_resolves_the_blackhole_name_to_its_own_capture_path() {
         RoutingPlan::resolve(&looped_back(), as_trait(&factory)).expect("BlackHole is installed");
     assert!(plan.loopback_enabled());
     assert_eq!(
-        plan.device(StreamRole::Loopback).map(|d| d.id().to_string()),
+        plan.device(StreamRole::Loopback)
+            .map(|d| d.id().to_string()),
         Some("BlackHole:3".to_string())
     );
 
@@ -848,7 +851,7 @@ fn routing_a_named_device_that_is_not_there_is_a_readable_error_not_a_silent_dow
         .expect_err("the named device is not on this machine");
 
     assert_eq!(error.code(), "device_not_found");
-    assert_eq!(error.role(), StreamRole::Loopback);
+    assert_eq!(error.role(), Some(StreamRole::Loopback));
     let message = error.message();
     assert!(
         message.contains(LOOPBACK_DEVICE_NAME),
@@ -922,7 +925,13 @@ fn the_routing_layer_reads_the_system_and_never_writes_to_it() {
 #[test]
 fn the_ci_lanes_cover_the_new_tests_and_install_the_build_toolchain() {
     let ci = include_str!("../../../../.github/workflows/ci.yml");
-    for job in ["unit-web:", "e2e:", "rust:", "latency-rig:", "failure-cases:"] {
+    for job in [
+        "unit-web:",
+        "e2e:",
+        "rust:",
+        "latency-rig:",
+        "failure-cases:",
+    ] {
         assert!(ci.contains(job), "the lane set is fixed: {job} is missing");
     }
     assert!(
@@ -945,12 +954,14 @@ fn the_ci_lanes_cover_the_new_tests_and_install_the_build_toolchain() {
     );
 
     // 零设备依赖: the only real-device path in this suite is the ignored probe,
-    // so a green lane never needs hardware.
+    // so a green lane never needs hardware. The needle is assembled at runtime
+    // because the obvious literal would also match this assertion's own source
+    // — a check that counts itself can never be satisfied.
     let suite = include_str!("audio_devices.rs");
+    let needle = ["CpalStreamFactory", "::shared()"].concat();
     assert_eq!(
-        suite.matches("CpalStreamFactory::shared()").count(),
+        suite.matches(&needle).count(),
         1,
         "the real backend is reached only from the #[ignore]d probe"
     );
 }
-

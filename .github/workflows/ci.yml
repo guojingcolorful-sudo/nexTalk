@@ -12,6 +12,15 @@
 # 属于阶段门禁的手动记录工件（`cargo test --test latency_rig -- --ignored`）。
 #
 # runner 用 macos-13（x86_64），与目标机 macOS 12.7 Intel 路径一致。
+#
+# 构建工具链（02-05 T5.1/T5.5）：AEC3 的 C++ 来自 webrtc-audio-processing 的
+# `bundled` 特性，它用 meson+ninja 在构建期现场编译。runner 不预装这两件，
+# 所以每条编译 crate 的车道都在第一次 cargo 调用前 `pip3 install --user`；
+# `--user` 装的脚本落在 `$(python3 -m site --user-base)/bin`，该目录不在
+# runner 的 PATH 上，必须显式追加到 $GITHUB_PATH（对后续步骤生效，顺序不能
+# 反）。本地同理：`~/.cargo/env` 不管这个，脚本里自己 export。
+# 三条车道都装了：rust（全量）、latency-rig（只跑 rig 目标，但同样要编译
+# 整个 crate）、failure-cases（regression_test 指向 cargo 目标）。
 
 name: CI
 
@@ -60,6 +69,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
+      # meson+ninja 必须在 cargo 之前：bundled 特性在 build.rs 里就要它们。
+      - run: pip3 install --user "meson==1.11.2" "ninja==1.13.2"
+      - run: echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+      # 全量：音频链路（audio_chain / audio_devices）全部走脚本化后端，
+      # 零网络、零真实设备依赖；唯一的真设备路径是 #[ignore] 的探针。
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   latency-rig:
@@ -71,6 +85,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
+      - run: pip3 install --user "meson==1.11.2" "ninja==1.13.2"
+      - run: echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       # 预算断言在 CI 中硬失败：e2e > 2000ms 即红，并打印归因阶段。
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test latency_rig -- --nocapture
 
@@ -89,6 +105,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
+      - run: pip3 install --user "meson==1.11.2" "ninja==1.13.2"
+      - run: echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
       # 先校验案卷本身（schema/枚举/id ≥20/回归目标真实存在），再逐例执行
       # regression_test：cargo 目标走 --manifest-path，vitest 目标按命中包执行。
       - run: node tools/vendor-experiments/failure-cases/run.mjs --check

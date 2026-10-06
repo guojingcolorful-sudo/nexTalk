@@ -37,11 +37,14 @@ Python-packaged tools into the user site:
 
 ```bash
 pip3 install --user "meson==1.11.2" "ninja==1.13.2"
-export PATH="$HOME/Library/Python/3.9/bin:$PATH"   # pip --user scripts, not on PATH by default
+export PATH="$(python3 -m site --user-base)/bin:$PATH"   # pip --user scripts, not on PATH by default
 ```
 
-`cargo build` inherits the shell's `PATH`, so export it **before** building (the
-same export must appear in CI). The first build also downloads `abseil-cpp`
+`cargo build` inherits the shell's `PATH`, so export it **before** building —
+`source ~/.cargo/env` does not cover it, and neither does anything else. The same
+export appears in CI (`.github/workflows/ci.yml`, all three compiling lanes) and
+in the `test:full` / `test:rig` scripts below, so `pnpm test:full` works in a
+fresh shell. The first build also downloads `abseil-cpp`
 through meson's subproject wrap — an offline first build cannot succeed; the
 result is cached under `target/`.
 

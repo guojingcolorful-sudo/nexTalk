@@ -25,6 +25,7 @@ pub mod capture;
 pub mod device;
 pub mod playout;
 pub mod resample;
+pub mod routing;
 
 use std::fmt;
 use std::sync::{Arc, Mutex};

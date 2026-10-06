@@ -21,6 +21,7 @@ pub mod state;
 pub mod trace;
 
 use audio::device::{CpalStreamFactory, StreamDirection, StreamFactory};
+use audio::routing::{RoutingPlan, RoutingProfile, ROUTING_CONFIG_FILE};
 use audio::{play_pcm_blocking, resample};
 use enroll::capture::{
     finish_capture, CaptureBackend, CaptureError, CaptureGuard, CaptureSession, CpalCapture,
@@ -563,6 +564,71 @@ impl AudioDeviceStatusDto {
     }
 }
 
+/// `audio_routing_status` — the role → device map the settings page shows
+/// (T5.5), with the same visibility-only remit as `audio_device_status`.
+///
+/// Every role is reported, including the one that is off: the page has to be
+/// able to say "回采未启用" rather than leave the row blank, because "off" and
+/// "we could not tell you" are different answers to a privacy question
+/// (T-02-24). Nothing here opens a stream — resolving is a read.
+#[derive(Serialize)]
+struct AudioRoutingStatusDto {
+    roles: Vec<AudioRoutingRoleDto>,
+    /// `RoutingError::code()` when even the device list could not be read.
+    code: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AudioRoutingRoleDto {
+    /// `StreamRole::code()`.
+    role: String,
+    label: String,
+    /// The resolved device's name, as the system reports it (T-02-22).
+    device: Option<String>,
+    enabled: bool,
+}
+
+#[tauri::command]
+fn audio_routing_status(app: tauri::AppHandle) -> AudioRoutingStatusDto {
+    let profile = app_root(&app)
+        .map(|root| RoutingProfile::load_from(&root.join(ROUTING_CONFIG_FILE)))
+        .unwrap_or_default();
+
+    let factory = match CpalStreamFactory::shared() {
+        Ok(factory) => factory,
+        Err(fault) => {
+            return AudioRoutingStatusDto {
+                roles: Vec::new(),
+                code: Some(fault.code().to_string()),
+                message: Some(fault.message()),
+            }
+        }
+    };
+
+    match RoutingPlan::resolve(&profile, factory.as_ref()) {
+        Ok(plan) => AudioRoutingStatusDto {
+            roles: plan
+                .status()
+                .into_iter()
+                .map(|role| AudioRoutingRoleDto {
+                    role: role.role.code().to_string(),
+                    label: role.role.label().to_string(),
+                    device: role.device,
+                    enabled: role.enabled,
+                })
+                .collect(),
+            code: None,
+            message: None,
+        },
+        Err(error) => AudioRoutingStatusDto {
+            roles: Vec::new(),
+            code: Some(error.code().to_string()),
+            message: Some(error.message()),
+        },
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -577,7 +643,8 @@ pub fn run() {
             get_voice_profile,
             delete_voice_profile,
             preview_voice,
-            audio_device_status
+            audio_device_status,
+            audio_routing_status
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);
