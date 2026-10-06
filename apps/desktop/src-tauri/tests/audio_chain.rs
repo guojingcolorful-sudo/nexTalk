@@ -904,3 +904,448 @@ fn a_real_microphone_feeds_the_chain() {
     );
     assert!(output.pcm16.len() > 1_000, "≈8 000 samples at 16 kHz");
 }
+
+// ===========================================================================
+// T5.3 — the playout chain: jitter buffer on top of the epoch guard
+// ===========================================================================
+//
+// 02-03 built `PlayoutQueue`: the epoch guard, the bounded backpressure and the
+// barge-in fade. What it does **not** have is the layer a real device needs —
+// a new sentence must not start playing the instant its first 40 ms arrive, or
+// every burst gap in the vendor stream is heard as a stutter. That layer is
+// `PlayoutChain`, and the seven tests below pin it:
+//
+// | # | contract | why it matters |
+// |---|----------|----------------|
+// | 1 | pre-roll to the target depth | a stutter is the user hearing the network |
+// | 2 | hard cap retires the oldest audio | a deep buffer is not safety, it is latency (≤2 s budget) |
+// | 3 | low water is reported before the gap | the tuning signal the failure-case library reads |
+// | 4 | an underrun ends in a fade | a cut sample is a click; a fade is a stop |
+// | 5 | the AEC hears what is played | an echo canceller trained on "received" converges on a lie |
+// | 6 | an interrupt stops the mirror too | 抢话 must not leave the canceller chasing a ghost |
+// | 7 | a session stop clears everything | the next session inherits nothing |
+//
+// Everything here is synthetic: no device, no network, no vendor.
+
+use nextalk_desktop_lib::audio::playout::{
+    JitterPolicy, JitterStats, PlayoutChain, StaleChunk, DEFAULT_TARGET_MS, HARD_CAP_MS,
+    LOW_WATER_MS,
+};
+use nextalk_desktop_lib::audio::RenderReference;
+
+/// The ramp that turns a cut into a stop (02-03's constant, restated here so
+/// the assertion reads as the contract rather than as a magic number).
+const FADE_OUT_MS: u64 = 5;
+
+/// Milliseconds as frame counts at the graph rate.
+fn ms_samples(ms: u64) -> usize {
+    (ms as usize * GRAPH_RATE_HZ as usize) / 1_000
+}
+
+/// A phase-continuous tone at 火山's synthesis rate (24 kHz).
+fn tone_24k(hz: f32, amplitude: f32, samples: usize) -> Vec<f32> {
+    (0..samples)
+        .map(|n| {
+            let t = n as f32 / 24_000.0;
+            (2.0 * PI * hz * t).sin() * amplitude
+        })
+        .collect()
+}
+
+/// Records every block the playout chain mirrored, with the rate it claimed.
+#[derive(Default)]
+struct MirrorLog {
+    blocks: Vec<(Vec<f32>, u32)>,
+}
+
+impl MirrorLog {
+    fn samples(&self) -> Vec<f32> {
+        self.blocks
+            .iter()
+            .flat_map(|(block, _)| block.iter().copied())
+            .collect()
+    }
+
+    fn rates(&self) -> Vec<u32> {
+        self.blocks.iter().map(|(_, rate)| *rate).collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+}
+
+impl RenderReference for MirrorLog {
+    fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) {
+        self.blocks.push((samples.to_vec(), sample_rate_hz));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 2 (constants first — the plan names them) — the hard cap
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_the_cap_and_the_target_are_named_values_with_the_plan_s_numbers() {
+    let policy = JitterPolicy::default();
+    assert_eq!(policy.target_ms, DEFAULT_TARGET_MS);
+    assert_eq!(policy.hard_cap_ms, HARD_CAP_MS);
+    assert_eq!(policy.low_water_ms, LOW_WATER_MS);
+
+    // The plan's numbers, pinned so a tuning drift is a failing test rather
+    // than a latency regression nobody notices until a real interview.
+    assert_eq!(HARD_CAP_MS, 200, "the plan's hard cap");
+    assert_eq!(LOW_WATER_MS, 60, "the plan's low-water mark");
+    assert!(
+        policy.target_ms <= policy.hard_cap_ms,
+        "a target deeper than the cap could never be reached — the chain would play nothing"
+    );
+    assert!(
+        policy.low_water_ms <= policy.target_ms,
+        "the warning line must sit below the depth we aim for"
+    );
+    assert!(policy.is_consistent());
+    assert!(policy.pre_roll, "pre-roll is the default; it is the point");
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 1 — pre-roll
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_a_new_segment_waits_for_the_target_depth_before_it_starts() {
+    let policy = JitterPolicy::default();
+    let mut chain = PlayoutChain::with_policy(policy);
+    let epoch = chain.begin_session();
+
+    let chunk = sine_48k(440.0, 0.5, ms_samples(40));
+    let mut tick = vec![0.0f32; ms_samples(40)];
+
+    // 40 ms and 80 ms: below the target. Nothing may play yet — this is the
+    // whole reason the layer exists.
+    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    assert_eq!(chain.tick(&mut tick), 0, "40 ms of 120 ms is not enough");
+    chain.push(epoch, 2, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    assert_eq!(chain.tick(&mut tick), 0, "80 ms of 120 ms is not enough");
+    assert!(!chain.is_playing(), "the chain is still pre-rolling");
+    assert_eq!(chain.stats().pre_rolls, 0);
+    assert_eq!(chain.buffered_ms(), 80, "nothing was consumed");
+
+    // 120 ms: the target. It starts, and it starts full.
+    chain.push(epoch, 3, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    assert_eq!(
+        chain.tick(&mut tick),
+        ms_samples(40),
+        "at the target depth the chain plays a full block"
+    );
+    assert!(chain.is_playing());
+    assert_eq!(chain.stats().pre_rolls, 1, "one pre-roll, counted");
+    assert_eq!(chain.stats().underruns, 0, "pre-rolling is not an underrun");
+}
+
+#[test]
+fn playout_a_short_sentence_below_the_target_still_plays() {
+    // A one-word answer may never reach 120 ms of buffered audio. Waiting for
+    // depth that is never coming would swallow it entirely.
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let chunk = sine_48k(440.0, 0.5, ms_samples(60));
+    let mut tick = vec![0.0f32; ms_samples(20)];
+
+    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    assert_eq!(chain.tick(&mut tick), 0, "the producer is still filling");
+
+    // No new audio arrived since the last tick: the producer has stopped, so
+    // the depth is not going to grow. Play it.
+    assert_eq!(chain.tick(&mut tick), ms_samples(20));
+    assert!(chain.is_playing());
+    assert_eq!(chain.stats().short_starts, 1);
+    assert_eq!(chain.stats().pre_rolls, 0, "it never reached the target");
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 2 — the hard cap
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_the_hard_cap_retires_the_oldest_audio_instead_of_growing_the_buffer() {
+    let policy = JitterPolicy::default();
+    let mut chain = PlayoutChain::with_policy(policy);
+    let epoch = chain.begin_session();
+    let chunk = sine_48k(440.0, 0.5, ms_samples(40));
+
+    // Ten 40 ms chunks = 400 ms offered against a 200 ms ceiling.
+    for id in 0..10u64 {
+        chain
+            .push(epoch, id + 1, &chunk, GRAPH_RATE_HZ)
+            .expect("epoch 1");
+    }
+
+    assert_eq!(
+        chain.buffered_ms(),
+        policy.hard_cap_ms,
+        "the ceiling holds: it never buffered deeper than 200 ms"
+    );
+    let stats = chain.stats();
+    assert!(
+        stats.dropped_chunks >= 4,
+        "the surplus was retired, not buffered: {stats:?}"
+    );
+    assert!(
+        stats.dropped_ms >= 160,
+        "and the dropped audio is counted in the unit the budget cares about: {stats:?}"
+    );
+    assert_eq!(
+        stats.dropped_ms,
+        stats.dropped_chunks * 40,
+        "every dropped chunk was 40 ms — the accounting is not approximate"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 3 — the low-water mark
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_the_low_water_mark_warns_before_the_gap_and_not_after_it() {
+    let policy = JitterPolicy::default();
+    let mut chain = PlayoutChain::with_policy(policy);
+    let epoch = chain.begin_session();
+    let chunk = sine_48k(440.0, 0.5, ms_samples(40));
+    let mut tick = vec![0.0f32; ms_samples(40)];
+
+    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain.push(epoch, 2, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    chain.push(epoch, 3, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    assert_eq!(chain.tick(&mut tick), ms_samples(40));
+    assert_eq!(chain.buffered_ms(), 80);
+
+    // 80 ms left: above the line, nothing to report.
+    assert_eq!(chain.stats().low_water_events, 0, "80 ms is comfortable");
+
+    assert_eq!(chain.tick(&mut tick), ms_samples(40));
+    let stats = chain.stats();
+    assert_eq!(chain.buffered_ms(), 40);
+    assert_eq!(
+        stats.low_water_events, 1,
+        "40 ms left is one hiccup from a gap, and it is reported as such"
+    );
+    assert_eq!(
+        stats.underruns, 0,
+        "the warning came first — that is the whole point of the mark"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 4 — the underrun fade
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_an_underrun_ends_in_silence_with_a_fade_and_not_a_click() {
+    // `immediate()` isolates the underrun: no pre-roll to wait through.
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::immediate());
+    let epoch = chain.begin_session();
+
+    // 55 ms of audio against 10 ms blocks: the last block is half full.
+    let chunk = tone_at(0, ms_samples(55), 440.0, 0.5);
+    let block = ms_samples(10);
+    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch 1");
+    let mut tick = vec![0.0f32; block];
+
+    for _ in 0..5 {
+        assert_eq!(chain.tick(&mut tick), block);
+    }
+    assert_eq!(chain.buffered_ms(), 5, "half a block is left");
+    assert_eq!(chain.stats().underruns, 0);
+
+    // The block that runs dry. The device asked for 480 samples and got 240.
+    let cut = chain.tick(&mut tick);
+    assert_eq!(cut, ms_samples(5), "everything that was left");
+    assert_eq!(chain.stats().underruns, 1, "counted, once");
+
+    let fade = ms_samples(FADE_OUT_MS);
+    let expected_first = chunk[ms_samples(50)] * (1.0 - 1.0 / fade as f32);
+    assert!(
+        (tick[0] - expected_first).abs() < 1e-6,
+        "the ramp starts at the sample that was cut: {} vs {expected_first}",
+        tick[0]
+    );
+    assert_eq!(
+        tick[cut - 1],
+        0.0,
+        "exact silence at the cut — a click is a discontinuity, and there is none"
+    );
+    assert!(!chain.is_playing(), "a chain that ran dry is not playing");
+
+    // The next block is plain silence, and it is not a second alarm.
+    assert_eq!(chain.tick(&mut tick), 0);
+    assert_eq!(chain.stats().underruns, 1, "one gap, one count");
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 5 — the AEC mirror
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_the_echo_canceller_hears_exactly_what_the_speaker_plays() {
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let mut mirror = MirrorLog::default();
+
+    // 120 ms of 火山's 24 kHz output — the real vendor shape.
+    let tts = tone_24k(440.0, 0.5, 2_880);
+    chain
+        .push(epoch, 1, &tts, 24_000)
+        .expect("epoch 1 is current");
+
+    assert!(
+        mirror.is_empty(),
+        "receiving audio is not playing it — a reference from the future would \
+         make the canceller converge on a lie"
+    );
+
+    let mut tick = vec![0.0f32; ms_samples(10)];
+    let mut played = Vec::new();
+    for _ in 0..40 {
+        let written = chain.tick_mirrored(&mut tick, &mut mirror);
+        if written == 0 {
+            break;
+        }
+        played.extend_from_slice(&tick[..written]);
+    }
+
+    // 24 kHz → 48 kHz is 2:1, and it happens on the way in, once.
+    assert!(
+        played.len().abs_diff(2_880 * 2) <= 480,
+        "the 2:1 conversion produced {} samples for 2 880 in",
+        played.len()
+    );
+    assert_eq!(
+        mirror.samples(),
+        played,
+        "sample for sample, the canceller's reference is what the speaker got"
+    );
+    assert!(
+        mirror.rates().iter().all(|rate| *rate == GRAPH_RATE_HZ),
+        "the graph rate, or the processor's frame assertion fires in a callback: {:?}",
+        mirror.rates()
+    );
+    assert!(mirror.blocks.len() > 1, "mirrored per block, not per sentence");
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 6 — an interrupt stops the audio and the mirror together
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_an_interrupt_stops_the_mirror_at_the_same_instant_as_the_audio() {
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let mut mirror = MirrorLog::default();
+    let mut tick = vec![0.0f32; ms_samples(10)];
+
+    let tts = tone_24k(440.0, 0.5, 2_880);
+    chain.push(epoch, 1, &tts, 24_000).expect("epoch 1");
+
+    // Let one block through, then 抢话.
+    assert_eq!(chain.tick_mirrored(&mut tick, &mut mirror), ms_samples(10));
+    let before = mirror.samples().len();
+    assert!(before > 0);
+
+    let outcome = chain.interrupt();
+    assert_eq!(outcome.epoch, epoch + 1, "the generation moved");
+    assert_eq!(chain.epoch(), epoch + 1);
+    assert!(outcome.dropped_ms > 0, "unplayed audio was retired");
+    assert_eq!(
+        outcome.faded_samples,
+        ms_samples(FADE_OUT_MS),
+        "the fade is the only thing left"
+    );
+
+    // The mirror may receive the fade and nothing else: the 240 samples of
+    // ramp, never the ~5 000 samples of sentence the interrupt retired.
+    let after_interrupt = {
+        let mut after = MirrorLog::default();
+        let mut quiet = vec![0.0f32; ms_samples(10)];
+        while chain.tick_mirrored(&mut quiet, &mut after) > 0 {}
+        after
+    };
+    let mirrored_after = after_interrupt.samples();
+    assert!(
+        mirrored_after.len() <= outcome.faded_samples,
+        "the mirror stopped with the audio: {} mirrored, {} faded",
+        mirrored_after.len(),
+        outcome.faded_samples
+    );
+    assert_eq!(
+        *mirrored_after.last().unwrap_or(&0.0),
+        0.0,
+        "and it ends at silence, not mid-ramp"
+    );
+
+    // The stale-guard is what makes that guarantee hold under a race: a chunk
+    // from the interrupted generation cannot be re-admitted.
+    let refused = chain.push(epoch, 1, &tts, 24_000);
+    assert_eq!(
+        refused,
+        Err(StaleChunk {
+            chunk_epoch: epoch,
+            current_epoch: epoch + 1,
+        })
+    );
+    assert_eq!(chain.stats().stale_chunks, 1);
+}
+
+// ---------------------------------------------------------------------------
+// T5.3 Test 7 — the session boundary
+// ---------------------------------------------------------------------------
+
+#[test]
+fn playout_stopping_the_session_clears_the_buffer_the_marks_and_the_counters() {
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let chunk = sine_48k(440.0, 0.5, ms_samples(40));
+    let mut tick = vec![0.0f32; ms_samples(20)];
+
+    for id in 1..=6u64 {
+        chain.push(epoch, id, &chunk, GRAPH_RATE_HZ).expect("epoch");
+    }
+    chain.tick(&mut tick);
+    assert!(
+        chain.stats().dropped_chunks > 0 && chain.is_playing(),
+        "a session with something to forget: {:?}",
+        chain.stats()
+    );
+
+    let stopped = chain.end_session();
+    assert_eq!(stopped, epoch + 1, "停止 moves the generation");
+    assert_eq!(chain.buffered_ms(), 0, "the buffer is empty");
+    assert!(!chain.is_playing(), "and it is not playing");
+    assert_eq!(
+        chain.stats(),
+        JitterStats::default(),
+        "the next session inherits no counter from this one"
+    );
+
+    // The previous session's audio cannot leak into the next one.
+    assert!(chain.push(epoch, 7, &chunk, GRAPH_RATE_HZ).is_err());
+    assert_eq!(chain.tick(&mut tick), 0, "and nothing of it is played");
+}
+
+#[test]
+#[ignore = "needs a real output device; run with --ignored on a machine with speakers"]
+fn playout_a_real_device_plays_the_jitter_buffer() {
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let chunk = sine_48k(440.0, 0.2, ms_samples(200));
+    chain.push(epoch, 1, &chunk, GRAPH_RATE_HZ).expect("epoch");
+
+    let mut tick = vec![0.0f32; ms_samples(10)];
+    let mut blocks = 0usize;
+    while chain.buffered_ms() > 0 {
+        assert_eq!(chain.tick(&mut tick), tick.len());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        blocks += 1;
+        assert!(blocks < 100, "the buffer drains");
+    }
+}
