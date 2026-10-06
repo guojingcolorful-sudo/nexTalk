@@ -323,6 +323,129 @@ pub struct SegmentScript {
     pub frames: Vec<(u64, Vec<f32>)>,
 }
 
+impl SegmentScript {
+    /// Wrap live capture frames as a fragment script (T5.2).
+    ///
+    /// The capture chain already delivers exactly what the segmenter consumes —
+    /// AEC-cleaned 10 ms frames at the graph rate — so the live path is a
+    /// re-timestamping, not a second state machine. `at_ms` is the fragment's
+    /// opening timestamp; each frame advances it by [`FRAME_MS`].
+    pub fn from_capture_frames(epoch: u64, at_ms: u64, frames: Vec<Vec<f32>>) -> SegmentScript {
+        SegmentScript {
+            epoch,
+            frames: frames
+                .into_iter()
+                .enumerate()
+                .map(|(index, frame)| {
+                    (at_ms + index as u64 * crate::pipeline::vad::FRAME_MS, frame)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Where one fragment's near-end audio comes from (T5.2).
+///
+/// 02-03 drove the cascade from a [`SegmentScript`] alone. The live path
+/// replaces that with the capture chain; the script stays as the fallback for
+/// tests and for machines with no usable input device, which is why both arms
+/// produce the same value rather than the cascade growing a second drive loop.
+///
+/// The two arms differ in one honest way: a script *is* the whole fragment,
+/// while the live chain only has whatever arrived since the last call. Callers
+/// on the live path therefore drain in a loop, exactly as the vendor fragment
+/// session does.
+pub enum UserAudioFeed {
+    /// The 02-03 deterministic path (tests, no-device machines).
+    Scripted {
+        script: SegmentScript,
+        /// Set once the script has been handed out — a script is one fragment.
+        taken: bool,
+    },
+    /// The microphone, AEC-cleaned by the shared processor.
+    Live(Box<crate::audio::capture::CaptureChain>),
+}
+
+impl UserAudioFeed {
+    pub fn scripted(script: SegmentScript) -> Self {
+        Self::Scripted {
+            script,
+            taken: false,
+        }
+    }
+
+    /// Take over a live capture chain (T5.2's replacement for the script).
+    pub fn live(chain: crate::audio::capture::CaptureChain) -> Self {
+        Self::Live(Box::new(chain))
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(self, Self::Live(_))
+    }
+
+    /// The device the live arm is reading, when it is live and the backend can
+    /// name it (settings surface, T5.4).
+    pub fn device_name(&self) -> Option<String> {
+        match self {
+            Self::Live(chain) => chain.device_name(),
+            Self::Scripted { .. } => None,
+        }
+    }
+
+    /// Collect the next piece of near-end audio.
+    ///
+    /// Returns an **empty** script (not an error) when there is nothing new —
+    /// a quiet fragment is a normal state, and turning it into an error would
+    /// make the silence between two sentences look like a failure.
+    pub fn next_script(&mut self, epoch: u64, at_ms: u64) -> Result<SegmentScript, StageError> {
+        match self {
+            Self::Scripted { script, taken } => {
+                if *taken {
+                    return Ok(SegmentScript {
+                        epoch,
+                        frames: Vec::new(),
+                    });
+                }
+                *taken = true;
+                Ok(script.clone())
+            }
+            Self::Live(chain) => {
+                let output = chain.poll().map_err(|error| {
+                    // The code is the machine-readable key; the message is the
+                    // locked Chinese UI copy. Neither carries an audio sample.
+                    StageError::transport(
+                        "audio",
+                        format!("capture[{}] {}", error.code(), error.message()),
+                    )
+                })?;
+                Ok(SegmentScript::from_capture_frames(
+                    epoch,
+                    at_ms,
+                    output.frames,
+                ))
+            }
+        }
+    }
+}
+
+impl fmt::Debug for UserAudioFeed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scripted { script, taken } => formatter
+                .debug_struct("UserAudioFeed::Scripted")
+                .field("epoch", &script.epoch)
+                .field("frames", &script.frames.len())
+                .field("taken", taken)
+                .finish(),
+            Self::Live(chain) => formatter
+                .debug_struct("UserAudioFeed::Live")
+                .field("device", &chain.device_name())
+                .field("stats", &chain.stats())
+                .finish(),
+        }
+    }
+}
+
 /// A fragment the translator never answered (GOV-14/D-12): the cascade keeps
 /// going with the original Chinese and the red badge, and the code here is
 /// what the UI and the trace carry.

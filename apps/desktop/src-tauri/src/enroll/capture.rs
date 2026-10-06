@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -38,9 +38,8 @@ pub const MAX_SILENCE_RATIO: f32 = 0.6;
 pub const MIN_SPEECH_SECS: u64 = 10;
 /// Device startup click / room tone trim — the first half-second is dropped.
 pub const STARTUP_DISCARD_MS: u64 = 500;
-/// Blocks the realtime callback may queue before it starts counting drops.
-/// 256 × 480 samples ≈ 2.6 s at 48 kHz — far above normal scheduling jitter.
-pub const CAPTURE_QUEUE_BLOCKS: usize = 256;
+// CAPTURE_QUEUE_BLOCKS is re-exported above, from `audio::bounded` — the
+// enrollment take and the live session chain share one queue discipline.
 /// Canonical PCM16 RIFF header size — used to predict the file size in the
 /// guard, before anything is written.
 const WAV_HEADER_BYTES: usize = 44;
@@ -261,35 +260,13 @@ fn expected_pcm16_len(frames_in: usize, in_rate: u32) -> usize {
 // realtime callback discipline (T-02-19)
 // ---------------------------------------------------------------------------
 
-/// The callback's whole job: copy one block into the bounded queue or count it
-/// as dropped. No locking, no logging, no blocking.
-#[derive(Clone)]
-pub struct CaptureSink {
-    sender: SyncSender<Vec<f32>>,
-    overflows: Arc<AtomicU64>,
-}
-
-impl CaptureSink {
-    pub fn new(sender: SyncSender<Vec<f32>>, overflows: Arc<AtomicU64>) -> Self {
-        Self { sender, overflows }
-    }
-
-    /// Called from the audio callback. Never blocks: a full queue (the consumer
-    /// stalled) and a closed queue (the take was cancelled) both mean "drop
-    /// this block and count it".
-    pub fn push(&self, samples: &[f32]) {
-        match self.sender.try_send(samples.to_vec()) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-                self.overflows.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-
-    pub fn overflows(&self) -> u64 {
-        self.overflows.load(Ordering::Relaxed)
-    }
-}
+// The discipline itself lives in `audio::bounded` (02-05 T5.2): the live session
+// capture chain and the enrollment take have exactly the same rule to obey, and
+// the plan is explicit that it must be reviewable in one place rather than
+// copy-pasted twice. Re-exported here because this module's callers (and
+// `tests/enrollment_capture.rs`) import it from this path.
+pub use crate::audio::bounded::CaptureSink;
+pub use crate::audio::bounded::DEFAULT_QUEUE_BLOCKS as CAPTURE_QUEUE_BLOCKS;
 
 // ---------------------------------------------------------------------------
 // backends

@@ -20,6 +20,8 @@
 //! default output device" used by the enrollment preview.
 
 pub mod aec;
+pub mod bounded;
+pub mod capture;
 pub mod playout;
 pub mod resample;
 
@@ -47,10 +49,10 @@ pub trait PlayoutSink: Send {
 
 /// The playback mirror the echo canceller consumes as its far-end reference.
 ///
-/// **02-05 T5.1 takes this over**: today the only implementations are the
-/// no-op (production, until AEC lands) and a recorder in tests. Keeping the
-/// call site alive now means turning AEC on is a substitution, not a rewrite
-/// of the audio graph.
+/// **02-05 T5.1 wired the real implementation**:
+/// [`aec::SharedProcessor`] is the processor the capture chain also uses, so
+/// the mirror and the capture side share one delay estimate. The no-op stays
+/// for the paths that deliberately run without AEC (tests, enrollment).
 pub trait RenderReference: Send {
     /// Mirror one rendered block: the exact samples the device just consumed,
     /// at the rate they were rendered at.
