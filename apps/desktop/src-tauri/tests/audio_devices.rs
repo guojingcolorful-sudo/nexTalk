@@ -77,6 +77,8 @@ struct ScriptedFactory {
     defaults: Mutex<(String, String)>,
     /// Devices that refuse to open, and how they refuse.
     broken: Mutex<Vec<(String, DeviceFault)>>,
+    /// Devices the host does not report at all — the machine without BlackHole.
+    absent: Mutex<Vec<String>>,
 }
 
 impl ScriptedFactory {
@@ -91,7 +93,14 @@ impl ScriptedFactory {
             ],
             defaults: Mutex::new(("BuiltInMic:0".into(), "BuiltInOut:1".into())),
             broken: Mutex::new(Vec::new()),
+            absent: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Uninstall a device from the host's list — the machine that has never
+    /// heard of BlackHole.
+    fn without_device(&self, id: &str) {
+        self.absent.lock().expect("test mutex").push(id.to_string());
     }
 
     fn handle(&self, id: &str) -> DeviceHandle {
@@ -128,7 +137,13 @@ impl ScriptedFactory {
 impl StreamFactory for ScriptedFactory {
     fn enumerate(&self) -> Result<Vec<DeviceHandle>, DeviceFault> {
         self.log().enumerations += 1;
-        Ok(self.handles.clone())
+        let absent = self.absent.lock().expect("test mutex");
+        Ok(self
+            .handles
+            .iter()
+            .filter(|handle| !absent.iter().any(|gone| gone == handle.id()))
+            .cloned()
+            .collect())
     }
 
     fn default_device(&self, direction: StreamDirection) -> Option<DeviceHandle> {
@@ -700,3 +715,242 @@ fn a_real_device_unplug_is_survived() {
     );
     println!("real-device probe: {status:?}");
 }
+
+// ---------------------------------------------------------------------------
+// T5.5 — roles and routing
+// ---------------------------------------------------------------------------
+
+use nextalk_desktop_lib::audio::routing::{
+    RoutingError, RoutingPlan, RoutingProfile, StreamRole, LOOPBACK_DEVICE_NAME,
+};
+
+/// `Arc<ScriptedFactory>` where the routing layer wants `&dyn StreamFactory`.
+fn as_trait(factory: &Arc<ScriptedFactory>) -> &dyn StreamFactory {
+    factory.as_ref()
+}
+
+fn looped_back() -> RoutingProfile {
+    RoutingProfile::default().with_loopback(LOOPBACK_DEVICE_NAME)
+}
+
+#[test]
+fn routing_each_role_gets_its_own_path_and_the_loopback_is_never_the_mic() {
+    let factory = Arc::new(ScriptedFactory::new());
+    let plan = RoutingPlan::resolve(&looped_back(), as_trait(&factory))
+        .expect("both devices are on the machine");
+
+    // Three roles, three directions: the mic and the loopback are two capture
+    // paths, the output is the only one that plays.
+    assert_eq!(StreamRole::UserMic.direction(), StreamDirection::Input);
+    assert_eq!(StreamRole::Loopback.direction(), StreamDirection::Input);
+    assert_eq!(StreamRole::Output.direction(), StreamDirection::Output);
+    assert_eq!(
+        plan.capture_roles(),
+        vec![StreamRole::UserMic, StreamRole::Loopback],
+        "回采 is a second capture path, not a second reader of the mic"
+    );
+
+    let mic = plan.device(StreamRole::UserMic).expect("a mic");
+    let loopback = plan.device(StreamRole::Loopback).expect("a loopback");
+    assert_ne!(mic.id(), loopback.id());
+    assert!(
+        !Arc::ptr_eq(mic, loopback),
+        "the user's voice and the system's playback are different streams"
+    );
+
+    // And the same is true of the streams the roles are actually opened as.
+    let mic_stream = plan
+        .open(StreamRole::UserMic, as_trait(&factory))
+        .expect("the mic opens");
+    let loopback_stream = plan
+        .open(StreamRole::Loopback, as_trait(&factory))
+        .expect("the loopback opens");
+    assert_ne!(
+        mic_stream.device().map(|device| device.id().to_string()),
+        loopback_stream.device().map(|device| device.id().to_string())
+    );
+
+    let opened = factory.log().opened.clone();
+    assert_eq!(
+        opened
+            .iter()
+            .filter(|(direction, _, _)| *direction == StreamDirection::Input)
+            .count(),
+        2,
+        "two input opens, one per capture role: {opened:?}"
+    );
+}
+
+#[test]
+fn routing_defaults_fall_back_to_the_default_devices_and_leave_the_loopback_off() {
+    let factory = Arc::new(ScriptedFactory::new());
+    let profile = RoutingProfile::default();
+
+    // 回采默认即不启用 (T-02-24): the system's audio may carry other people's
+    // voices, so it is opt-in by naming a device and never implicit.
+    assert!(!profile.loopback_enabled());
+    assert_eq!(profile.mic_device, None);
+    assert_eq!(profile.loopback_device, None);
+    assert_eq!(profile.output_device, None);
+
+    let plan = RoutingPlan::resolve(&profile, as_trait(&factory)).expect("the defaults resolve");
+    assert_eq!(
+        plan.device(StreamRole::UserMic).map(|d| d.id().to_string()),
+        Some("BuiltInMic:0".to_string()),
+        "an unnamed role follows the system default"
+    );
+    assert_eq!(
+        plan.device(StreamRole::Output).map(|d| d.id().to_string()),
+        Some("BuiltInOut:1".to_string())
+    );
+    assert!(plan.device(StreamRole::Loopback).is_none());
+    assert_eq!(
+        plan.capture_roles(),
+        vec![StreamRole::UserMic],
+        "with 回采 off there is exactly one capture path"
+    );
+
+    // Turning the loopback off must not cost the feature anything: the mic and
+    // the speakers still resolve, and nothing was opened to find that out.
+    assert!(plan.device(StreamRole::UserMic).is_some());
+    assert!(plan.device(StreamRole::Output).is_some());
+    assert!(factory.log().opened.is_empty(), "resolving opens no stream");
+}
+
+#[test]
+fn routing_resolves_the_blackhole_name_to_its_own_capture_path() {
+    // Phase 3 will hand this same profile a real "BlackHole 2ch". The seam is
+    // the name: whatever the host calls it, the role is the loopback's.
+    let factory = Arc::new(ScriptedFactory::new());
+    let plan =
+        RoutingPlan::resolve(&looped_back(), as_trait(&factory)).expect("BlackHole is installed");
+    assert!(plan.loopback_enabled());
+    assert_eq!(
+        plan.device(StreamRole::Loopback).map(|d| d.id().to_string()),
+        Some("BlackHole:3".to_string())
+    );
+
+    // The name is typed by hand in a settings field, so the match tolerates
+    // spacing and case — but it never guesses: a name is a name (T-02-22).
+    let typed = RoutingProfile::default().with_loopback("  blackhole 2CH ");
+    assert!(
+        RoutingPlan::resolve(&typed, as_trait(&factory)).is_ok(),
+        "the by-name match is tolerant of how a human types it"
+    );
+}
+
+#[test]
+fn routing_a_named_device_that_is_not_there_is_a_readable_error_not_a_silent_downgrade() {
+    let factory = Arc::new(ScriptedFactory::new());
+    factory.without_device("BlackHole:3");
+
+    let error = RoutingPlan::resolve(&looped_back(), as_trait(&factory))
+        .expect_err("the named device is not on this machine");
+
+    assert_eq!(error.code(), "device_not_found");
+    assert_eq!(error.role(), StreamRole::Loopback);
+    let message = error.message();
+    assert!(
+        message.contains(LOOPBACK_DEVICE_NAME),
+        "the message names the device the user has to install: {message}"
+    );
+    assert!(
+        message.contains("回采"),
+        "and names the role, so the settings page knows which row to mark: {message}"
+    );
+    // The failure mode this rules out is the dangerous one: quietly capturing
+    // the microphone twice and calling the second one "the interviewer".
+    assert!(
+        !message.is_empty() && error.code() != "ok",
+        "a silent downgrade would hide the microphone being used as the loopback"
+    );
+}
+
+#[test]
+fn routing_never_asks_a_device_what_it_can_do() {
+    // macOS virtual drivers report both directions and lie about being a
+    // microphone, so the capability flags are the wrong question. The rule is
+    // by role and by name (T-02-22), and the source says which one it follows.
+    let source = include_str!("../src/audio/routing.rs");
+    for forbidden in [
+        "supports_input(",
+        "supports_output(",
+        "input_devices()",
+        "output_devices()",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "a capability flag is not a routing decision: found {forbidden:?}"
+        );
+    }
+    assert!(
+        source.contains("default_device"),
+        "an unnamed role falls back to the backend's own default"
+    );
+    assert!(
+        source.contains(".name()"),
+        "a named role is matched by the name the host reports"
+    );
+}
+
+#[test]
+fn the_routing_layer_reads_the_system_and_never_writes_to_it() {
+    // This layer enumerates and nothing else. Creating an aggregate device or
+    // flipping a system audio default is Phase 3's surface, behind its own
+    // consent flow — not something a routing resolve may do on the way past.
+    let source = include_str!("../src/audio/routing.rs");
+    for forbidden in [
+        "aggregate",
+        "Aggregate",
+        "AudioObjectSet",
+        "defaults write",
+        "std::process",
+        "Command::new",
+        "unsafe",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "the routing layer is read-only: found {forbidden:?}"
+        );
+    }
+    assert!(
+        source.contains("只读") || source.contains("read-only"),
+        "and it says so, so the next hand knows where the boundary is"
+    );
+}
+
+#[test]
+fn the_ci_lanes_cover_the_new_tests_and_install_the_build_toolchain() {
+    let ci = include_str!("../../../../.github/workflows/ci.yml");
+    for job in ["unit-web:", "e2e:", "rust:", "latency-rig:", "failure-cases:"] {
+        assert!(ci.contains(job), "the lane set is fixed: {job} is missing");
+    }
+    assert!(
+        ci.contains("--manifest-path"),
+        "there is no workspace root manifest; every cargo call must name one"
+    );
+
+    // The bundled webrtc-audio-processing C++ is built with meson+ninja, and
+    // `pip install --user` puts them somewhere the runner's PATH does not
+    // include. Both lanes that compile the crate need them.
+    for tool in ["meson", "ninja"] {
+        assert!(
+            ci.contains(tool),
+            "the rust lanes must install {tool} before the first cargo call"
+        );
+    }
+    assert!(
+        ci.contains("site --user-base"),
+        "and must add the user-site bin, which is not on PATH"
+    );
+
+    // 零设备依赖: the only real-device path in this suite is the ignored probe,
+    // so a green lane never needs hardware.
+    let suite = include_str!("audio_devices.rs");
+    assert_eq!(
+        suite.matches("CpalStreamFactory::shared()").count(),
+        1,
+        "the real backend is reached only from the #[ignore]d probe"
+    );
+}
+
