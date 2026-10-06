@@ -20,6 +20,7 @@ pub mod sim;
 pub mod state;
 pub mod trace;
 
+use audio::device::{CpalStreamFactory, StreamDirection, StreamFactory};
 use audio::{play_pcm_blocking, resample};
 use enroll::capture::{
     finish_capture, CaptureBackend, CaptureError, CaptureGuard, CaptureSession, CpalCapture,
@@ -513,6 +514,55 @@ fn delete_voice_profile(
     })
 }
 
+/// `audio_device_status` — which devices the session would open (T5.4).
+///
+/// **Visibility only.** The names are the system's own strings, shown verbatim
+/// and used for nothing else: no capability decision is made from a name
+/// (T-02-22 — a virtual driver reports both directions and lies about being a
+/// microphone), and the picker that would change them is Phase 3's. What this
+/// answers is the interview-time question the user actually has: "is the app
+/// about to speak through the headset, or through the speakers?"
+#[derive(Serialize)]
+struct AudioDeviceStatusDto {
+    input: Option<String>,
+    output: Option<String>,
+    /// `DeviceFault::code()` when the device list could not be read at all.
+    code: Option<String>,
+    message: Option<String>,
+}
+
+#[tauri::command]
+fn audio_device_status() -> AudioDeviceStatusDto {
+    let factory = match CpalStreamFactory::shared() {
+        Ok(factory) => factory,
+        Err(fault) => return AudioDeviceStatusDto::fault(&fault),
+    };
+    if let Err(fault) = factory.enumerate() {
+        return AudioDeviceStatusDto::fault(&fault);
+    }
+    AudioDeviceStatusDto {
+        input: factory
+            .default_device(StreamDirection::Input)
+            .map(|device| device.name().to_string()),
+        output: factory
+            .default_device(StreamDirection::Output)
+            .map(|device| device.name().to_string()),
+        code: None,
+        message: None,
+    }
+}
+
+impl AudioDeviceStatusDto {
+    fn fault(fault: &audio::device::DeviceFault) -> Self {
+        Self {
+            input: None,
+            output: None,
+            code: Some(fault.code().to_string()),
+            message: Some(fault.message()),
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -526,7 +576,8 @@ pub fn run() {
             train_voice_clone,
             get_voice_profile,
             delete_voice_profile,
-            preview_voice
+            preview_voice,
+            audio_device_status
         ])
         .setup(|app| {
             let state = SessionState::new(LAN_PORT);

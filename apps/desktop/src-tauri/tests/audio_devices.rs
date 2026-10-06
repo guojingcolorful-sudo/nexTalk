@@ -25,11 +25,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nextalk_desktop_lib::audio::playout::PlayoutChain;
 use nextalk_desktop_lib::audio::device::{
     DeviceFault, DeviceHandle, DeviceManager, DeviceRef, OpenRequest, OpenStream, RebuildGate,
     RebuildOutcome, RebuildPolicy, StreamDirection, StreamFactory,
 };
+use nextalk_desktop_lib::audio::playout::PlayoutChain;
 use nextalk_desktop_lib::sim::source::TimeSource;
 
 // ---------------------------------------------------------------------------
@@ -159,7 +159,10 @@ impl StreamFactory for ScriptedFactory {
             return Err(fault.clone());
         }
         Ok(Box::new(ScriptedStream {
-            device: request.device.clone(),
+            // `cloned()`, not `clone()`: the request borrows the handle, and
+            // the stream outlives it — a stream owns its device for as long as
+            // it is open.
+            device: request.device.cloned(),
             log: Arc::clone(&self.log),
         }))
     }
@@ -279,7 +282,11 @@ fn a_fault_rebuilds_both_streams_exactly_once() {
 
     let opened = factory.log().opened.clone();
     let after = &opened[2..];
-    assert_eq!(after.len(), 2, "exactly one input and one output: {after:?}");
+    assert_eq!(
+        after.len(),
+        2,
+        "exactly one input and one output: {after:?}"
+    );
     assert_eq!(
         after
             .iter()
@@ -358,12 +365,13 @@ fn every_build_carries_a_timeout_and_a_storm_of_faults_cannot_become_a_storm_of_
     let clock = Arc::new(TestClock::new());
     let mut manager = manager(Arc::clone(&factory), Arc::clone(&clock));
 
-    // A device that never answers. The scripted backend reports it the way
-    // CoreAudio does: the build returns, with an error.
+    // The session opens while the machine is healthy — the storm below lands
+    // mid-interview, which is the only situation a rebuild policy exists for.
+    manager.start_session().expect("the session opens");
+
+    // Then the mic goes, and stays gone: the scripted backend reports it the
+    // way CoreAudio does — the build returns, with an error.
     factory.break_device("BuiltInMic:0", unplugged());
-    // The session opens anyway — the output stream is fine, and a mic fault
-    // must not take the whole session down before the user even speaks.
-    let _ = manager.start_session();
 
     for (_, _, timeout) in factory.log().opened.clone() {
         assert!(
@@ -405,7 +413,10 @@ fn every_build_carries_a_timeout_and_a_storm_of_faults_cannot_become_a_storm_of_
     );
 
     let status = manager.status();
-    assert!(status.stalled.is_some(), "the session-level error is raised");
+    assert!(
+        status.stalled.is_some(),
+        "the session-level error is raised"
+    );
     assert_eq!(
         status.stalled.as_ref().map(DeviceFault::code),
         Some("device_not_available"),
@@ -422,8 +433,8 @@ fn a_device_that_comes_back_ends_the_stall_and_the_session_recovers() {
     let factory = Arc::new(ScriptedFactory::new());
     let clock = Arc::new(TestClock::new());
     let mut manager = manager(Arc::clone(&factory), Arc::clone(&clock));
+    manager.start_session().expect("the session opens");
     factory.break_device("BuiltInMic:0", unplugged());
-    let _ = manager.start_session();
 
     for _ in 0..60 {
         manager.report_fault(unplugged());
@@ -460,22 +471,17 @@ struct ChainGate(Arc<Mutex<PlayoutChain>>);
 impl ChainGate {
     fn new(chain: PlayoutChain) -> (Self, Arc<Mutex<PlayoutChain>>) {
         let shared = Arc::new(Mutex::new(chain));
-        (
-            Self {
-                handle: Arc::clone(&shared),
-            },
-            shared,
-        )
+        (Self(Arc::clone(&shared)), shared)
     }
 }
 
 impl RebuildGate for ChainGate {
     fn suspend(&mut self) {
-        self.handle.lock().expect("chain").suspend();
+        self.0.lock().expect("chain").suspend();
     }
 
     fn resume(&mut self) {
-        self.handle.lock().expect("chain").resume();
+        self.0.lock().expect("chain").resume();
     }
 }
 
@@ -507,7 +513,9 @@ fn the_rebuild_is_silent_and_the_sentence_survives_it() {
 
     let (gate, handle) = ChainGate::new(chain);
     manager.attach_gate(Box::new(gate));
-    let _ = manager.start_session();
+    manager
+        .start_session()
+        .expect("the session opens on the healthy machine");
 
     // The device vanishes and the rebuild fails (nothing to open), so the gate
     // stays suspended: the chain must hold, not drain into a dead device.
@@ -683,7 +691,9 @@ fn a_real_device_unplug_is_survived() {
         .expect("a default audio host is available");
     let clock = Arc::new(TestClock::new());
     let mut manager = DeviceManager::with_policy(factory, RebuildPolicy::default(), clock);
-    let status = manager.start_session().expect("the machine has audio devices");
+    let status = manager
+        .start_session()
+        .expect("the machine has audio devices");
     assert!(
         status.input.is_some(),
         "this machine reports an input device: {status:?}"

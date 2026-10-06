@@ -22,6 +22,7 @@
 pub mod aec;
 pub mod bounded;
 pub mod capture;
+pub mod device;
 pub mod playout;
 pub mod resample;
 
@@ -155,6 +156,10 @@ impl PcmPlayback for CpalPlayback {
         });
         let config: cpal::StreamConfig = supported.into();
         let on_error = |error: cpal::Error| eprintln!("[playback] stream error: {error}");
+        // cpal's `None` means "wait indefinitely". T5.4's device layer makes
+        // the bounded wait the house rule, and this path follows it: a device
+        // that never answers must surface as an error, not as a hung preview.
+        let timeout = Some(Duration::from_secs(5));
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => {
@@ -175,7 +180,7 @@ impl PcmPlayback for CpalPlayback {
                         }
                     },
                     on_error,
-                    None,
+                    timeout,
                 )
             }
             cpal::SampleFormat::I16 => {
@@ -197,7 +202,7 @@ impl PcmPlayback for CpalPlayback {
                         }
                     },
                     on_error,
-                    None,
+                    timeout,
                 )
             }
             other => return Err(PlaybackError::UnsupportedFormat(format!("{other:?}"))),

@@ -616,6 +616,10 @@ struct ChainState {
     /// May the chain consume? Cleared by an interrupt, a dry buffer and a new
     /// session; set by a pre-roll.
     playing: bool,
+    /// Is the device being rebuilt (T5.4)? A suspended chain emits silence and
+    /// consumes nothing — the buffer holds the sentence for the device that is
+    /// coming back, and it is not charged for the silence in between.
+    suspended: bool,
     /// Did audio arrive since the previous tick?
     pushed_since_tick: bool,
     /// The buffer holds nothing but the interrupt fade: play it out and stop,
@@ -662,6 +666,7 @@ impl PlayoutChain {
             resampler: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ChainState {
                 playing: false,
+                suspended: false,
                 pushed_since_tick: false,
                 draining_cut: false,
                 stats: JitterStats::default(),
@@ -707,6 +712,35 @@ impl PlayoutChain {
 
     pub fn is_playing(&self) -> bool {
         self.state().playing
+    }
+
+    /// Is the device being rebuilt (T5.4)?
+    pub fn is_suspended(&self) -> bool {
+        self.state().suspended
+    }
+
+    /// Hold everything and emit silence while the device is gone.
+    ///
+    /// A device that is not there must not be fed — the samples would be spent
+    /// on it and lost — but the sentence must not be spent either. So the
+    /// buffer, the epoch and the water marks all stand still, and the counters
+    /// stay quiet: an outage is not an underrun the producer caused, and
+    /// counting it as one would blame the wrong layer.
+    ///
+    /// What is deliberately *not* done here: clearing the buffer (that is
+    /// [`Self::end_session`]) and dropping the resampler's carry-over (a new
+    /// converter would restart the filter, and the seam would click exactly
+    /// where the recovery is supposed to be seamless).
+    pub fn suspend(&mut self) {
+        self.state().suspended = true;
+    }
+
+    /// Release the hold: playback continues from the very next sample it
+    /// would have played. Nothing was consumed and nothing was reset, so the
+    /// far side of the outage continues the same waveform — a step
+    /// discontinuity is what a speaker renders as a click.
+    pub fn resume(&mut self) {
+        self.state().suspended = false;
     }
 
     /// Enqueue one synthesised chunk, converted to the graph rate.
@@ -805,6 +839,13 @@ impl PlayoutChain {
         out.fill(0.0);
 
         let mut state = self.state();
+        if state.suspended {
+            // Silence, and nothing consumed. The block is already zeroed, so
+            // what the device receives is silence rather than the last block
+            // repeated — and the buffer, the marks and the counters are exactly
+            // as they were.
+            return 0;
+        }
         if !state.playing {
             // Nothing buffered is not a gap — it is the silence between
             // sentences. Reading the water marks here would turn every pause
@@ -907,6 +948,11 @@ impl PlayoutChain {
         let queue = self.queue.stats();
         let mut state = self.state();
         state.playing = false;
+        // A session boundary releases the rebuild hold. A chain that started a
+        // session still suspended would be silent for good; the manager resumes
+        // it on the next successful rebuild anyway, so clearing here can only
+        // make the worse case (permanent silence) unreachable.
+        state.suspended = false;
         state.pushed_since_tick = false;
         state.draining_cut = false;
         state.stats = JitterStats::default();
@@ -938,6 +984,20 @@ impl std::fmt::Debug for PlayoutChain {
             .field("buffered_ms", &self.buffered_ms())
             .field("stats", &self.stats())
             .finish()
+    }
+}
+
+/// The rebuild gate the device layer holds (T5.4). The chain is the thing that
+/// must go quiet when the device leaves, and the thing that must come back
+/// without a seam — so it is the gate, and the manager never needs to know it
+/// is a playout chain at all.
+impl crate::audio::device::RebuildGate for PlayoutChain {
+    fn suspend(&mut self) {
+        PlayoutChain::suspend(self);
+    }
+
+    fn resume(&mut self) {
+        PlayoutChain::resume(self);
     }
 }
 
