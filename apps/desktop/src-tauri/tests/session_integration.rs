@@ -634,3 +634,29 @@ async fn connected_client_counter_tracks_the_live_phone_count() {
     drop(first);
     assert_eq!(wait_for_clients(&state, 0).await, 0);
 }
+
+/// The diagnostics payload carries the playout mirror's refusal count (CR-01):
+/// the counter the AEC path increments has a reader, so "the reference is
+/// gappy" can be seen instead of inferred.
+#[test]
+fn usage_report_carries_the_playout_mirror_counter() {
+    use nextalk_desktop_lib::audio::NoopRenderReference;
+    use nextalk_desktop_lib::pipeline::stages::AudioChunk;
+    use nextalk_desktop_lib::usage_report;
+
+    let state = SessionState::new(8787);
+    assert_eq!(usage_report(&state).health.mirror_failures, 0);
+
+    // A chunk that is not at the graph rate cannot become a 48 kHz AEC frame, so
+    // it is refused at the mirror — counted, never silently handed over to be
+    // dropped inside the processor (CR-01).
+    let mut queue = state.playout().clone();
+    let epoch = queue.epoch();
+    queue
+        .push(epoch, 1, &AudioChunk::new(vec![0.5; 240], 24_000))
+        .expect("the current generation accepts the chunk");
+    let mut out = vec![0.0f32; 480];
+    assert_eq!(queue.render_mirrored(&mut out, &mut NoopRenderReference), 240);
+
+    assert_eq!(usage_report(&state).health.mirror_failures, 1);
+}

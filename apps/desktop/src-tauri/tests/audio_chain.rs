@@ -976,9 +976,23 @@ impl MirrorLog {
 }
 
 impl RenderReference for MirrorLog {
-    fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) {
+    fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) -> bool {
         self.blocks.push((samples.to_vec(), sample_rate_hz));
+        true
     }
+}
+
+/// One AEC frame — the canceller's only accepted length (10 ms at 48 kHz).
+const AEC_FRAME_SAMPLES: usize = 480;
+
+/// A phase-continuous tone at the graph rate (48 kHz).
+fn tone_48k(hz: f32, amplitude: f32, samples: usize) -> Vec<f32> {
+    (0..samples)
+        .map(|n| {
+            let t = n as f32 / GRAPH_RATE_HZ as f32;
+            (2.0 * PI * hz * t).sin() * amplitude
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,10 +1250,26 @@ fn playout_the_echo_canceller_hears_exactly_what_the_speaker_plays() {
         "the 2:1 conversion produced {} samples for 2 880 in",
         played.len()
     );
+    // The reference is the played stream up to the last whole AEC frame: the
+    // tail below one frame is still being carried (it is released by the next
+    // tick, or dropped at the generation boundary).
+    let whole_frames = played.len() - played.len() % AEC_FRAME_SAMPLES;
     assert_eq!(
         mirror.samples(),
-        played,
+        played[..whole_frames],
         "sample for sample, the canceller's reference is what the speaker got"
+    );
+    assert!(
+        mirror
+            .blocks
+            .iter()
+            .all(|(samples, _)| samples.len() == AEC_FRAME_SAMPLES),
+        "every mirrored block is one AEC frame, or the processor refuses it: {:?}",
+        mirror
+            .blocks
+            .iter()
+            .map(|(samples, _)| samples.len())
+            .collect::<Vec<_>>()
     );
     assert!(
         mirror.rates().iter().all(|rate| *rate == GRAPH_RATE_HZ),
@@ -1250,6 +1280,65 @@ fn playout_the_echo_canceller_hears_exactly_what_the_speaker_plays() {
         mirror.blocks.len() > 1,
         "mirrored per block, not per sentence"
     );
+    assert_eq!(
+        chain.queue().stats().mirror_failures,
+        0,
+        "a frame the processor refused would mean the reference is gappy"
+    );
+}
+
+/// CoreAudio's usual buffer is 512 frames and 512 is not a multiple of 480, so
+/// a per-slice mirror is permanently gappy on real hardware (CR-01). The queue
+/// carries the remainder across ticks: every block the canceller receives is one
+/// whole frame, and no frame is zero-padded (a padded frame would train the
+/// canceller on audio the user never heard).
+#[test]
+fn playout_the_mirror_frames_a_512_sample_device_buffer_into_whole_aec_frames() {
+    let mut chain = PlayoutChain::with_policy(JitterPolicy::default());
+    let epoch = chain.begin_session();
+    let mut mirror = MirrorLog::default();
+
+    // 2 048 samples = 4 × 512: four device buffers, and 128 samples left in the
+    // mirror's carry at the end (2 048 is not a multiple of 480 either).
+    let played_source = tone_48k(440.0, 0.5, 2_048);
+    chain
+        .push(epoch, 1, &played_source, GRAPH_RATE_HZ)
+        .expect("epoch 1 is current");
+
+    let mut tick = vec![0.0f32; 512];
+    let mut played = Vec::new();
+    for _ in 0..8 {
+        let written = chain.tick_mirrored(&mut tick, &mut mirror);
+        played.extend_from_slice(&tick[..written]);
+        if played.len() >= played_source.len() {
+            break;
+        }
+    }
+    assert_eq!(played.len(), played_source.len(), "all pushed audio played");
+    assert_eq!(
+        played, played_source,
+        "48 kHz passes through untouched — no resample, no seam"
+    );
+
+    let whole_frames = played.len() - played.len() % AEC_FRAME_SAMPLES;
+    assert_eq!(
+        mirror.blocks.len(),
+        whole_frames / AEC_FRAME_SAMPLES,
+        "one block per AEC frame — not one per device buffer"
+    );
+    assert!(
+        mirror
+            .blocks
+            .iter()
+            .all(|(samples, _)| samples.len() == AEC_FRAME_SAMPLES),
+        "512-sample buffers must not reach the canceller as 512-sample slices"
+    );
+    assert_eq!(
+        mirror.samples(),
+        played[..whole_frames],
+        "the reference is the played samples, in frame order, with nothing added"
+    );
+    assert_eq!(chain.queue().stats().mirror_failures, 0);
 }
 
 // ---------------------------------------------------------------------------

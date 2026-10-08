@@ -81,16 +81,26 @@ fn stop_session(state: tauri::State<'_, SessionState>) -> Result<(), String> {
 /// numbers and never recomputes them.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UsageReport {
-    usage: UsageSummary,
-    cost: CostReport,
-    quota_minutes: u64,
-    used_minutes: u64,
+pub struct UsageReport {
+    pub usage: UsageSummary,
+    pub cost: CostReport,
+    pub quota_minutes: u64,
+    pub used_minutes: u64,
+    /// 链路健康计数——本进程的丢弃量。计数器的存在必须有读者（CR-01）。
+    pub health: LinkHealth,
 }
 
-/// `usage_summary` — current-month aggregation for DiagnosticsPage.
-#[tauri::command]
-fn usage_summary(state: tauri::State<'_, SessionState>) -> UsageReport {
+/// 播放链路的丢弃计数（CR-01）：一个没有读者的计数器只是文档承诺。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkHealth {
+    /// 播放队列交给回声消除器却被拒的参考块数（CR-01）：非零即说明远端参考
+    /// 有缺口，AEC 会拿不完整的声音当「扬声器在放什么」。
+    pub mirror_failures: u64,
+}
+
+/// [`usage_summary`] 的载荷本体，与 Tauri 管线分开：测试与诊断面板读同一份定义。
+pub fn usage_report(state: &SessionState) -> UsageReport {
     let usage = state.usage_summary();
     let cost = CostReport::from_usage(&usage);
     UsageReport {
@@ -98,7 +108,16 @@ fn usage_summary(state: tauri::State<'_, SessionState>) -> UsageReport {
         quota_minutes: MONTHLY_QUOTA_MINUTES,
         usage,
         cost,
+        health: LinkHealth {
+            mirror_failures: state.playout().stats().mirror_failures,
+        },
     }
+}
+
+/// `usage_summary` — current-month aggregation for DiagnosticsPage.
+#[tauri::command]
+fn usage_summary(state: tauri::State<'_, SessionState>) -> UsageReport {
+    usage_report(state.inner())
 }
 
 // ---------------------------------------------------------------------------

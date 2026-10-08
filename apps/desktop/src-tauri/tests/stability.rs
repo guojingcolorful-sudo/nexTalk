@@ -366,8 +366,9 @@ fn playout_render_mirrors_into_the_reference_path() {
         blocks: Vec<(usize, u32)>,
     }
     impl RenderReference for Recorder {
-        fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) {
+        fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) -> bool {
             self.blocks.push((samples.len(), sample_rate_hz));
+            true
         }
     }
 

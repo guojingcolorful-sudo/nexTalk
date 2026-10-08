@@ -60,10 +60,25 @@ pub trait PlayoutSink: Send {
 /// [`aec::SharedProcessor`] is the processor the capture chain also uses, so
 /// the mirror and the capture side share one delay estimate. The no-op stays
 /// for the paths that deliberately run without AEC (tests, enrollment).
+///
+/// # Frame geometry is part of this contract (CR-01)
+///
+/// The real canceller processes fixed 10 ms frames — exactly
+/// [`aec::FRAME_SAMPLES`] (480) samples at [`aec::PROCESSOR_RATE_HZ`] (48 kHz) —
+/// and refuses every other length. Framing therefore belongs to whoever holds
+/// the stream, not to this trait: hand over arbitrary slices and the canceller
+/// silently receives nothing it can use. [`playout::PlayoutQueue`] is the one
+/// caller, and it carries the remainder across device ticks so every block that
+/// arrives here is a whole, un-padded frame of played audio.
 pub trait RenderReference: Send {
     /// Mirror one rendered block: the exact samples the device just consumed,
     /// at the rate they were rendered at.
-    fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32);
+    ///
+    /// Returns whether the mirror accepted the block. `false` means the
+    /// canceller refused it (wrong frame length, or a rate that is not the
+    /// graph's) and those samples are not part of its far-end view — the caller
+    /// counts the refusal rather than swallowing it.
+    fn push_reference(&mut self, samples: &[f32], sample_rate_hz: u32) -> bool;
 }
 
 /// The production stand-in until 02-05 attaches the AEC: renders are not
@@ -72,7 +87,10 @@ pub trait RenderReference: Send {
 pub struct NoopRenderReference;
 
 impl RenderReference for NoopRenderReference {
-    fn push_reference(&mut self, _samples: &[f32], _sample_rate_hz: u32) {}
+    fn push_reference(&mut self, _samples: &[f32], _sample_rate_hz: u32) -> bool {
+        // Nothing is listening, so nothing can be refused.
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------

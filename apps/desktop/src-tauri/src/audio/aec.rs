@@ -263,17 +263,12 @@ impl std::fmt::Debug for AudioProcessor {
 #[derive(Clone)]
 pub struct SharedProcessor {
     inner: std::sync::Arc<std::sync::Mutex<AudioProcessor>>,
-    /// Render frames refused while this handle was feeding the mirror (T5.3's
-    /// `RenderReference` impl cannot return an error, so it counts instead —
-    /// a silently swallowed failure would look like "AEC stopped cancelling").
-    mirror_failures: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SharedProcessor {
     pub fn new(config: AecConfig) -> Result<Self, AecError> {
         Ok(Self {
             inner: std::sync::Arc::new(std::sync::Mutex::new(AudioProcessor::new(config)?)),
-            mirror_failures: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -294,12 +289,6 @@ impl SharedProcessor {
         self.lock().process_capture_frame(frame)
     }
 
-    /// Render frames the mirror refused (bad length, or capture was expected).
-    pub fn mirror_failures(&self) -> u64 {
-        self.mirror_failures
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, AudioProcessor> {
         // Same reasoning as the playout queue: the guarded data is plain audio,
         // so recovering a poisoned lock beats silencing the user's voice.
@@ -310,13 +299,13 @@ impl SharedProcessor {
 }
 
 /// The playout chain mirrors what it renders into the AEC as the far-end
-/// reference. Refusals are counted, never swallowed.
+/// reference. The verdict travels back to the caller — the queue owns the frame
+/// discipline (it is the side that can carry a remainder across ticks) and
+/// counts what the canceller refused, so there is exactly one counter and a
+/// reader for it (CR-01; WR-03).
 impl crate::audio::RenderReference for SharedProcessor {
-    fn push_reference(&mut self, samples: &[f32], _sample_rate_hz: u32) {
-        if self.process_render_frame(samples).is_err() {
-            self.mirror_failures
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
+    fn push_reference(&mut self, samples: &[f32], _sample_rate_hz: u32) -> bool {
+        self.process_render_frame(samples).is_ok()
     }
 }
 
@@ -325,7 +314,6 @@ impl std::fmt::Debug for SharedProcessor {
         formatter
             .debug_struct("SharedProcessor")
             .field("frame_samples", &self.frame_samples())
-            .field("mirror_failures", &self.mirror_failures())
             .finish()
     }
 }

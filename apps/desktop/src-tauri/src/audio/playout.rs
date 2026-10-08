@@ -37,6 +37,12 @@ use crate::sim::source::{RealClock, TimeSource};
 /// oldest chunk. 3 s is far more than any vendor burst and far less than a
 /// memory leak (D-06: bounded by construction).
 pub const DEFAULT_CAPACITY_MS: u64 = 3_000;
+/// The only block length the echo canceller accepts (10 ms at 48 kHz): the
+/// mirror frames to this, and a take at any other rate is refused, not sent
+/// (CR-01).
+const AEC_FRAME_SAMPLES: usize = crate::audio::aec::FRAME_SAMPLES;
+/// The rate the far-end reference must be at — the AEC's own processing rate.
+const MIRROR_RATE_HZ: u32 = crate::audio::capture::GRAPH_RATE_HZ;
 /// Length of the ramp that turns an interrupt into silence instead of a click.
 pub const FADE_OUT_MS: u64 = 5;
 /// Speech milliseconds required before barge-in may cut the sentence
@@ -109,6 +115,11 @@ pub struct PlayoutStats {
     pub accepted_chunks: u64,
     /// Interrupts served.
     pub interrupts: u64,
+    /// Mirror emissions the echo canceller did not receive (CR-01): a frame it
+    /// refused, or a played take that was not at the graph rate. The canceller
+    /// accepts only whole 480-sample graph-rate frames, so anything counted here
+    /// is audio the far-end reference is missing — the diagnostics read it.
+    pub mirror_failures: u64,
 }
 
 /// One queued chunk plus the read cursor inside it (the device may stop
@@ -142,9 +153,87 @@ struct Inner {
     played: u64,
     /// `(segment_id, cursor)` of each sentence's first sample, fixed at enqueue.
     first_positions: Vec<(u64, u64)>,
+    /// The AEC mirror's frame assembler (CR-01): what the device consumed but
+    /// what is not yet a whole 10 ms frame.
+    mirror: MirrorFramer,
     stats: PlayoutStats,
     last_interrupt_at_ms: Option<u64>,
     marks: MarkHandle,
+}
+
+/// The AEC render mirror's frame assembler (CR-01).
+///
+/// The canceller processes exactly [`AEC_FRAME_SAMPLES`] (480) samples at the
+/// graph rate and refuses every other length, while CoreAudio hands out blocks
+/// of whatever size it chose (512 frames is the usual one) and a sentence can
+/// end anywhere. So the mirror carries its remainder across ticks exactly like
+/// [`crate::audio::resample::StreamingResampler`] carries its own — whole frames
+/// only, never a zero-padded one (the canceller would then adapt against audio
+/// the user never heard).
+struct MirrorFramer {
+    /// Samples of a frame the device has played but that is not yet complete.
+    pending: [f32; AEC_FRAME_SAMPLES],
+    pending_len: usize,
+}
+
+impl MirrorFramer {
+    const fn new() -> Self {
+        Self {
+            pending: [0.0; AEC_FRAME_SAMPLES],
+            pending_len: 0,
+        }
+    }
+
+    /// Drop the partial frame. A generation boundary must not splice the
+    /// previous session's tail onto the next session's first frame.
+    fn clear(&mut self) {
+        self.pending_len = 0;
+    }
+
+    /// Feed the samples the device just consumed and hand the canceller every
+    /// frame that completes. Returns how many it refused.
+    ///
+    /// Copies only a frame that spans two ticks; when the played block starts on
+    /// a frame boundary its frames go through as borrowed slices — this runs on
+    /// the audio path, so no allocation (see [`crate::audio::bounded`]).
+    fn push_played(
+        &mut self,
+        played: &[f32],
+        rate: u32,
+        reference: &mut dyn RenderReference,
+    ) -> u64 {
+        let mut refused = 0;
+        let mut rest = played;
+
+        if self.pending_len > 0 {
+            let need = AEC_FRAME_SAMPLES - self.pending_len;
+            let take = need.min(rest.len());
+            self.pending[self.pending_len..self.pending_len + take]
+                .copy_from_slice(&rest[..take]);
+            self.pending_len += take;
+            rest = &rest[take..];
+            if self.pending_len == AEC_FRAME_SAMPLES {
+                if !reference.push_reference(&self.pending, rate) {
+                    refused += 1;
+                }
+                self.pending_len = 0;
+            }
+        }
+
+        while rest.len() >= AEC_FRAME_SAMPLES {
+            let (frame, tail) = rest.split_at(AEC_FRAME_SAMPLES);
+            if !reference.push_reference(frame, rate) {
+                refused += 1;
+            }
+            rest = tail;
+        }
+
+        if !rest.is_empty() {
+            self.pending[..rest.len()].copy_from_slice(rest);
+            self.pending_len = rest.len();
+        }
+        refused
+    }
 }
 
 /// Bounded, epoch-guarded, barge-in-safe playout buffer.
@@ -180,6 +269,7 @@ impl PlayoutQueue {
                 cursor: 0,
                 played: 0,
                 first_positions: Vec::new(),
+                mirror: MirrorFramer::new(),
                 stats: PlayoutStats::default(),
                 last_interrupt_at_ms: None,
                 marks: MarkHandle::disabled(),
@@ -391,8 +481,9 @@ impl PlayoutQueue {
         self.render_inner(out, None)
     }
 
-    /// [`Self::render`] while mirroring every rendered block into the echo
-    /// canceller's far-end reference (02-05 T5.1 consumes this).
+    /// [`Self::render`] while mirroring the rendered samples into the echo
+    /// canceller's far-end reference (02-05 T5.1 consumes this) — in whole AEC
+    /// frames, the remainder carried into the next call (CR-01).
     pub fn render_mirrored(&self, out: &mut [f32], reference: &mut dyn RenderReference) -> usize {
         self.render_inner(out, Some(reference))
     }
@@ -418,7 +509,11 @@ impl PlayoutQueue {
                     let start = front.cursor;
                     out[written..written + take].copy_from_slice(&front.pcm[start..start + take]);
                     front.cursor += take;
-                    (take, Some(front.sample_rate_hz), front.remaining() == 0)
+                    (
+                        take,
+                        Some(front.sample_rate_hz),
+                        front.remaining() == 0,
+                    )
                 }
             };
             if finished {
@@ -429,7 +524,20 @@ impl PlayoutQueue {
             }
             let rate = block.expect("every consumed block carries its rate");
             if let Some(reference) = reference.as_mut() {
-                reference.push_reference(&out[written..written + take], rate);
+                // Reborrow, so the next iteration keeps its own handle.
+                let handle: &mut dyn RenderReference = &mut **reference;
+                let refused = if rate == MIRROR_RATE_HZ {
+                    // Whole AEC frames only, carried across ticks (CR-01).
+                    inner
+                        .mirror
+                        .push_played(&out[written..written + take], rate, handle)
+                } else {
+                    // The canceller accepts graph-rate frames only; handing it a
+                    // 24 kHz take would mis-date the reference, so it is refused
+                    // here — and counted, never silently.
+                    1
+                };
+                inner.stats.mirror_failures += refused;
             }
             inner.buffered_ms = inner.buffered_ms.saturating_sub(duration_ms(take, rate));
             written += take;
@@ -455,6 +563,10 @@ impl PlayoutQueue {
         let mut inner = self.lock();
         inner.queued.clear();
         inner.buffered_ms = 0;
+        // A partial frame is audio from the generation that just ended: splicing
+        // it onto the new session's first frame would hand the canceller a
+        // reference the device never produced.
+        inner.mirror.clear();
         epoch
     }
 
@@ -595,10 +707,12 @@ pub struct JitterStats {
 /// Two contracts this type exists to hold:
 ///
 /// - **Everything reaching the device reaches the echo canceller**, from the
-///   same buffer. TTS arrives at 24 kHz and the graph runs at 48 kHz, so a
-///   chunk is resampled *once* on the way in; after that the samples the device
-///   consumes and the samples the AEC is given are the same memory
-///   (`&out[..written]`), not a copy that could drift (T-02-25).
+///   same played buffer: the mirror is fed the written prefix, re-cut into whole
+///   10 ms AEC frames (the only length the processor accepts — CR-01). TTS
+///   arrives at 24 kHz and the graph runs at 48 kHz, so a chunk is resampled
+///   *once* on the way in; after that the samples the device consumes and the
+///   samples the canceller is given are the same samples, not a second
+///   conversion that could drift (T-02-25).
 /// - **The mirror is what is being played, never what was received.** Mirroring
 ///   at `push` would hand AEC3 a reference from the future, and its delay
 ///   estimate would converge on a lie.
@@ -815,9 +929,11 @@ impl PlayoutChain {
     /// Fill `out` with the next block of audio and mirror it into the AEC.
     ///
     /// Returns how many samples were written (0 while pre-rolling or idle).
-    /// Everything written is graph-rate; the mirror receives exactly the
-    /// written prefix, so a resample mismatch between what is heard and what
-    /// the canceller knows about is impossible by construction.
+    /// Everything written is graph-rate, and the mirror receives the written
+    /// prefix **in whole 10 ms AEC frames** — the queue carries a partial frame
+    /// across ticks ([`MirrorFramer`]) because the canceller refuses every other
+    /// length (CR-01). What it knows about is therefore always audio that was
+    /// really played: no padding, and never a slice from the future.
     pub fn tick_mirrored(&mut self, out: &mut [f32], reference: &mut dyn RenderReference) -> usize {
         self.tick_inner(out, Some(reference))
     }
