@@ -33,6 +33,7 @@ pub use config::{
     DeepgramCredentials, DeepseekCredentials, Endpoint, Endpoints, RoutingConfig, Secret,
     StageRole, Track, VolcCredentials, XfyunCredentials,
 };
+pub use deepgram::DeepgramStt;
 pub use deepseek::DeepseekTranslator;
 pub use error::{classify_http_status, classify_xfyun_code, ErrorKind, RetryClass, StageError};
 pub use traits::{
@@ -48,14 +49,17 @@ pub use xfyun::XfyunStt;
 // dispatch
 // ---------------------------------------------------------------------------
 
-/// The Chinese STT stage, selected by configuration.
+/// The STT stage, selected by configuration.
 #[derive(Debug, Clone)]
 pub enum VendorStt {
     /// Deterministic double: tests, offline demos, and the 02-01 rig.
     Scripted(ScriptedStt),
     /// 讯飞 `iat` — the production Chinese line (T2.2).
     Xfyun(XfyunStt),
-    // T2.3 adds `Deepgram(DeepgramStt)` for the interviewer track.
+    /// Deepgram `nova-3` — the interviewer's English line (T2.3), assembled
+    /// independently of the Chinese one: this stage's events feed the
+    /// subtitles and the copilot, never the clone (D-14).
+    Deepgram(DeepgramStt),
 }
 
 impl From<ScriptedStt> for VendorStt {
@@ -70,11 +74,18 @@ impl From<XfyunStt> for VendorStt {
     }
 }
 
+impl From<DeepgramStt> for VendorStt {
+    fn from(source: DeepgramStt) -> Self {
+        Self::Deepgram(source)
+    }
+}
+
 impl SttSource for VendorStt {
     fn provider(&self) -> &'static str {
         match self {
             VendorStt::Scripted(source) => source.provider(),
             VendorStt::Xfyun(source) => source.provider(),
+            VendorStt::Deepgram(source) => source.provider(),
         }
     }
 
@@ -82,6 +93,7 @@ impl SttSource for VendorStt {
         match self {
             VendorStt::Scripted(source) => source.model_version(),
             VendorStt::Xfyun(source) => source.model_version(),
+            VendorStt::Deepgram(source) => source.model_version(),
         }
     }
 
@@ -89,6 +101,7 @@ impl SttSource for VendorStt {
         match self {
             VendorStt::Scripted(source) => source.set_marks(marks),
             VendorStt::Xfyun(source) => source.set_marks(marks),
+            VendorStt::Deepgram(source) => source.set_marks(marks),
         }
     }
 
@@ -96,6 +109,7 @@ impl SttSource for VendorStt {
         match self {
             VendorStt::Scripted(source) => source.start(epoch),
             VendorStt::Xfyun(source) => source.start(epoch),
+            VendorStt::Deepgram(source) => source.start(epoch),
         }
     }
 }
@@ -262,6 +276,20 @@ mod tests {
         assert_eq!(deepseek.provider(), "deepseek");
         assert_eq!(deepseek.model_version(), "deepseek-chat");
         assert!(matches!(deepseek, VendorTranslator::Deepseek(_)));
+
+        // The Deepgram variant routes through the same contract (T2.3); it is
+        // the interviewer's English line, assembled independently of the
+        // Chinese one. No socket is opened, so no mock is needed here.
+        let deepgram: VendorStt = DeepgramStt::new(
+            DeepgramCredentials {
+                api_key: Secret::new("test-key"),
+            },
+            Endpoints::defaults(),
+        )
+        .into();
+        assert_eq!(deepgram.provider(), "deepgram");
+        assert_eq!(deepgram.model_version(), "nova-3");
+        assert!(matches!(deepgram, VendorStt::Deepgram(_)));
 
         let mut tts: VendorTts = ScriptedTts::default().into();
         assert_eq!(tts.model_version(), "scripted-1");
