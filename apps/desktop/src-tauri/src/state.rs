@@ -68,6 +68,21 @@ struct SessionStateInner {
     /// The live session's single trace writer (T3.7). `None` between sessions
     /// and whenever [`Self::trace_dir`] is unset.
     trace_writer: Option<TraceWriter>,
+    /// What the last closed writer reported (WR-03). The writer is dropped at
+    /// 停止, so its live atomics go with it; this snapshot is what keeps
+    /// 「丢了多少条」 readable after the fact.
+    trace_health: TraceHealth,
+}
+
+/// The trace writer's loss counters, snapshotted when it closes (WR-03).
+///
+/// A counter with no reader is a claim the code does not keep: these two ride
+/// the diagnostics payload so a dropped or failed record is visible instead of
+/// inferred from an empty file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TraceHealth {
+    pub dropped_records: u64,
+    pub write_failures: u64,
 }
 
 impl SessionState {
@@ -94,6 +109,7 @@ impl SessionState {
                 app_handle: None,
                 trace_dir: None,
                 trace_writer: None,
+                trace_health: TraceHealth::default(),
             })),
             broadcast_tx,
             connected_clients: Arc::new(AtomicUsize::new(0)),
@@ -246,6 +262,20 @@ impl SessionState {
             .clone()
     }
 
+    /// The trace writer's loss counters as the diagnostics panel reads them
+    /// (WR-03): live while a session runs, the last snapshot after it stops —
+    /// so 「丢了多少条」 stays readable once the writer is gone.
+    pub fn trace_health(&self) -> TraceHealth {
+        let inner = self.inner.read().expect("state lock poisoned");
+        match &inner.trace_writer {
+            Some(writer) => TraceHealth {
+                dropped_records: writer.dropped_records(),
+                write_failures: writer.write_failures(),
+            },
+            None => inner.trace_health,
+        }
+    }
+
     /// The current month's usage, read from the JSONL traces on demand
     /// (T3.7/D-13) — there is no counter that could drift from the files.
     pub fn usage_summary(&self) -> UsageSummary {
@@ -286,10 +316,11 @@ impl SessionState {
         );
         match TraceWriter::open(config) {
             Ok(writer) => {
-                self.inner
-                    .write()
-                    .expect("state lock poisoned")
-                    .trace_writer = Some(writer);
+                let mut inner = self.inner.write().expect("state lock poisoned");
+                inner.trace_writer = Some(writer);
+                // A fresh session starts a fresh scoreboard (WR-03): the panel's
+                // numbers describe this session, never the previous one.
+                inner.trace_health = TraceHealth::default();
             }
             Err(err) => eprintln!("trace writer unavailable, continuing without: {err}"),
         }
@@ -297,11 +328,17 @@ impl SessionState {
 
     /// Closes the session's trace: the writer drops, its queued records drain
     /// into the file and the task exits (T3.7).
+    ///
+    /// The drop would take the counters with it, so they are snapshotted first
+    /// (WR-03) — a session that lost records must still be able to say so.
     fn close_trace_writer(&self) {
-        self.inner
-            .write()
-            .expect("state lock poisoned")
-            .trace_writer = None;
+        let mut inner = self.inner.write().expect("state lock poisoned");
+        if let Some(writer) = inner.trace_writer.take() {
+            inner.trace_health = TraceHealth {
+                dropped_records: writer.dropped_records(),
+                write_failures: writer.write_failures(),
+            };
+        }
     }
 
     /// Publishes one event to every surface: the timeline (resume replay), the

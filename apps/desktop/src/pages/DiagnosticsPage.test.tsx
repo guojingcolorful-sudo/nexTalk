@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import DiagnosticsPage from './DiagnosticsPage';
 
@@ -39,6 +39,11 @@ const REPORT = {
   },
   quotaMinutes: 600,
   usedMinutes: 10,
+  health: {
+    mirrorFailures: 0,
+    traceDroppedRecords: 0,
+    traceWriteFailures: 0,
+  },
 };
 
 const EMPTY_REPORT = {
@@ -61,6 +66,20 @@ const EMPTY_REPORT = {
   },
   quotaMinutes: 600,
   usedMinutes: 0,
+  health: {
+    mirrorFailures: 0,
+    traceDroppedRecords: 0,
+    traceWriteFailures: 0,
+  },
+};
+
+const LOSSY_REPORT = {
+  ...REPORT,
+  health: {
+    mirrorFailures: 2,
+    traceDroppedRecords: 12,
+    traceWriteFailures: 1,
+  },
 };
 
 function renderPage() {
@@ -118,5 +137,42 @@ describe('DiagnosticsPage 成本面板', () => {
     expect(await screen.findByText('暂无用量数据')).toBeTruthy();
     expect(screen.queryByText('超预算')).toBeNull();
     expect(screen.queryByText('$0.0000')).toBeNull();
+  });
+
+  // WR-03: 丢弃计数必须有读者——全 0 显示「无丢弃」，非 0 显示「有丢弃」
+  // 并把每个数字原样渲染（12 条轨迹丢弃要看得见，而不是只能推断）。
+  it('renders 链路健康 with 无丢弃 when every counter is zero', async () => {
+    invokeMock.mockResolvedValue(REPORT);
+    renderPage();
+
+    expect(await screen.findByText('链路健康')).toBeTruthy();
+    expect(screen.getByText('无丢弃')).toBeTruthy();
+    expect(screen.queryByText('有丢弃')).toBeNull();
+    expect(screen.getByText('回声参考缺口')).toBeTruthy();
+    expect(screen.getByText('轨迹丢弃')).toBeTruthy();
+    expect(screen.getByText('轨迹写入失败')).toBeTruthy();
+  });
+
+  it('flags 有丢弃 and shows each counter once anything is dropped', async () => {
+    invokeMock.mockResolvedValue(LOSSY_REPORT);
+    renderPage();
+
+    const section = await screen.findByLabelText('链路健康');
+    expect(within(section).getByText('有丢弃')).toBeTruthy();
+    expect(within(section).queryByText('无丢弃')).toBeNull();
+    expect(within(section).getByText('2')).toBeTruthy();
+    expect(within(section).getByText('12')).toBeTruthy();
+    expect(within(section).getByText('1')).toBeTruthy();
+  });
+
+  it('rejects a payload without the health block (IPC 信任边界)', async () => {
+    const withoutHealth: Record<string, unknown> = { ...REPORT };
+    delete withoutHealth.health;
+    invokeMock.mockResolvedValue(withoutHealth);
+    renderPage();
+
+    // 回包形状不符就不进面板：成本与链路健康一起落到空态，绝不半渲染。
+    expect(await screen.findByText('暂无用量数据')).toBeTruthy();
+    expect(screen.getByText('暂无链路数据')).toBeTruthy();
   });
 });

@@ -409,8 +409,11 @@ struct RunContext {
 
 async fn run_session(context: RunContext) {
     if let Err(error) = stream_session(&context).await {
-        // A send failure means the caller is gone; nothing left to report to.
-        let _ = context.sender.try_send(TtsEvent::Failed(error));
+        // The classified failure is the only signal the caller's retry/breaker
+        // classification keys on (WR-03): wait for a slot instead of dropping
+        // it on a full queue. A send failure means the caller is gone; nothing
+        // left to report to.
+        let _ = context.sender.send(TtsEvent::Failed(error)).await;
     }
 }
 
@@ -476,7 +479,7 @@ async fn stream_session(context: &RunContext) -> Result<(), StageError> {
                     marked = true;
                 }
                 let chunk = AudioChunk::from_pcm16_le(&pcm16_le, SAMPLE_RATE_HZ);
-                send(&context.sender, TtsEvent::Audio(chunk))?;
+                send(&context.sender, TtsEvent::Audio(chunk)).await?;
             }
             // Other audio events are not this stage's business (the experiment
             // script logs and ignores them).
@@ -501,7 +504,8 @@ async fn stream_session(context: &RunContext) -> Result<(), StageError> {
                     TtsEvent::Finished {
                         usage: usage_from(&body),
                     },
-                )?;
+                )
+                .await?;
                 // The server closes after this frame; dropping the socket here
                 // saves the close handshake from the 2 s budget.
                 return Ok(());
@@ -517,9 +521,17 @@ async fn stream_session(context: &RunContext) -> Result<(), StageError> {
     ))
 }
 
-fn send(sender: &mpsc::Sender<TtsEvent>, event: TtsEvent) -> Result<(), StageError> {
+/// Hands one event to the caller, waiting for a slot (WR-03).
+///
+/// `try_send` conflated "the queue is momentarily full" with "the caller is
+/// gone" and dropped the audio chunk or the terminal 完成 event in the first
+/// case — a dropped chunk is an audible click, a dropped 完成 is a session that
+/// never ends. The await is safe here: this is the async synthesis task, not an
+/// audio callback with a deadline.
+async fn send(sender: &mpsc::Sender<TtsEvent>, event: TtsEvent) -> Result<(), StageError> {
     sender
-        .try_send(event)
+        .send(event)
+        .await
         .map_err(|_| StageError::transport(PROVIDER, "the caller stopped reading the audio"))
 }
 

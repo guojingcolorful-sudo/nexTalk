@@ -627,9 +627,14 @@ impl Session {
 type ClientSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-fn fail(events: &mpsc::Sender<SttEvent>, error: StageError) {
-    // A send failure means the caller is gone; nothing left to report to.
-    let _ = events.try_send(SttEvent::Failed(error));
+async fn fail(events: &mpsc::Sender<SttEvent>, error: StageError) {
+    // The classified failure is the last thing this session does, and it is
+    // the only signal the consumer's retry/breaker classification keys on
+    // (WR-03): a best-effort try_send could drop it on a full queue and the
+    // consumer would see a clean-looking close instead. Wait for the slot —
+    // this is an async task, not the audio callback. A send failure means the
+    // caller is gone; nothing left to report to.
+    let _ = events.send(SttEvent::Failed(error)).await;
 }
 
 async fn send_text(socket: &mut ClientSocket, body: String) -> Result<(), StageError> {
@@ -646,7 +651,7 @@ async fn run_session(
 ) {
     let mut socket = match session.connect().await {
         Ok(socket) => socket,
-        Err(error) => return fail(&events, error),
+        Err(error) => return fail(&events, error).await,
     };
 
     let mut builder = TranscriptBuilder::new();
@@ -673,7 +678,7 @@ async fn run_session(
                                     session_started = Instant::now();
                                     session_open = false;
                                 }
-                                Err(error) => return fail(&events, error),
+                                Err(error) => return fail(&events, error).await,
                             }
                         }
                         let bytes = pcm16_to_le_bytes(&pcm16);
@@ -681,7 +686,7 @@ async fn run_session(
                             let status = if session_open { 1 } else { 0 };
                             let frame = request_frame(&session.app_id, session.eos_ms, status, &chunk);
                             if let Err(error) = send_text(&mut socket, frame).await {
-                                return fail(&events, error);
+                                return fail(&events, error).await;
                             }
                             session_open = true;
                         }
@@ -690,7 +695,7 @@ async fn run_session(
                         fragment_ended = true;
                         let frame = request_frame(&session.app_id, session.eos_ms, 2, &[]);
                         if let Err(error) = send_text(&mut socket, frame).await {
-                            return fail(&events, error);
+                            return fail(&events, error).await;
                         }
                     }
                 }
@@ -706,7 +711,7 @@ async fn run_session(
                             }
                             FrameOutcome::Fatal(error) => {
                                 let _ = socket.close(None).await;
-                                return fail(&events, error);
+                                return fail(&events, error).await;
                             }
                         }
                     }
@@ -716,11 +721,11 @@ async fn run_session(
                         } else {
                             StageError::transport(PROVIDER, "the session closed before the fragment ended")
                         };
-                        return fail(&events, error);
+                        return fail(&events, error).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
-                        return fail(&events, StageError::transport(PROVIDER, format!("socket error: {error}")));
+                        return fail(&events, StageError::transport(PROVIDER, format!("socket error: {error}"))).await;
                     }
                 }
             }

@@ -441,8 +441,13 @@ impl SttSource for DeepgramStt {
 type ClientSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-fn fail(events: &mpsc::Sender<SttEvent>, error: StageError) {
-    let _ = events.try_send(SttEvent::Failed(error));
+async fn fail(events: &mpsc::Sender<SttEvent>, error: StageError) {
+    // The classified failure is the only signal the consumer's retry/breaker
+    // classification keys on (WR-03): a best-effort try_send could drop it on
+    // a full queue and the consumer would see a clean-looking close instead.
+    // Wait for the slot — this is an async task, not the audio callback. A
+    // send failure means the caller is gone; nothing to report to.
+    let _ = events.send(SttEvent::Failed(error)).await;
 }
 
 async fn send_text(socket: &mut ClientSocket, body: &str) -> Result<(), StageError> {
@@ -476,14 +481,14 @@ async fn run_session(
                     format!("handshake rejected (HTTP {})", response.status().as_u16()),
                 )
                 .with_endpoint(endpoint.url()),
-            )
+            ).await
         }
         Err(error) => {
             return fail(
                 &events,
                 StageError::transport(PROVIDER, format!("connect failed: {error}"))
                     .with_endpoint(endpoint.url()),
-            )
+            ).await
         }
     };
 
@@ -498,7 +503,7 @@ async fn run_session(
         tokio::select! {
             _ = heartbeat.tick(), if !closing => {
                 if let Err(error) = send_text(&mut socket, KEEPALIVE_FRAME).await {
-                    return fail(&events, error);
+                    return fail(&events, error).await;
                 }
             }
             item = upstream.recv(), if !closing => {
@@ -509,13 +514,13 @@ async fn run_session(
                             return fail(
                                 &events,
                                 StageError::transport(PROVIDER, "send failed while streaming audio"),
-                            );
+                            ).await;
                         }
                     }
                     Some(SttUpstream::End) | None => {
                         closing = true;
                         if let Err(error) = send_text(&mut socket, CLOSE_STREAM_FRAME).await {
-                            return fail(&events, error);
+                            return fail(&events, error).await;
                         }
                     }
                 }
@@ -559,7 +564,7 @@ async fn run_session(
                                         SILENCE_CLOSE_MS / 1_000
                                     ),
                                 ),
-                            );
+                            ).await;
                         }
                         if closing {
                             // We asked for the flush; a clean end.
@@ -571,14 +576,14 @@ async fn run_session(
                                 PROVIDER,
                                 format!("the session closed unexpectedly (code {code}): {reason}"),
                             ),
-                        );
+                        ).await;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
                         return fail(
                             &events,
                             StageError::transport(PROVIDER, format!("socket error: {error}")),
-                        );
+                        ).await;
                     }
                     None => {
                         if closing && buffer.is_empty() {
@@ -587,7 +592,7 @@ async fn run_session(
                         return fail(
                             &events,
                             StageError::transport(PROVIDER, "the socket closed mid-fragment"),
-                        );
+                        ).await;
                     }
                 }
             }

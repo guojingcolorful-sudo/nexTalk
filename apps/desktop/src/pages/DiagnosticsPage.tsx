@@ -15,7 +15,8 @@ import { E2E_BUDGET_MS, useLatencyWaterfall } from '../hooks/useLatencyWaterfall
  * 数据只有两个来源：桌面进程（live），或没有 IPC 桥时的类型化预览 fixture
  * （preview，页面会显式标注，绝不让假数字冒充实测）。成本面板没有预览
  * fixture——`usage_summary` 不可达或本月无轨迹时显示「暂无用量数据」，
- * 绝不编一个月度数字。
+ * 绝不编一个月度数字。链路健康面板（CR-01/WR-03）同样只读：三个丢弃计数
+ * 由 Rust 给出（活动会话读写入器本身，停止后读快照），前端只渲染。
  */
 
 interface UsageSummaryDto {
@@ -37,11 +38,18 @@ interface CostReportDto {
   overBudget: boolean;
 }
 
+interface LinkHealthDto {
+  mirrorFailures: number;
+  traceDroppedRecords: number;
+  traceWriteFailures: number;
+}
+
 interface UsageReportDto {
   usage: UsageSummaryDto;
   cost: CostReportDto;
   quotaMinutes: number;
   usedMinutes: number;
+  health: LinkHealthDto;
 }
 
 /** 金额一律四位小数：分段级差异（$0.0004/段）也要可见。 */
@@ -85,7 +93,11 @@ export function isUsageReport(value: unknown): value is UsageReportDto {
     typeof cost.ttsUsd === 'number' &&
     typeof cost.totalUsd === 'number' &&
     typeof cost.budgetUsd === 'number' &&
-    typeof cost.overBudget === 'boolean'
+    typeof cost.overBudget === 'boolean' &&
+    isRecord(value.health) &&
+    typeof value.health.mirrorFailures === 'number' &&
+    typeof value.health.traceDroppedRecords === 'number' &&
+    typeof value.health.traceWriteFailures === 'number'
   );
 }
 
@@ -184,6 +196,78 @@ function CostPanel({ report }: { report: UsageReportDto | null }) {
   );
 }
 
+/**
+ * 链路健康（CR-01/WR-03）：三个丢弃计数的读者。全 0 是正常态；非 0 是
+ * 「这一段声音/这一条轨迹真的丢了」的证据——面板只显示 Rust 报来的数字，
+ * 不做任何补偿或重试。
+ */
+function HealthPanel({ report }: { report: UsageReportDto | null }) {
+  const clean =
+    report !== null &&
+    report.health.mirrorFailures === 0 &&
+    report.health.traceDroppedRecords === 0 &&
+    report.health.traceWriteFailures === 0;
+  const rows = report
+    ? [
+        {
+          label: '回声参考缺口',
+          hint: '播放参考被 AEC 拒收',
+          value: report.health.mirrorFailures,
+        },
+        {
+          label: '轨迹丢弃',
+          hint: '队列满/关闭，未入队',
+          value: report.health.traceDroppedRecords,
+        },
+        {
+          label: '轨迹写入失败',
+          hint: '入队后写盘失败',
+          value: report.health.traceWriteFailures,
+        },
+      ]
+    : [];
+  return (
+    <section aria-label="链路健康" className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-black tracking-wider text-black">链路健康</h2>
+        {report !== null ? (
+          <span
+            className={`rounded-full border-2 border-black px-2 py-0.5 text-[10px] font-bold shadow-[2px_2px_0_0_#000] ${
+              clean ? 'bg-panel text-black' : 'bg-red-500 text-white'
+            }`}
+          >
+            {clean ? '无丢弃' : '有丢弃'}
+          </span>
+        ) : null}
+      </div>
+      {report !== null ? (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div
+              key={row.label}
+              className="flex items-center justify-between gap-3 rounded-xl border-4 border-black bg-panel px-3 py-2"
+            >
+              <span className="text-xs font-bold">{row.label}</span>
+              <span className="ml-auto text-[10px] text-gray-500">{row.hint}</span>
+              <span
+                className={`tabular-nums text-xs font-bold ${
+                  row.value > 0 ? 'text-red-600' : ''
+                }`}
+              >
+                {formatCount(row.value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-xl border-4 border-black bg-panel p-4 text-xs text-gray-400">
+          暂无链路数据
+        </p>
+      )}
+    </section>
+  );
+}
+
 export default function DiagnosticsPage() {
   const navigate = useNavigate();
   const { report, source } = useLatencyWaterfall();
@@ -207,6 +291,8 @@ export default function DiagnosticsPage() {
         <LatencyWaterfall report={report} />
 
         <CostPanel report={usageReport} />
+
+        <HealthPanel report={usageReport} />
       </main>
     </div>
   );

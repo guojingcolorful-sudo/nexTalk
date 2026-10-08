@@ -660,3 +660,43 @@ fn usage_report_carries_the_playout_mirror_counter() {
 
     assert_eq!(usage_report(&state).health.mirror_failures, 1);
 }
+
+/// The diagnostics payload carries the trace writer's loss counters (WR-03):
+/// live while the session runs, snapshotted when 停止 drops the writer — the
+/// count survives the atomics it came from. A counter with no reader is a
+/// claim the code does not keep.
+#[test]
+fn usage_report_carries_the_trace_loss_counters() {
+    use nextalk_desktop_lib::usage_report;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!(
+        "nextalk-trace-health-{}-{stamp}",
+        std::process::id()
+    ));
+
+    let state = SessionState::new(8788);
+    state.set_trace_dir(&dir);
+    state.start_session().expect("a fresh session starts");
+    let writer = state.trace_writer().expect("tracing is configured");
+
+    // Mid-session the panel reads the live writer's own counters.
+    let report = usage_report(&state);
+    assert_eq!(report.health.trace_dropped_records, writer.dropped_records());
+    assert_eq!(report.health.trace_write_failures, writer.write_failures());
+
+    // 停止 drops the writer; the snapshot keeps the numbers readable.
+    state.stop_session();
+    assert!(
+        state.trace_writer().is_none(),
+        "the writer is gone after 停止"
+    );
+    let report = usage_report(&state);
+    assert_eq!(report.health.trace_dropped_records, writer.dropped_records());
+    assert_eq!(report.health.trace_write_failures, writer.write_failures());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

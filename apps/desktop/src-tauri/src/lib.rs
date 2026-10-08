@@ -90,19 +90,26 @@ pub struct UsageReport {
     pub health: LinkHealth,
 }
 
-/// 播放链路的丢弃计数（CR-01）：一个没有读者的计数器只是文档承诺。
+/// 播放与轨迹链路的丢弃计数（CR-01/WR-03）：一个没有读者的计数器只是文档承诺。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkHealth {
     /// 播放队列交给回声消除器却被拒的参考块数（CR-01）：非零即说明远端参考
     /// 有缺口，AEC 会拿不完整的声音当「扬声器在放什么」。
     pub mirror_failures: u64,
+    /// 轨迹队列拒绝的记录条数（WR-03）：磁盘写入追不上队列时它上升，
+    /// 「这台机器的复盘文件少了一段」从此可见，而不是只能推断。
+    pub trace_dropped_records: u64,
+    /// 队列之后的写盘失败次数（WR-03）：与丢弃分开计数——一个是没排上队，
+    /// 一个是排上了但没写进去，排查方向完全不同。
+    pub trace_write_failures: u64,
 }
 
 /// [`usage_summary`] 的载荷本体，与 Tauri 管线分开：测试与诊断面板读同一份定义。
 pub fn usage_report(state: &SessionState) -> UsageReport {
     let usage = state.usage_summary();
     let cost = CostReport::from_usage(&usage);
+    let health = state.trace_health();
     UsageReport {
         used_minutes: usage.used_minutes().round() as u64,
         quota_minutes: MONTHLY_QUOTA_MINUTES,
@@ -110,6 +117,8 @@ pub fn usage_report(state: &SessionState) -> UsageReport {
         cost,
         health: LinkHealth {
             mirror_failures: state.playout().stats().mirror_failures,
+            trace_dropped_records: health.dropped_records,
+            trace_write_failures: health.write_failures,
         },
     }
 }
