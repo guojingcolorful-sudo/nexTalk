@@ -83,6 +83,9 @@ pub enum Stage {
     /// The cloned-voice TTS returned its first audio frame.
     TtsFirstAudio,
     /// The output device consumed the first PCM frame (the stopwatch end).
+    /// Everything the playback stage holds on the way to the speaker — the
+    /// jitter buffer's pre-roll included — is inside this number, never before
+    /// it (WR-02).
     PlaybackFirstSample,
 }
 

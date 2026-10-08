@@ -48,7 +48,9 @@ use crate::pipeline::stages::{AudioChunk, MarkHandle};
 pub trait PlayoutSink: Send {
     /// Install the latency rig handle — the sink marks
     /// [`Stage::PlaybackFirstSample`](crate::pipeline::budget::Stage::PlaybackFirstSample)
-    /// when a segment's first sample enters the playout timeline (02-01 contract).
+    /// when the device consumes a segment's first sample (02-01 contract: the
+    /// mark is the e2e stopwatch end, so the pre-roll and everything the device
+    /// buffers are inside the number, not before it — WR-02).
     fn set_marks(&mut self, marks: MarkHandle);
     /// Hand one synthesised chunk to the playout chain.
     fn play(&mut self, epoch: u64, segment_id: u64, chunk: &AudioChunk);

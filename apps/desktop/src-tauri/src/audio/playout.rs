@@ -17,9 +17,11 @@
 //!
 //! The queue also owns the write cursor: [`PlayoutQueue::first_sample_position`]
 //! fixes each sentence's place in the output timeline at enqueue, so "the new
-//! sentence starts after the old one's final sample" (no overlap) and "the
-//! first sample of this sentence" (the 02-01 `PlaybackFirstSample` mark) are
-//! facts about one timeline rather than two clocks.
+//! sentence starts after the old one's final sample" (no overlap) is a fact
+//! about one timeline rather than two clocks. The 02-01 `PlaybackFirstSample`
+//! mark is the *other* end of that timeline: it fires when the device consumes
+//! the sentence's first sample, because that is when the user starts hearing it
+//! (WR-02 — see `mark_first_played`).
 //!
 //! Time is always injected ([`TimeSource`]); nothing here sleeps or reads wall
 //! time, so tests stay deterministic.
@@ -151,14 +153,27 @@ struct Inner {
     cursor: u64,
     /// Samples actually handed to the device.
     played: u64,
-    /// `(segment_id, cursor)` of each sentence's first sample, fixed at enqueue.
-    first_positions: Vec<(u64, u64)>,
+    /// One entry per sentence of the current generation, fixed at enqueue.
+    first_positions: Vec<SegmentPosition>,
     /// The AEC mirror's frame assembler (CR-01): what the device consumed but
     /// what is not yet a whole 10 ms frame.
     mirror: MirrorFramer,
     stats: PlayoutStats,
     last_interrupt_at_ms: Option<u64>,
     marks: MarkHandle,
+}
+
+/// One sentence's place in the output timeline (WR-01/WR-02).
+struct SegmentPosition {
+    segment_id: u64,
+    /// The write cursor at enqueue — the no-overlap comparison baseline, true
+    /// before a single sample has been played.
+    position: u64,
+    /// Did the rig record `PlaybackFirstSample` for this sentence yet? Flipped
+    /// by the first render that writes one of its samples: the mark is the
+    /// stopwatch's end (budget.rs), so it must follow the device, not the
+    /// enqueue.
+    marked: bool,
 }
 
 /// The AEC render mirror's frame assembler (CR-01).
@@ -234,6 +249,29 @@ impl MirrorFramer {
         }
         refused
     }
+}
+
+/// Fire [`Stage::PlaybackFirstSample`] the first time one of a sentence's
+/// samples is written to the device (WR-02).
+///
+/// Marking at enqueue charged the end-to-end number for the sentence production
+/// and skipped the jitter buffer's pre-roll — up to `target_ms` of real waiting
+/// the user hears. A sentence that is dropped, interrupted or superseded before
+/// it plays is heard by nobody and marked by nobody.
+fn mark_first_played(inner: &mut Inner, segment_id: u64) {
+    let Some(entry) = inner
+        .first_positions
+        .iter_mut()
+        .find(|entry| entry.segment_id == segment_id)
+    else {
+        return;
+    };
+    if entry.marked {
+        return;
+    }
+    entry.marked = true;
+    // `mark` is a no-op on a disabled handle (unit tests, wiring without a rig).
+    inner.marks.mark(Stage::PlaybackFirstSample);
 }
 
 /// Bounded, epoch-guarded, barge-in-safe playout buffer.
@@ -317,8 +355,8 @@ impl PlayoutQueue {
         self.lock()
             .first_positions
             .iter()
-            .find(|(id, _)| *id == segment_id)
-            .map(|(_, position)| *position)
+            .find(|entry| entry.segment_id == segment_id)
+            .map(|entry| entry.position)
     }
 
     pub fn stats(&self) -> PlayoutStats {
@@ -354,15 +392,20 @@ impl PlayoutQueue {
         let mut inner = self.lock();
         // The sentence's place in the output timeline is fixed the moment it is
         // accepted — that is what makes the overlap check possible before
-        // playback, and it is the last-stage boundary the 02-01 rig records.
+        // playback. The latency mark is deliberately *not* fired here: it is
+        // the rig's stopwatch end, so it belongs to the first sample the device
+        // consumes (WR-02, see `mark_first_played`).
         let position = inner.cursor;
         if !inner
             .first_positions
             .iter()
-            .any(|(id, _)| *id == segment_id)
+            .any(|entry| entry.segment_id == segment_id)
         {
-            inner.first_positions.push((segment_id, position));
-            inner.marks.mark(Stage::PlaybackFirstSample);
+            inner.first_positions.push(SegmentPosition {
+                segment_id,
+                position,
+                marked: false,
+            });
         }
 
         let len = chunk.pcm.len();
@@ -511,7 +554,7 @@ impl PlayoutQueue {
                     front.cursor += take;
                     (
                         take,
-                        Some(front.sample_rate_hz),
+                        Some((front.sample_rate_hz, front.segment_id)),
                         front.remaining() == 0,
                     )
                 }
@@ -522,7 +565,10 @@ impl PlayoutQueue {
                     continue;
                 }
             }
-            let rate = block.expect("every consumed block carries its rate");
+            let (rate, segment_id) = block.expect("every consumed block carries its rate");
+            // The last-stage boundary is consumption (WR-02): this is the first
+            // sample of that sentence the device has actually taken.
+            mark_first_played(&mut inner, segment_id);
             if let Some(reference) = reference.as_mut() {
                 // Reborrow, so the next iteration keeps its own handle.
                 let handle: &mut dyn RenderReference = &mut **reference;
@@ -570,8 +616,8 @@ impl PlayoutQueue {
         // Positions belong to the generation (WR-01). Segment ids restart at 1
         // with a fresh segmenter, so a surviving table would suppress the
         // restarted session's first latency mark (the enqueue guard reads it)
-        // and hand the no-overlap check a position from the old timeline. The
-        // cursor itself stays monotonic: it indexes this queue's output
+        // and hand the no-overlap check a position from the old timeline.
+        // The cursor itself stays monotonic: it indexes this queue's output
         // timeline, which is a fact about the queue, not about a session.
         inner.first_positions.clear();
         epoch
@@ -617,6 +663,10 @@ impl PlayoutSink for PlayoutQueue {
 /// 120 ms is deep enough to ride out a burst gap and shallow enough that the
 /// first syllable is not late — it comes out of the same ≤2 s budget the
 /// barge-in gate spends from.
+///
+/// This is charging the budget honestly: the rig's `PlaybackFirstSample` mark
+/// fires at device consumption (WR-02), so the pre-roll is part of the
+/// end-to-end number rather than hidden in front of it.
 pub const DEFAULT_TARGET_MS: u64 = 120;
 
 /// Never buffer deeper than this (the plan's hard cap).

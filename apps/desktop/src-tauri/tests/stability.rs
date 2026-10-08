@@ -225,11 +225,20 @@ fn playout_after_interrupt_never_overlaps() {
         .expect("the new sentence is admitted");
     let new_first = queue
         .first_sample_position(2)
-        .expect("the new sentence rendered");
+        .expect("the new sentence's place is fixed at enqueue");
     assert_eq!(
         new_first, old_last,
         "the new sentence starts after the old one's final sample (no overlap)"
     );
+    // The mark follows the device (WR-02): enqueueing is not hearing, so the
+    // second mark appears only once samples of sentence 2 are actually written.
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        [Stage::PlaybackFirstSample],
+        "an enqueued sentence that has not played is not marked"
+    );
+    let mut second = vec![0.0f32; 240];
+    assert_eq!(queue.render(&mut second), 240);
     assert!(
         queue.rendered_samples() > new_first,
         "the new sentence is actually playing"
