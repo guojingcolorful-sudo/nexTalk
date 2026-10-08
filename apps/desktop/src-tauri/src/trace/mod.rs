@@ -54,9 +54,54 @@ fn civil_from_days(days: u64) -> (i64, u32, u32) {
 /// these constants — the cost test re-derives the math from them, so a
 /// scattered literal fails there.
 pub const STT_USD_PER_MINUTE: f64 = 0.0048; // Deepgram Nova-3 streaming
-pub const TRANSLATE_USD_PER_MTOK_PROMPT: f64 = 0.30; // Gemini 3.5 Flash-Lite
-pub const TRANSLATE_USD_PER_MTOK_COMPLETION: f64 = 2.50; // Gemini 3.5 Flash-Lite
 pub const TTS_USD_PER_1K_CHARS: f64 = 0.045; // Fish S2.1 Pro CJK reference
+
+/// One translation vendor's published rates, per million tokens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranslatorRates {
+    pub prompt_usd_per_mtok: f64,
+    pub completion_usd_per_mtok: f64,
+}
+
+/// The translator the pipeline ships: one id, one row, one source of truth
+/// (WR-05). The id is the model string the vendor client reports as its
+/// `model_version` — the same string every trace record stores — so the panel
+/// cannot price a vendor the pipeline never calls.
+pub const ACTIVE_TRANSLATOR_ID: &str = crate::pipeline::stages::deepseek::DEFAULT_MODEL;
+
+/// `deepseek-chat`, the shipped translator (T2.4). Peak rates from DeepSeek's
+/// public pricing page (fetched 2026-10-08; off-peak hours are half). The
+/// legacy model string is served by DeepSeek-V4.1-Flash — that is the model
+/// behind the call and what the bill charges, so the panel prices with it.
+pub const DEEPSEEK_CHAT_RATES: TranslatorRates = TranslatorRates {
+    prompt_usd_per_mtok: 0.30,     // input, cache miss
+    completion_usd_per_mtok: 1.20, // output
+};
+
+/// Gemini 3.5 Flash-Lite — the documented alternative translator
+/// (CLAUDE.md 备选), kept as a rate row so switching the stage is a lookup
+/// change, never a re-pricing exercise.
+pub const GEMINI_FLASH_LITE_ID: &str = "gemini-3.5-flash-lite";
+pub const GEMINI_FLASH_LITE_RATES: TranslatorRates = TranslatorRates {
+    prompt_usd_per_mtok: 0.30,
+    completion_usd_per_mtok: 2.50,
+};
+
+/// The rate row for one translator id, as the trace records it (WR-05).
+///
+/// Unknown ids — a `DEEPSEEK_MODEL` override, or a vendor predating this
+/// table — fall back to the shipped translator's row: the monthly aggregate is
+/// priced as a whole, and the shipped translator is the honest assumption for
+/// it. The test below pins [`ACTIVE_TRANSLATOR_ID`] to its own row, so
+/// "unknown" can never quietly mean "a vendor we do not call" while the
+/// shipped one is mispriced.
+pub fn translator_rates(translator_id: &str) -> TranslatorRates {
+    if translator_id == GEMINI_FLASH_LITE_ID {
+        GEMINI_FLASH_LITE_RATES
+    } else {
+        DEEPSEEK_CHAT_RATES
+    }
+}
 
 /// The month's cost ceiling the panel flags against — a placeholder until the
 /// 套餐 lands; the badge exists so an overrun is visible the moment it does.
@@ -81,12 +126,17 @@ pub struct CostReport {
 
 impl CostReport {
     /// Converts one usage summary through the named rate table.
+    ///
+    /// The translation leg is priced with the *shipped* translator's row
+    /// (WR-05): the same id the traces record per segment (D-08), so the money
+    /// on the panel and the vendor that produced the tokens cannot drift apart.
     pub fn from_usage(usage: &UsageSummary) -> Self {
+        let translate_rates = translator_rates(ACTIVE_TRANSLATOR_ID);
         let stt_usd = usage.stt_audio_ms as f64 / 60_000.0 * STT_USD_PER_MINUTE;
         let translate_usd = usage.translate_prompt_tokens as f64 / 1_000_000.0
-            * TRANSLATE_USD_PER_MTOK_PROMPT
+            * translate_rates.prompt_usd_per_mtok
             + usage.translate_completion_tokens as f64 / 1_000_000.0
-                * TRANSLATE_USD_PER_MTOK_COMPLETION;
+                * translate_rates.completion_usd_per_mtok;
         let tts_usd = usage.tts_chars as f64 / 1_000.0 * TTS_USD_PER_1K_CHARS;
         let total_usd = stt_usd + translate_usd + tts_usd;
         Self {
@@ -132,10 +182,11 @@ mod tests {
             tts_chars: 100_000,
         };
         let cost = CostReport::from_usage(&usage);
+        let rates = translator_rates(ACTIVE_TRANSLATOR_ID);
         assert!((cost.stt_usd - 10.0 * STT_USD_PER_MINUTE).abs() < 1e-9);
         assert!(
             (cost.translate_usd
-                - (TRANSLATE_USD_PER_MTOK_PROMPT + 0.5 * TRANSLATE_USD_PER_MTOK_COMPLETION))
+                - (rates.prompt_usd_per_mtok + 0.5 * rates.completion_usd_per_mtok))
                 .abs()
                 < 1e-9
         );
@@ -151,6 +202,38 @@ mod tests {
         let empty = CostReport::from_usage(&UsageSummary::default());
         assert_eq!(empty.total_usd, 0.0);
         assert!(!empty.over_budget);
+    }
+
+    /// WR-05: the rate row is keyed by the translator id the trace records.
+    /// The shipped client's `model_version` must land on its own row (not some
+    /// other vendor's), the alternative stays available, and the two rows are
+    /// genuinely different — otherwise "keyed by id" would be a comment, not a
+    /// mechanism.
+    #[test]
+    fn translator_rates_are_keyed_by_the_shipped_translator_id() {
+        use crate::pipeline::stages::config::{DeepseekCredentials, Endpoints, Secret};
+        use crate::pipeline::stages::{DeepseekTranslator, Translator};
+
+        let translator = DeepseekTranslator::new(
+            DeepseekCredentials {
+                api_key: Secret::new("test-key"),
+            },
+            Endpoints::defaults(),
+        );
+        let recorded_id = translator.model_version();
+        assert_eq!(
+            recorded_id, ACTIVE_TRANSLATOR_ID,
+            "the id the trace stores and the id the rate table keys on are one string"
+        );
+        assert_eq!(translator_rates(&recorded_id), DEEPSEEK_CHAT_RATES);
+        assert_eq!(
+            translator_rates(GEMINI_FLASH_LITE_ID),
+            GEMINI_FLASH_LITE_RATES
+        );
+        assert_ne!(DEEPSEEK_CHAT_RATES, GEMINI_FLASH_LITE_RATES);
+        // An unknown id (a future vendor, a model override) still prices — with
+        // the shipped translator's row, never with a vendor we do not call.
+        assert_eq!(translator_rates("some-future-model"), DEEPSEEK_CHAT_RATES);
     }
 
     /// Test 5 (privacy, static half): the trace module opens no socket — no

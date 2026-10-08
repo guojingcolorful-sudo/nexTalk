@@ -83,13 +83,23 @@ pub enum SegmentStatus {
 /// Per-stage usage meters for one segment (D-13): the STT audio duration, the
 /// translation token counts and the TTS character count — all on the same line
 /// so a month sums without joining anything.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The translation tokens travel with the id of the translator that produced
+/// them (`translatorId`), so a rate table keyed by that id — see
+/// [`crate::trace::translator_rates`] — prices the vendor the call actually
+/// reached, never one the pipeline does not call (WR-05).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StageUsage {
     pub stt_audio_ms: u64,
     pub translate_prompt_tokens: u64,
     pub translate_completion_tokens: u64,
     pub tts_chars: u64,
+    /// The `model_version()` the translator reported for the tokens above
+    /// (`deepseek-chat`, …) — `null` on Phase-1 shaped lines and while the
+    /// meters are still zeroes. Whoever attaches the token counts attaches
+    /// this id in the same tuple, so the two cannot drift apart.
+    pub translator_id: Option<String>,
 }
 
 /// One segment's trace record.
@@ -801,7 +811,9 @@ mod tests {
     }
 
     /// Test 2 (D-13): one line records every stage's meter — STT audio,
-    /// translation tokens, TTS characters — simultaneously.
+    /// translation tokens, TTS characters — simultaneously. WR-05: the
+    /// translation tokens carry the translator's id on the same line, so the
+    /// row that gets priced is the row the call recorded.
     #[test]
     fn one_line_carries_every_stage_of_usage() {
         let record = usage_record(
@@ -811,6 +823,7 @@ mod tests {
                 translate_prompt_tokens: 210,
                 translate_completion_tokens: 96,
                 tts_chars: 58,
+                translator_id: Some(crate::trace::ACTIVE_TRANSLATOR_ID.to_string()),
             },
         );
         let value = parse(&record);
@@ -818,6 +831,10 @@ mod tests {
         assert_eq!(value["usage"]["translatePromptTokens"], 210);
         assert_eq!(value["usage"]["translateCompletionTokens"], 96);
         assert_eq!(value["usage"]["ttsChars"], 58);
+        assert_eq!(
+            value["usage"]["translatorId"],
+            crate::trace::ACTIVE_TRANSLATOR_ID
+        );
     }
 
     /// Test 8 (GOV-10): the six classes Phase 8 aggregates on — 用户
@@ -1020,6 +1037,7 @@ mod tests {
                 translate_prompt_tokens: 100,
                 translate_completion_tokens: 40,
                 tts_chars: 12,
+                translator_id: None,
             },
         ));
         october.append(usage_record(
@@ -1029,6 +1047,7 @@ mod tests {
                 translate_prompt_tokens: 10,
                 translate_completion_tokens: 4,
                 tts_chars: 2,
+                translator_id: None,
             },
         ));
         september.append(usage_record(
@@ -1038,6 +1057,7 @@ mod tests {
                 translate_prompt_tokens: 1_000_000,
                 translate_completion_tokens: 1_000_000,
                 tts_chars: 1_000_000,
+                translator_id: None,
             },
         ));
         october.flush().await.expect("flush");
