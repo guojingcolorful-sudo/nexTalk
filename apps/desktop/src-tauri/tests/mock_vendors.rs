@@ -129,6 +129,11 @@ impl TimedFrame {
 struct XfyunMock {
     greeting: Vec<TimedFrame>,
     on_audio: Vec<TimedFrame>,
+    /// Per-connection answers (rotation tests, WR-04): entry N is what the
+    /// Nth service session replies, because a rotated fragment meets a fresh
+    /// session that knows nothing about the text committed before it. Empty —
+    /// the default — means every session uses `on_audio`.
+    on_audio_by_session: Vec<Vec<TimedFrame>>,
     /// A signed `date` further than this from now is rejected with HTTP 403.
     clock_skew_window_secs: u64,
     /// Hang up after this long (the real session cap is 60 s).
@@ -145,6 +150,7 @@ impl Default for XfyunMock {
                 TimedFrame::now(xfyun_wpgs_frame(2, "apd", (2, 2), "详细")),
                 TimedFrame::now(xfyun_final_frame(3, "说一下优化步骤吗？")),
             ],
+            on_audio_by_session: Vec::new(),
             clock_skew_window_secs: 300,
             session_cap_ms: None,
             ignore_audio: false,
@@ -160,6 +166,13 @@ impl XfyunMock {
 
     fn with_on_audio(mut self, frames: Vec<TimedFrame>) -> Self {
         self.on_audio = frames;
+        self
+    }
+
+    /// Script each service connection separately (WR-04): connection 1 is the
+    /// pre-rotation session, connection 2 the one the client re-dials into.
+    fn with_on_audio_by_session(mut self, per_session: Vec<Vec<TimedFrame>>) -> Self {
+        self.on_audio_by_session = per_session;
         self
     }
 
@@ -301,7 +314,20 @@ async fn xfyun_session(mut socket: WebSocket, state: Arc<XfyunState>, session: u
                 state.audio_frames.fetch_add(1, Ordering::SeqCst);
                 if !state.cfg.ignore_audio && !answered {
                     answered = true;
-                    for frame in &state.cfg.on_audio {
+                    // Each service session has its own script when the test
+                    // provides one (rotation tests, WR-04): session N answers
+                    // with entry N. Sessions past the script answer nothing.
+                    let script = if state.cfg.on_audio_by_session.is_empty() {
+                        state.cfg.on_audio.clone()
+                    } else {
+                        state
+                            .cfg
+                            .on_audio_by_session
+                            .get(session as usize - 1)
+                            .cloned()
+                            .unwrap_or_default()
+                    };
+                    for frame in &script {
                         if frame.after_ms > 0 {
                             tokio::time::sleep(Duration::from_millis(frame.after_ms)).await;
                         }
@@ -313,7 +339,6 @@ async fn xfyun_session(mut socket: WebSocket, state: Arc<XfyunState>, session: u
                             return;
                         }
                     }
-                    let _ = session;
                 }
             }
             Message::Close(_) => return,
@@ -1020,6 +1045,55 @@ async fn xfyun_client_rotates_the_session_before_the_service_cap() {
             .filter(|frame| frame["data"]["status"] == 2)
             .count()
             >= 1
+    );
+}
+
+/// WR-04: the status-2 frame is the vendor's only *committed* transcript and
+/// exactly what the GOV-15 commit gate consumes, so the text committed before a
+/// session rotation must survive into it. The mock scripts each service session
+/// separately — session 1 answers with a partial, the re-dialled session 2 with
+/// the final — which is what a real rotation sees: a fresh service session that
+/// knows nothing about the text already committed.
+#[tokio::test]
+async fn xfyun_client_commits_the_whole_fragment_across_a_rotation() {
+    let (mock, state) = xfyun_mock(
+        XfyunMock::default()
+            .with_greeting(vec![])
+            .with_on_audio_by_session(vec![
+                vec![TimedFrame::now(xfyun_partial_frame(2, 1, "前半段"))],
+                vec![TimedFrame::now(xfyun_final_frame(3, "后半段"))],
+            ]),
+    )
+    .await;
+    let mut client = xfyun_client(&mock, Some(300));
+    let mut stream = client.start(1).expect("the signed handshake builds");
+
+    // Keep the client fed across the rotation deadline (0.9 × 300 ms); the
+    // rotated session answers the first frame it receives with the final.
+    for _ in 0..30 {
+        if stream.send_audio(vec![0i16; 640]).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut committed = Vec::new();
+    while let Some(event) = stream.next_event().await {
+        if let SttEvent::Partial(partial) = event {
+            if partial.is_final {
+                committed.push(partial.text);
+            }
+        }
+    }
+
+    assert!(
+        state.sessions.load(Ordering::SeqCst) >= 2,
+        "the client rotated, so the final came from the second service session"
+    );
+    assert_eq!(
+        committed,
+        vec!["前半段后半段".to_string()],
+        "the committed final carries the text from before the rotation"
     );
 }
 

@@ -668,7 +668,12 @@ async fn run_session(
                 match upstream_item {
                     Some(SttUpstream::Audio(pcm16)) => {
                         // Rotate before the service's 60 s cap: re-sign, dial,
-                        // and let the next frame reopen with `status: 0`.
+                        // and let the next frame reopen with `status: 0`. A
+                        // fragment is capped at 15 s (segment.rs) and rotation
+                        // only fires at 0.9 × the session cap, so in today's
+                        // pipeline a fragment ends inside one session; the
+                        // `carried_text` carry keeps that timing a margin
+                        // rather than a precondition (WR-04).
                         if session_open && session_started.elapsed() >= session.rotate_deadline() {
                             carried_text = builder.text();
                             builder.reset();
@@ -776,13 +781,14 @@ async fn handle_frame(
     let revision_applied = builder.apply(data.to_wpgs());
     let is_final = frame_is_final(data.status);
     // Text from sessions this one rotated away from is still part of the
-    // fragment; a final frame closes the fragment, so it is not carried on.
-    let text = if is_final {
+    // fragment — the final frame included (WR-04): it is the vendor's only
+    // committed transcript and exactly what the GOV-15 commit gate consumes
+    // (cascade.rs), so clearing the carry before reading it would truncate the
+    // sentence the pipeline is allowed to speak. Assemble first, clear after.
+    let text = format!("{carried_text}{}", builder.text());
+    if is_final {
         carried_text.clear();
-        builder.text()
-    } else {
-        format!("{carried_text}{}", builder.text())
-    };
+    }
     let partial = partial_from_frame(data.status, text, revision_applied, MODEL_VERSION);
     if !*marked {
         *marked = true;
