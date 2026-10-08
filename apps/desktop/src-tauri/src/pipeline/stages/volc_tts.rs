@@ -33,7 +33,7 @@
 //! `format` is `pcm`, not the experiment script's `mp3`: the cascade consumes
 //! PCM directly (24 kHz mono, the rate 02-05's playout chain resamples from).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -348,10 +348,16 @@ impl VolcTts {
     }
 
     fn set_last_resource(&self, resource: &str) {
-        *self
-            .last_resource
+        *self.last_resource_guard() = resource.to_string();
+    }
+
+    /// Same reasoning as the playout queue and the AEC: the guarded data is one
+    /// plain string (the resource id the last request used), so recovering a
+    /// poisoned lock beats killing the sentence that is being spoken (WR-06).
+    fn last_resource_guard(&self) -> MutexGuard<'_, String> {
+        self.last_resource
             .lock()
-            .expect("the resource lock is never poisoned") = resource.to_string();
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 }
 
@@ -361,10 +367,7 @@ impl TtsSink for VolcTts {
     }
 
     fn model_version(&self) -> String {
-        self.last_resource
-            .lock()
-            .expect("the resource lock is never poisoned")
-            .clone()
+        self.last_resource_guard().clone()
     }
 
     fn set_marks(&mut self, marks: MarkHandle) {
@@ -735,6 +738,37 @@ mod tests {
         assert_ne!(one, two, "a new request id per connection");
         assert_eq!(one.len(), 36, "a UUID: {one}");
         assert_eq!(one.matches('-').count(), 4, "a UUID: {one}");
+    }
+
+    /// WR-06: a poisoned resource lock must not kill the sentence. Every other
+    /// lock on the audio path (playout queue, AEC) recovers; this client
+    /// aborted the TTS stage instead. Poison it through a genuinely panicking
+    /// holder — the way any future holder can, `std` decides, not this crate —
+    /// and assert both readers survive.
+    #[test]
+    fn a_poisoned_resource_lock_does_not_silence_the_sentence() {
+        let tts = VolcTts::new(
+            VolcCredentials {
+                app_id: "app-1".to_string(),
+                access_token: Secret::new("test-volc-token"),
+                resource_id: RESOURCE_CLONE.to_string(),
+                preset_voice: None,
+                clone_speaker: None,
+            },
+            Endpoints::defaults(),
+        );
+        assert_eq!(tts.model_version(), RESOURCE_CLONE);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = tts.last_resource.lock().expect("a fresh lock");
+            panic!("a holder panicked with the resource lock held");
+        }));
+        assert!(panicked.is_err());
+        assert!(tts.last_resource.is_poisoned(), "the lock is poisoned now");
+
+        // The whole point: the stage keeps its voice instead of aborting.
+        tts.set_last_resource("seed-icl-2.0-alt");
+        assert_eq!(tts.model_version(), "seed-icl-2.0-alt");
     }
 
     #[test]
