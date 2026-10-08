@@ -619,8 +619,6 @@ pub fn sample_path(root: &Path, session_id: &str) -> PathBuf {
 /// Write a 16 kHz mono PCM16 WAV, owner-only (T-02-16: the sample is biometric
 /// data and stays readable by this user alone).
 fn save_wav(root: &Path, session_id: &str, pcm16: &[i16]) -> Result<PathBuf, CaptureError> {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = enrollment_dir(root);
     std::fs::create_dir_all(&dir).map_err(|error| CaptureError::Io(error.to_string()))?;
 
@@ -631,7 +629,12 @@ fn save_wav(root: &Path, session_id: &str, pcm16: &[i16]) -> Result<PathBuf, Cap
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let mut writer = hound::WavWriter::create(&path, spec)
+    // CREATED at 0600 and handed to hound as a handle (WR-07): hound's own
+    // file-creating constructor would apply the process umask and leave the
+    // take readable by any local user until a chmod ran after the write.
+    let file = super::create_private(&path)
+        .map_err(|error| CaptureError::Io(error.to_string()))?;
+    let mut writer = hound::WavWriter::new(std::io::BufWriter::new(file), spec)
         .map_err(|error| CaptureError::Io(error.to_string()))?;
     for sample in pcm16 {
         writer
@@ -642,8 +645,6 @@ fn save_wav(root: &Path, session_id: &str, pcm16: &[i16]) -> Result<PathBuf, Cap
         .finalize()
         .map_err(|error| CaptureError::Io(error.to_string()))?;
 
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| CaptureError::Io(error.to_string()))?;
     Ok(path)
 }
 

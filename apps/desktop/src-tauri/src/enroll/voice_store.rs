@@ -195,7 +195,6 @@ impl VoiceStore {
     /// Write the profile owner-only (`0600`).
     pub fn save(&self, profile: &VoiceProfile) -> Result<(), VoiceStoreError> {
         use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
 
         let path = self.profile_path();
         let dir = path.parent().expect("profile path has a parent");
@@ -203,14 +202,14 @@ impl VoiceStore {
         let body = serde_json::to_vec_pretty(profile)
             .map_err(|error| VoiceStoreError::invalid(&path, error))?;
 
-        let mut file =
-            std::fs::File::create(&path).map_err(|error| VoiceStoreError::io(&path, error))?;
+        // Created at 0600 (WR-07): the profile names the user's voice id —
+        // private data (T-02-16) — and `File::create` would leave it
+        // world-readable until a chmod ran after the write.
+        let mut file = super::create_private(&path)
+            .map_err(|error| VoiceStoreError::io(&path, error))?;
         file.write_all(&body)
             .map_err(|error| VoiceStoreError::io(&path, error))?;
         file.sync_all()
-            .map_err(|error| VoiceStoreError::io(&path, error))?;
-        // The profile names the user's voice id — private data (T-02-16).
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| VoiceStoreError::io(&path, error))?;
         Ok(())
     }
