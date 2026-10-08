@@ -321,6 +321,50 @@ fn playout_queue_clears_on_session_stop_and_isolates_sessions() {
     assert_eq!(playout.buffered_ms(), 0);
 }
 
+/// WR-01: a generation reset clears the position table with the buffer. Segment
+/// ids restart at 1 with a fresh segmenter, so a surviving table would suppress
+/// the restarted session's first latency mark and hand its no-overlap check a
+/// position from the previous timeline.
+#[test]
+fn playout_a_new_generation_inherits_no_positions_and_no_suppressed_mark() {
+    let mut queue = PlayoutQueue::new();
+    let marks: Arc<Mutex<Vec<Stage>>> = Arc::new(Mutex::new(Vec::new()));
+    queue.set_marks(MarkHandle::new({
+        let marks = Arc::clone(&marks);
+        move |stage| marks.lock().unwrap().push(stage)
+    }));
+
+    // Generation 1: segment 1 plays to its end.
+    let epoch = queue.epoch();
+    queue.push(epoch, 1, &loud_chunk(20)).expect("admitted");
+    let mut out = vec![0.0f32; samples_for(20)];
+    assert_eq!(queue.render(&mut out), samples_for(20));
+    assert_eq!(queue.first_sample_position(1), Some(0), "recorded at enqueue");
+    let played = queue.rendered_samples();
+    assert_eq!(played, samples_for(20) as u64);
+
+    // 停止, then a fresh session whose segmenter starts at 1 again.
+    queue.end_session();
+    let epoch = queue.epoch();
+    queue
+        .push(epoch, 1, &loud_chunk(20))
+        .expect("the new generation admits its own segment 1");
+    assert_eq!(
+        queue.first_sample_position(1),
+        Some(played),
+        "the restarted session's segment 1 sits in this generation's timeline"
+    );
+
+    // The old entry must not suppress the new session's first-sample mark.
+    let mut out = vec![0.0f32; samples_for(5)];
+    assert_eq!(queue.render(&mut out), samples_for(5));
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        [Stage::PlaybackFirstSample, Stage::PlaybackFirstSample],
+        "one first-sample mark per generation"
+    );
+}
+
 /// Test 6: the queue is bounded. A producer that outruns the device loses the
 /// *oldest* unplayed audio and never blocks, and the loss is counted (a silent
 /// drop would look like a vendor failure downstream).

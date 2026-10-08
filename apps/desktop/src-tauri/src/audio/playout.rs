@@ -567,6 +567,13 @@ impl PlayoutQueue {
         // it onto the new session's first frame would hand the canceller a
         // reference the device never produced.
         inner.mirror.clear();
+        // Positions belong to the generation (WR-01). Segment ids restart at 1
+        // with a fresh segmenter, so a surviving table would suppress the
+        // restarted session's first latency mark (the enqueue guard reads it)
+        // and hand the no-overlap check a position from the old timeline. The
+        // cursor itself stays monotonic: it indexes this queue's output
+        // timeline, which is a fact about the queue, not about a session.
+        inner.first_positions.clear();
         epoch
     }
 
