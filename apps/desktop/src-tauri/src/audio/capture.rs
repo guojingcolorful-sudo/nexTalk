@@ -30,7 +30,7 @@
 //! the failure-case library read.
 
 use std::collections::VecDeque;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -208,9 +208,58 @@ pub struct CpalSource {
     device: cpal::Device,
     config: cpal::SupportedStreamConfig,
     stream: Option<cpal::Stream>,
-    errors: Arc<std::sync::Mutex<VecDeque<CaptureError>>>,
+    /// The error callback's channel — same discipline as the audio blocks
+    /// (WR-09): the `SyncSender` goes to the audio thread, the receiver stays
+    /// here for [`BlockSource::drain_errors`].
+    errors: SyncSender<CaptureError>,
+    error_receiver: Receiver<CaptureError>,
+    /// Reports the error callback had to drop (queue full / consumer gone).
+    /// Counted and surfaced through `drain_errors`, never silent.
+    dropped_errors: Arc<std::sync::atomic::AtomicU64>,
     sink: Option<CaptureSink>,
     overflows: Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// How many asynchronous device errors may wait for the consumer. cpal reports
+/// stream failures a handful of times per session (a vanishing device is one
+/// event, not a stream of them), so this is far beyond real use — and the
+/// callback has a place to count what does not fit.
+pub const ERROR_QUEUE_ITEMS: usize = 16;
+
+/// The error callback's body, as a free function so the discipline is testable
+/// without a device (WR-09): hand the report to the bounded queue, or count it.
+/// `try_send` on a full or closed queue is the whole failure story — the audio
+/// thread waits for nothing.
+fn report_device_error(
+    errors: &SyncSender<CaptureError>,
+    dropped: &std::sync::atomic::AtomicU64,
+    message: String,
+) {
+    use std::sync::atomic::Ordering;
+
+    if errors.try_send(CaptureError::Stream(message)).is_err() {
+        dropped.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Drain the error queue and append one report per counted drop. The count is
+/// cleared as it is reported (it is a fact about this session's callback, not
+/// a lifetime figure — a stale count must not inflate a later session's
+/// diagnostics).
+fn drain_reported_errors(
+    errors: &Receiver<CaptureError>,
+    dropped: &std::sync::atomic::AtomicU64,
+) -> Vec<CaptureError> {
+    use std::sync::atomic::Ordering;
+
+    let mut drained: Vec<CaptureError> = errors.try_iter().collect();
+    let lost = dropped.swap(0, Ordering::Relaxed);
+    if lost > 0 {
+        drained.push(CaptureError::Stream(format!(
+            "采集回调队列已满，{lost} 条设备错误被丢弃"
+        )));
+    }
+    drained
 }
 
 impl CpalSource {
@@ -235,11 +284,14 @@ impl CpalSource {
         let config = device
             .default_input_config()
             .map_err(|error| CaptureError::Device(error.to_string()))?;
+        let (errors, error_receiver) = std::sync::mpsc::sync_channel(ERROR_QUEUE_ITEMS);
         Ok(Self {
             device,
             config,
             stream: None,
-            errors: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            errors,
+            error_receiver,
+            dropped_errors: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             sink: None,
             overflows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
@@ -292,13 +344,14 @@ impl BlockSource for CpalSource {
 
         let config: cpal::StreamConfig = self.config.clone().into();
         let channels = config.channels.max(1) as usize;
-        let errors = Arc::clone(&self.errors);
+        let errors = self.errors.clone();
+        let error_drops = Arc::clone(&self.dropped_errors);
         let on_error = move |error: cpal::Error| {
             // The callback must not log (no allocation on the audio thread):
-            // hand the error to the chain's own channel instead.
-            if let Ok(mut queue) = errors.lock() {
-                queue.push_back(CaptureError::Stream(error.to_string()));
-            }
+            // hand the error to the chain's own bounded channel instead — the
+            // same discipline as the audio blocks, so a full queue counts a
+            // drop rather than blocking the audio thread (WR-09).
+            report_device_error(&errors, &error_drops, error.to_string());
         };
 
         let stream = match self.config.sample_format() {
@@ -308,9 +361,12 @@ impl BlockSource for CpalSource {
                     config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         if channels == 1 {
+                            // A borrowed device buffer: the one permitted copy.
                             sink.push(data);
                         } else {
-                            sink.push(&downmix_f32(data, channels));
+                            // The downmix builds its own buffer — move it in
+                            // rather than copying it a second time (WR-09).
+                            sink.push_owned(downmix_f32(data, channels));
                         }
                     },
                     on_error,
@@ -322,6 +378,7 @@ impl BlockSource for CpalSource {
                 self.device.build_input_stream(
                     config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        // The conversion already builds the block — move it in.
                         let samples: Vec<f32> = data
                             .chunks(channels)
                             .map(|frame| {
@@ -329,7 +386,7 @@ impl BlockSource for CpalSource {
                                     / frame.len() as f32
                             })
                             .collect();
-                        sink.push(&samples);
+                        sink.push_owned(samples);
                     },
                     on_error,
                     Some(std::time::Duration::from_secs(5)),
@@ -360,10 +417,7 @@ impl BlockSource for CpalSource {
     }
 
     fn drain_errors(&mut self) -> Vec<CaptureError> {
-        self.errors
-            .lock()
-            .map(|mut queue| queue.drain(..).collect())
-            .unwrap_or_default()
+        drain_reported_errors(&self.error_receiver, &self.dropped_errors)
     }
 }
 
@@ -797,13 +851,74 @@ impl CpalSource {
         let config = device
             .default_input_config()
             .map_err(|error| CaptureError::Device(error.to_string()))?;
+        let (errors, error_receiver) = std::sync::mpsc::sync_channel(ERROR_QUEUE_ITEMS);
         Ok(Self {
             device,
             config,
             stream: None,
-            errors: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            errors,
+            error_receiver,
+            dropped_errors: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             sink: None,
             overflows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WR-09: the error callback obeys the sample path's contract — hand the
+    /// report on or count it, but never block and never grow. A full queue
+    /// (the consumer stopped draining) and a closed queue both mean "count
+    /// it"; the audio thread waits for nothing.
+    #[test]
+    fn a_full_error_channel_counts_drops_and_never_blocks() {
+        use std::sync::atomic::Ordering;
+        use std::sync::mpsc::sync_channel;
+
+        let (sender, receiver) = sync_channel::<CaptureError>(1);
+        let drops = std::sync::atomic::AtomicU64::new(0);
+        report_device_error(&sender, &drops, "第一条".to_string());
+        report_device_error(&sender, &drops, "第二条".to_string());
+        assert_eq!(
+            drops.load(Ordering::Relaxed),
+            1,
+            "the second report is counted, not waited for"
+        );
+        assert_eq!(receiver.try_iter().count(), 1, "the queue kept its bound");
+
+        drop(receiver);
+        report_device_error(&sender, &drops, "第三条".to_string());
+        assert_eq!(
+            drops.load(Ordering::Relaxed),
+            2,
+            "a dead reader counts too"
+        );
+    }
+
+    /// The drop count has a reader: it is reported through the same
+    /// `drain_errors` surface the device errors use, and cleared as it is
+    /// reported so a later session cannot inherit a stale count.
+    #[test]
+    fn drain_errors_reports_and_clears_the_dropped_reports() {
+        use std::sync::atomic::Ordering;
+        use std::sync::mpsc::sync_channel;
+
+        let (sender, receiver) = sync_channel::<CaptureError>(1);
+        let drops = std::sync::atomic::AtomicU64::new(0);
+        report_device_error(&sender, &drops, "设备已断开".to_string());
+        report_device_error(&sender, &drops, "设备已断开".to_string());
+
+        let drained = drain_reported_errors(&receiver, &drops);
+        assert_eq!(drained.len(), 2, "the error plus the drop report");
+        assert_eq!(drained[0], CaptureError::Stream("设备已断开".to_string()));
+        assert!(
+            matches!(&drained[1], CaptureError::Stream(text) if text.contains('1')),
+            "the drop report names how many were lost: {drained:?}"
+        );
+        assert_eq!(drops.load(Ordering::Relaxed), 0, "reported and cleared");
+        assert!(drain_reported_errors(&receiver, &drops).is_empty());
     }
 }
