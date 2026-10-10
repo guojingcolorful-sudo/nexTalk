@@ -1051,7 +1051,7 @@ Claims in this research that are **not** verified and need user/experiment confi
    - What is unclear: the actual token/character volumes of a 60-minute bilingual interview, and whether interim results or ws partial re-translation inflate MT token counts (translation is re-run on each committed fragment, so the *same* content may be charged more than once).
    - Recommendation: the 02-01 rig should emit `analyze`-style usage counters alongside latency so one real session produces both numbers at once.
 
-6. **Which failure-case library location and CI form?** (D-20 explicitly delegates this to the planner.)
+6. **(RESOLVED → 02-03 T3.8：tools/vendor-experiments/failure-cases/ + run.mjs + CI 第四车道)** Which failure-case library location and CI form? (D-20 explicitly delegates this to the planner.)
    - What we know: `tools/vendor-experiments/failure-cases/0001-0002` exist; the AI-SPEC names a 20-case starting set; D-20 suggests `tools/vendor-experiments/failure-cases/` or `.planning/ref/`.
    - Recommendation: keep it under `tools/vendor-experiments/failure-cases/` (where the first two already live), with a Node runner consistent with the existing `tools/vendor-experiments/*.mjs` style, and add it as a fourth CI lane alongside `pnpm -r test`, `playwright test`, and `cargo test`.
 
